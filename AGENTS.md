@@ -27,6 +27,7 @@ hasami/
 │   └── ffi.rs          # C ABI インターフェース
 ├── hasami-python/      # Python バインディング (PyO3)
 │   ├── src/lib.rs
+│   ├── build.rs        # PyO3 拡張モジュール向けリンク設定
 │   ├── Cargo.toml
 │   └── pyproject.toml
 ├── Cargo.toml          # ワークスペース + メインクレート
@@ -38,6 +39,7 @@ hasami/
 - `Analyzer::tokenize(text)` - 形態素解析
 - `DictBuilder` - MeCab形式CSVから辞書構築
 - `DictBuilder::load_hsd(path)` - 既存辞書からインポート（マージ用）
+- `hasami_last_error(handle)` - C FFI の直前エラー取得（`handle == NULL` でも直近のロード失敗を参照可能）
 
 ## 辞書形式
 - **ビルド**: MeCab互換CSV + matrix.def + char.def + unk.def → .hsd
@@ -53,6 +55,7 @@ hasami/
 
 ## ビルド・テスト
 ```bash
-cargo build --release  # ビルド
-cargo test             # テスト実行
+cargo build --release     # リリースビルド
+cargo build --workspace   # Python バインディングを含むワークスペース全体をビルド
+cargo test --workspace    # ワークスペース全体のテスト実行
 ```

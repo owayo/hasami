@@ -4,6 +4,7 @@ use clap::{Parser, Subcommand};
 use hasami::analyzer::{Analyzer, format_mecab, format_wakachi};
 use hasami::dict::DictBuilder;
 use std::io::{self, BufRead, Write};
+use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -68,7 +69,7 @@ enum Commands {
 
         /// 繰り返し回数
         #[arg(short, long, default_value = "10000")]
-        iterations: usize,
+        iterations: NonZeroUsize,
     },
 
     /// 辞書情報を表示
@@ -94,7 +95,7 @@ fn main() -> io::Result<()> {
             dict,
             text,
             iterations,
-        } => cmd_bench(&dict, &text, iterations),
+        } => cmd_bench(&dict, &text, iterations.get()),
         Commands::Info { dict } => cmd_info(&dict),
     }
 }
@@ -305,4 +306,28 @@ fn cmd_info(dict_path: &Path) -> io::Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_ensure_hsd_extension_adds_missing_extension() {
+        let path = ensure_hsd_extension(Path::new("dict"));
+        assert_eq!(path, PathBuf::from("dict.hsd"));
+    }
+
+    #[test]
+    fn test_ensure_hsd_extension_preserves_existing_extension() {
+        let path = ensure_hsd_extension(Path::new("dict.hsd"));
+        assert_eq!(path, PathBuf::from("dict.hsd"));
+    }
+
+    #[test]
+    fn test_bench_rejects_zero_iterations() {
+        let parsed =
+            Cli::try_parse_from(["hasami", "bench", "--dict", "dict.hsd", "--iterations", "0"]);
+        assert!(parsed.is_err());
+    }
 }
