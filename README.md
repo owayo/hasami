@@ -48,6 +48,9 @@
 
 ```bash
 make install
+
+# ワークスペース全体をビルド
+cargo build --workspace
 ```
 
 ### バイナリダウンロード
@@ -186,7 +189,18 @@ token.is_known       # 辞書語かどうか: True
 #include "hasami.h"
 
 HasamiAnalyzer* analyzer = hasami_new("dict.hsd");
+if (!analyzer) {
+    fprintf(stderr, "load error: %s\n", hasami_last_error(NULL));
+    return 1;
+}
+
 HasamiTokenList tokens = hasami_tokenize(analyzer, "東京都に住んでいる");
+const char* error = hasami_last_error(analyzer);
+if (error) {
+    fprintf(stderr, "tokenize error: %s\n", error);
+    hasami_free(analyzer);
+    return 1;
+}
 
 for (uint32_t i = 0; i < tokens.len; i++) {
     printf("%s\t%s\n", tokens.tokens[i].surface, tokens.tokens[i].pos);
@@ -231,11 +245,14 @@ hasami bench --dict dict.hsd --text "東京都に住んでいる人々が増え�
 ## 開発
 
 ```bash
+# ワークスペース全体のビルド
+cargo build --workspace
+
 # ビルド
 make build
 
 # テスト実行
-make test
+cargo test --workspace
 
 # clippy と フォーマットチェック
 make check
