@@ -1,0 +1,151 @@
+name: Build Dictionaries
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 0 1 * *" # Monthly (1st day)
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  UNIDIC_VERSION: "202512"
+
+jobs:
+  build-dict:
+    name: Build Dictionaries
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-dict-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-dict-
+
+      - name: Build hasami
+        run: cargo build --release
+
+      - name: Download IPAdic (taku910/mecab)
+        run: |
+          git clone --depth 1 --filter=blob:none --sparse \
+            https://github.com/taku910/mecab.git .dict-src/mecab
+          cd .dict-src/mecab && git sparse-checkout set mecab-ipadic
+
+      - name: Download NEologd seed
+        run: |
+          git clone --depth 1 --filter=blob:none --sparse \
+            https://github.com/neologd/mecab-ipadic-neologd.git .dict-src/mecab-ipadic-neologd
+          cd .dict-src/mecab-ipadic-neologd && git sparse-checkout set seed
+
+      - name: Download UniDic CWJ (書き言葉)
+        run: |
+          mkdir -p .dict-src
+          curl -fL -o .dict-src/unidic-cwj.zip \
+            "https://unidic.ninjal.ac.jp/unidic_archive/2512/unidic-cwj-${{ env.UNIDIC_VERSION }}.zip"
+          unzip -q .dict-src/unidic-cwj.zip -d .dict-src
+
+      - name: Download UniDic CSJ (話し言葉)
+        run: |
+          curl -fL -o .dict-src/unidic-csj.zip \
+            "https://unidic.ninjal.ac.jp/unidic_archive/2512/unidic-csj-${{ env.UNIDIC_VERSION }}.zip"
+          unzip -q .dict-src/unidic-csj.zip -d .dict-src
+
+      - name: Build IPAdic dictionary
+        run: |
+          mkdir -p dict
+          ./target/release/hasami build \
+            --input .dict-src/mecab/mecab-ipadic \
+            --output dict/ipadic.hsd
+
+      - name: Prepare NEologd seed (exclude unwanted files)
+        run: |
+          mkdir -p .dict-src/neologd-seed
+          xz -dkf .dict-src/mecab-ipadic-neologd/seed/*.csv.xz 2>/dev/null || true
+          for f in .dict-src/mecab-ipadic-neologd/seed/*.csv; do
+            base=$(basename "$f")
+            case "$base" in
+              neologd-adjective-exp-dict-seed.20151126.csv|\
+              neologd-date-time-infreq-dict-seed.20190415.csv|\
+              neologd-quantity-infreq-dict-seed.20190415.csv)
+                echo "Excluding: $base"
+                ;;
+              *)
+                cp "$f" .dict-src/neologd-seed/
+                ;;
+            esac
+          done
+
+      - name: Build IPAdic + NEologd dictionary
+        run: |
+          ./target/release/hasami merge \
+            --dict dict/ipadic.hsd \
+            --input .dict-src/neologd-seed \
+            --output dict/ipadic-neologd.hsd
+
+      - name: Convert & build UniDic CWJ dictionary
+        run: |
+          mkdir -p .dict-src/unidic-cwj-converted
+          python3 scripts/convert-unidic-csv.py \
+            ".dict-src/unidic-cwj-${{ env.UNIDIC_VERSION }}" \
+            .dict-src/unidic-cwj-converted
+          cp ".dict-src/unidic-cwj-${{ env.UNIDIC_VERSION }}/matrix.def" .dict-src/unidic-cwj-converted/
+          cp ".dict-src/unidic-cwj-${{ env.UNIDIC_VERSION }}/char.def"   .dict-src/unidic-cwj-converted/
+          cp ".dict-src/unidic-cwj-${{ env.UNIDIC_VERSION }}/unk.def"    .dict-src/unidic-cwj-converted/
+          ./target/release/hasami build \
+            --input .dict-src/unidic-cwj-converted \
+            --output dict/unidic-cwj.hsd
+
+      - name: Convert & build UniDic CSJ dictionary
+        run: |
+          mkdir -p .dict-src/unidic-csj-converted
+          python3 scripts/convert-unidic-csv.py \
+            ".dict-src/unidic-csj-${{ env.UNIDIC_VERSION }}" \
+            .dict-src/unidic-csj-converted
+          cp ".dict-src/unidic-csj-${{ env.UNIDIC_VERSION }}/matrix.def" .dict-src/unidic-csj-converted/
+          cp ".dict-src/unidic-csj-${{ env.UNIDIC_VERSION }}/char.def"   .dict-src/unidic-csj-converted/
+          cp ".dict-src/unidic-csj-${{ env.UNIDIC_VERSION }}/unk.def"    .dict-src/unidic-csj-converted/
+          ./target/release/hasami build \
+            --input .dict-src/unidic-csj-converted \
+            --output dict/unidic-csj.hsd
+
+      - name: Show dictionary info
+        run: |
+          for hsd in dict/*.hsd; do
+            echo "=== $(basename "$hsd") ==="
+            ./target/release/hasami info --dict "$hsd"
+            echo ""
+          done
+
+      - name: Setup Git LFS
+        run: git lfs install
+
+      - name: Commit dictionaries
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add dict/*.hsd
+          if git diff --staged --quiet; then
+            echo "No dictionary changes detected"
+          else
+            git commit -m "chore: update pre-built dictionaries
+
+          Sources:
+            - IPAdic (taku910/mecab)
+            - mecab-ipadic-neologd (latest seed)
+            - UniDic CWJ ${{ env.UNIDIC_VERSION }} (書き言葉)
+            - UniDic CSJ ${{ env.UNIDIC_VERSION }} (話し言葉)"
+            git push
+          fi
