@@ -68,7 +68,11 @@ dict-ipadic: release dict-download-ipadic ## Build IPAdic dictionary
 
 dict-neologd: dict-ipadic dict-download-neologd ## Build IPAdic + NEologd dictionary
 	@mkdir -p $(DICT_SRC)/neologd-seed
-	@xz -dkf $(NEOLOGD_DIR)/seed/*.csv.xz 2>/dev/null || true
+	@if command -v xz >/dev/null 2>&1; then \
+		xz -dkf $(NEOLOGD_DIR)/seed/*.csv.xz 2>/dev/null || true; \
+	else \
+		python3 -c "import lzma,glob,os; [open(f[:-3],'wb').write(lzma.open(f).read()) for f in glob.glob('$(NEOLOGD_DIR)/seed/*.csv.xz') if not os.path.exists(f[:-3])]"; \
+	fi
 	@for f in $(NEOLOGD_DIR)/seed/*.csv; do \
 		base=$$(basename "$$f"); \
 		skip=false; \

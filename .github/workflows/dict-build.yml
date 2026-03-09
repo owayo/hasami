@@ -73,7 +73,7 @@ jobs:
       - name: Prepare NEologd seed (exclude unwanted files)
         run: |
           mkdir -p .dict-src/neologd-seed
-          xz -dkf .dict-src/mecab-ipadic-neologd/seed/*.csv.xz 2>/dev/null || true
+          xz -dkf .dict-src/mecab-ipadic-neologd/seed/*.csv.xz
           for f in .dict-src/mecab-ipadic-neologd/seed/*.csv; do
             base=$(basename "$f")
             case "$base" in
