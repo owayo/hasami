@@ -10,3 +10,6 @@ crate-type = ["cdylib"]
 [dependencies]
 hasami = { path = ".." }
 pyo3 = { version = "0.28.2", features = ["extension-module"] }
+
+[build-dependencies]
+pyo3-build-config = "0.28.2"
