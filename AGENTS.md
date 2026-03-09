@@ -25,6 +25,13 @@ hasami/
 │   ├── lattice.rs      # ラティス構築 + Viterbi
 │   ├── analyzer.rs     # 高レベルAPI（DictBackend enum: Mmap/InMemory）
 │   └── ffi.rs          # C ABI インターフェース
+├── dict/               # ビルド済み辞書（Git LFS管理）
+│   ├── ipadic.hsd      # IPAdic 単体
+│   ├── ipadic-neologd.hsd  # IPAdic + NEologd（推奨）
+│   ├── unidic-cwj.hsd  # UniDic CWJ（書き言葉）
+│   └── unidic-csj.hsd  # UniDic CSJ（話し言葉）
+├── scripts/
+│   └── convert-unidic-csv.py  # UniDic CSV → IPAdic互換フォーマット変換
 ├── hasami-python/      # Python バインディング (PyO3)
 │   ├── src/lib.rs
 │   ├── build.rs        # PyO3 拡張モジュール向けリンク設定
@@ -58,4 +65,6 @@ hasami/
 cargo build --release     # リリースビルド
 cargo build --workspace   # Python バインディングを含むワークスペース全体をビルド
 cargo test --workspace    # ワークスペース全体のテスト実行
+make dict                 # 全辞書ビルド（IPAdic, NEologd, UniDic）
+make dict-clean           # ダウンロードした辞書ソースを削除
 ```
