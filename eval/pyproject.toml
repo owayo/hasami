@@ -1,0 +1,14 @@
+[project]
+name = "hasami-eval"
+version = "0.1.0"
+description = "hasami vs MeCab vs Sudachi 評価比較"
+readme = "README.md"
+requires-python = ">=3.12,<3.14"
+dependencies = [
+    "fugashi[unidic-lite]",
+    "sudachipy",
+    "sudachidict-core",
+    "tabulate",
+    "psutil",
+    "ipadic>=1.0.0",
+]

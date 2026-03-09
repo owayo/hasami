@@ -1,0 +1,12 @@
+[package]
+name = "hasami-python"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "hasami"
+crate-type = ["cdylib"]
+
+[dependencies]
+hasami = { path = ".." }
+pyo3 = { version = "0.28.2", features = ["extension-module"] }
