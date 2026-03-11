@@ -752,4 +752,149 @@ mod tests {
         assert!(!t1.is_empty());
         assert!(!t2.is_empty());
     }
+
+    // --- 追加テスト ---
+
+    #[test]
+    fn test_empty_input() {
+        let dict = make_test_dict();
+        let mut ws = LatticeWorkspace::new();
+        let tokens = ws.tokenize("", &dict);
+        assert!(tokens.is_empty());
+    }
+
+    #[test]
+    fn test_single_known_word() {
+        let dict = make_test_dict();
+        let mut ws = LatticeWorkspace::new();
+        let tokens = ws.tokenize("東京", &dict);
+        assert_eq!(tokens.len(), 1);
+        assert_eq!(&*tokens[0].surface, "東京");
+        assert!(tokens[0].is_known);
+    }
+
+    #[test]
+    fn test_unknown_word_only() {
+        let dict = make_test_dict();
+        let mut ws = LatticeWorkspace::new();
+        // "大阪" is not in the dictionary
+        let tokens = ws.tokenize("大阪", &dict);
+        assert!(!tokens.is_empty());
+        // All tokens should be unknown
+        for t in &tokens {
+            assert!(!t.is_known);
+        }
+    }
+
+    #[test]
+    fn test_token_surface_reconstruction() {
+        let dict = make_test_dict();
+        let mut ws = LatticeWorkspace::new();
+        let inputs = [
+            "東京都",
+            "東京都に住んでいる",
+            "に",
+            "いる",
+        ];
+        for input in inputs {
+            let tokens = ws.tokenize(input, &dict);
+            let reconstructed: String = tokens.iter().map(|t| &*t.surface).collect();
+            assert_eq!(
+                reconstructed, input,
+                "Surface reconstruction failed for '{}'",
+                input
+            );
+        }
+    }
+
+    #[test]
+    fn test_viterbi_prefers_lower_cost() {
+        // "東京都" (cost 2000) should be preferred over "東京" (3000) + "都" (5000)
+        let dict = make_test_dict();
+        let mut ws = LatticeWorkspace::new();
+        let tokens = ws.tokenize("東京都", &dict);
+
+        // With zero connection costs, "東京都" (2000) < "東京" (3000) + "都" (5000) = 8000
+        let surfaces: Vec<&str> = tokens.iter().map(|t| &*t.surface).collect();
+        assert_eq!(surfaces, vec!["東京都"]);
+    }
+
+    #[test]
+    fn test_word_cost_preserved() {
+        let dict = make_test_dict();
+        let mut ws = LatticeWorkspace::new();
+        let tokens = ws.tokenize("東京都", &dict);
+        assert_eq!(tokens[0].word_cost, 2000);
+    }
+
+    #[test]
+    fn test_pos_preserved() {
+        let dict = make_test_dict();
+        let mut ws = LatticeWorkspace::new();
+        let tokens = ws.tokenize("に", &dict);
+        assert_eq!(tokens.len(), 1);
+        assert_eq!(&*tokens[0].pos, "助詞,格助詞,一般,*");
+    }
+
+    #[test]
+    fn test_multiple_tokenize_calls() {
+        let dict = make_test_dict();
+        let mut ws = LatticeWorkspace::new();
+
+        // Multiple calls should all work correctly
+        for _ in 0..10 {
+            let tokens = ws.tokenize("東京都", &dict);
+            assert!(!tokens.is_empty());
+            let reconstructed: String = tokens.iter().map(|t| &*t.surface).collect();
+            assert_eq!(reconstructed, "東京都");
+        }
+    }
+
+    #[test]
+    fn test_unknown_word_has_pos() {
+        let dict = make_test_dict();
+        let mut ws = LatticeWorkspace::new();
+        let tokens = ws.tokenize("XYZ", &dict);
+        // Unknown words should still have POS assigned
+        for t in &tokens {
+            assert!(!t.pos.is_empty(), "Unknown word should have POS");
+        }
+    }
+
+    #[test]
+    fn test_lattice_workspace_default() {
+        let ws = LatticeWorkspace::default();
+        assert_eq!(ws.nodes.capacity(), 4096);
+    }
+
+    #[test]
+    fn test_long_input() {
+        let dict = make_test_dict();
+        let mut ws = LatticeWorkspace::new();
+        // Repeat known text many times
+        let input = "東京都に住んでいる".repeat(50);
+        let tokens = ws.tokenize(&input, &dict);
+        let reconstructed: String = tokens.iter().map(|t| &*t.surface).collect();
+        assert_eq!(reconstructed, input);
+    }
+
+    #[test]
+    fn test_single_char_unknown() {
+        let dict = make_test_dict();
+        let mut ws = LatticeWorkspace::new();
+        let tokens = ws.tokenize("X", &dict);
+        assert_eq!(tokens.len(), 1);
+        assert_eq!(&*tokens[0].surface, "X");
+        assert!(!tokens[0].is_known);
+    }
+
+    #[test]
+    fn test_mixed_known_unknown_sequence() {
+        let dict = make_test_dict();
+        let mut ws = LatticeWorkspace::new();
+        // "東京" is known, "ABC" is unknown, "に" is known
+        let tokens = ws.tokenize("東京ABCに", &dict);
+        let reconstructed: String = tokens.iter().map(|t| &*t.surface).collect();
+        assert_eq!(reconstructed, "東京ABCに");
+    }
 }

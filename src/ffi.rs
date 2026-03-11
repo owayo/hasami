@@ -321,4 +321,133 @@ mod tests {
             hasami_free(handle);
         }
     }
+
+    // --- 追加テスト ---
+
+    #[test]
+    fn test_null_dict_path() {
+        clear_thread_error();
+        let handle = unsafe { hasami_new(ptr::null()) };
+        assert!(handle.is_null());
+
+        let error_ptr = unsafe { hasami_last_error(ptr::null()) };
+        assert!(!error_ptr.is_null());
+        let error = unsafe { CStr::from_ptr(error_ptr) }.to_str().unwrap();
+        assert!(error.contains("NULL"));
+    }
+
+    #[test]
+    fn test_tokenize_null_handle() {
+        clear_thread_error();
+        let text = CString::new("テスト").unwrap();
+        let result = unsafe { hasami_tokenize(ptr::null_mut(), text.as_ptr()) };
+        assert_eq!(result.len, 0);
+        assert!(result.tokens.is_null());
+    }
+
+    #[test]
+    fn test_tokenize_null_text() {
+        let handle = make_handle();
+        let result = unsafe { hasami_tokenize(handle, ptr::null()) };
+        assert_eq!(result.len, 0);
+
+        let error_ptr = unsafe { hasami_last_error(handle) };
+        assert!(!error_ptr.is_null());
+
+        unsafe { hasami_free(handle) };
+    }
+
+    #[test]
+    fn test_tokenize_empty_text() {
+        let handle = make_handle();
+        let text = CString::new("").unwrap();
+        let result = unsafe { hasami_tokenize(handle, text.as_ptr()) };
+        assert_eq!(result.len, 0);
+
+        unsafe { hasami_free(handle) };
+    }
+
+    #[test]
+    fn test_free_null_handle() {
+        // Should not crash
+        unsafe { hasami_free(ptr::null_mut()) };
+    }
+
+    #[test]
+    fn test_free_tokens_null() {
+        // Should not crash
+        unsafe {
+            hasami_free_tokens(HasamiTokenList {
+                tokens: ptr::null_mut(),
+                len: 0,
+                capacity: 0,
+            });
+        }
+    }
+
+    #[test]
+    fn test_last_error_null_handle() {
+        clear_thread_error();
+        let error_ptr = unsafe { hasami_last_error(ptr::null()) };
+        // No error set yet, should be null
+        assert!(error_ptr.is_null());
+    }
+
+    #[test]
+    fn test_tokenize_known_word_fields() {
+        let handle = make_handle();
+        let text = CString::new("猫").unwrap();
+        let result = unsafe { hasami_tokenize(handle, text.as_ptr()) };
+        assert_eq!(result.len, 1);
+
+        unsafe {
+            let token = &*result.tokens;
+            assert!(!token.surface.is_null());
+            let surface = CStr::from_ptr(token.surface).to_str().unwrap();
+            assert_eq!(surface, "猫");
+
+            assert!(!token.pos.is_null());
+            let pos = CStr::from_ptr(token.pos).to_str().unwrap();
+            assert!(pos.contains("名詞"));
+
+            assert_eq!(token.is_known, 1);
+
+            hasami_free_tokens(result);
+            hasami_free(handle);
+        }
+    }
+
+    #[test]
+    fn test_error_cleared_on_success() {
+        let handle = make_handle();
+
+        // First: trigger error with invalid UTF-8
+        let invalid = CString::new(vec![0xFF]).unwrap();
+        let _ = unsafe { hasami_tokenize(handle, invalid.as_ptr()) };
+        assert!(!unsafe { hasami_last_error(handle) }.is_null());
+
+        // Then: successful tokenize should clear error
+        let text = CString::new("猫").unwrap();
+        let result = unsafe { hasami_tokenize(handle, text.as_ptr()) };
+        assert!(unsafe { hasami_last_error(handle) }.is_null());
+
+        unsafe {
+            hasami_free_tokens(result);
+            hasami_free(handle);
+        }
+    }
+
+    #[test]
+    fn test_multiple_tokenize_calls() {
+        let handle = make_handle();
+
+        for _ in 0..10 {
+            let text = CString::new("猫").unwrap();
+            let result = unsafe { hasami_tokenize(handle, text.as_ptr()) };
+            assert_eq!(result.len, 1);
+            unsafe { hasami_free_tokens(result) };
+        }
+
+        unsafe { hasami_free(handle) };
+    }
 }

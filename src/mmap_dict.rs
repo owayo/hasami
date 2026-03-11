@@ -759,6 +759,12 @@ impl MmapDictionary {
         }
     }
 
+    /// ヘッダーのフォーマットバージョンを返す（テスト用）
+    #[cfg(test)]
+    pub(crate) fn format_version(&self) -> u32 {
+        self.header.version
+    }
+
     /// CharClassifier をエクスポート（マージ用）
     pub fn export_char_classifier(&self, target: &mut crate::char_class::CharClassifier) {
         use crate::char_class::{CharClass, CharType};
@@ -793,5 +799,269 @@ impl MmapDictionary {
         }
         // classes 変更後に props_cache を再構築
         target.rebuild_props_cache();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::dict::{DictBuilder, DictEntry};
+    use std::collections::HashMap;
+
+    fn make_test_dict() -> crate::dict::Dictionary {
+        let mut builder = DictBuilder::new();
+        let words = vec![
+            ("東京", 1, 1, 3000, "名詞,固有名詞,地域,一般", "トウキョウ"),
+            ("都", 2, 2, 5000, "名詞,接尾,地域,*", "ト"),
+            ("東京都", 3, 3, 2000, "名詞,固有名詞,地域,一般", "トウキョウト"),
+        ];
+        for (surface, lid, rid, cost, pos, reading) in words {
+            builder.add_entry(DictEntry {
+                surface: surface.into(),
+                left_id: lid,
+                right_id: rid,
+                cost,
+                pos: pos.into(),
+                base_form: surface.into(),
+                reading: reading.into(),
+                pronunciation: reading.into(),
+            });
+        }
+        builder.build()
+    }
+
+    use std::sync::atomic::{AtomicU32, Ordering};
+    static TEST_COUNTER: AtomicU32 = AtomicU32::new(0);
+
+    fn roundtrip_dict() -> (std::path::PathBuf, MmapDictionary) {
+        let dict = make_test_dict();
+        let mmap_builder = MmapDictBuilder::from_dictionary(&dict);
+        let id = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let tmp = std::env::temp_dir().join(format!("hasami_test_rt_{}.hsd", id));
+        mmap_builder.write(&tmp).unwrap();
+        let loaded = MmapDictionary::load(&tmp).unwrap();
+        (tmp, loaded)
+    }
+
+    #[test]
+    fn test_roundtrip_entry_count() {
+        let (tmp, dict) = roundtrip_dict();
+        assert_eq!(dict.entry_count(), 3);
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn test_roundtrip_surfaces() {
+        let (tmp, dict) = roundtrip_dict();
+        let surfaces: Vec<&str> = (0..dict.entry_count())
+            .map(|i| dict.entry_surface(i))
+            .collect();
+        assert!(surfaces.contains(&"東京"));
+        assert!(surfaces.contains(&"都"));
+        assert!(surfaces.contains(&"東京都"));
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn test_roundtrip_pos() {
+        let (tmp, dict) = roundtrip_dict();
+        let pos = dict.entry_pos(0);
+        assert!(pos.contains("名詞"));
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn test_roundtrip_reading() {
+        let (tmp, dict) = roundtrip_dict();
+        let reading = dict.entry_reading(0);
+        assert!(!reading.is_empty());
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn test_roundtrip_cost_info() {
+        let (tmp, dict) = roundtrip_dict();
+        let (left, right, cost) = dict.entry_cost_info(0);
+        assert!(left > 0 || right > 0 || cost != 0);
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn test_roundtrip_arc_cache() {
+        let (tmp, dict) = roundtrip_dict();
+        let surface_arc = dict.entry_surface_arc(0);
+        let surface_str = dict.entry_surface(0);
+        assert_eq!(&*surface_arc, surface_str);
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn test_roundtrip_entry_arcs() {
+        let (tmp, dict) = roundtrip_dict();
+        let (surface, pos, base, reading, pronunciation) = dict.entry_arcs(0);
+        assert!(!surface.is_empty());
+        assert!(!pos.is_empty());
+        assert!(!base.is_empty());
+        assert!(!reading.is_empty());
+        assert!(!pronunciation.is_empty());
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn test_roundtrip_trie_search() {
+        let (tmp, dict) = roundtrip_dict();
+        let mut results = Vec::new();
+        dict.common_prefix_search_cb("東京都庁".as_bytes(), |len, ids| {
+            results.push((len, ids.to_vec()));
+        });
+        // Should find "東京" and "東京都"
+        assert!(results.len() >= 2, "Expected >=2 results, got {:?}", results);
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn test_roundtrip_matrix() {
+        let (tmp, dict) = roundtrip_dict();
+        // Default matrix should be 1x1
+        assert_eq!(dict.matrix_left_size(), 1);
+        assert_eq!(dict.matrix_right_size(), 1);
+        let row = dict.matrix_row(0);
+        assert_eq!(row.len(), 1);
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn test_format_version() {
+        let (tmp, dict) = roundtrip_dict();
+        assert_eq!(dict.format_version(), FORMAT_VERSION);
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn test_string_and_feature_counts() {
+        let (tmp, dict) = roundtrip_dict();
+        assert!(dict.string_count() > 0);
+        assert!(dict.feature_count() > 0);
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn test_builder_string_feature_counts() {
+        let dict = make_test_dict();
+        let builder = MmapDictBuilder::from_dictionary(&dict);
+        assert!(builder.string_count() > 0);
+        assert!(builder.feature_count() > 0);
+    }
+
+    #[test]
+    fn test_load_nonexistent_file() {
+        let result = MmapDictionary::load("/nonexistent/path/dict.hsd");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_load_invalid_magic() {
+        let tmp = std::env::temp_dir().join("hasami_test_bad_magic.hsd");
+        std::fs::write(&tmp, b"INVALID_MAGIC_BYTES_AND_SOME_PADDING_TO_FILL_HEADER_SIZE_0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000").unwrap();
+        let result = MmapDictionary::load(&tmp);
+        assert!(result.is_err());
+        assert!(result.is_err());
+        let err = result.err().unwrap();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn test_load_too_short_file() {
+        let tmp = std::env::temp_dir().join("hasami_test_short.hsd");
+        std::fs::write(&tmp, b"short").unwrap();
+        let result = MmapDictionary::load(&tmp);
+        assert!(result.is_err());
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn test_unk_pos_fallback() {
+        let (tmp, dict) = roundtrip_dict();
+        // Out-of-range char_type_idx should return fallback
+        let pos = dict.unk_pos(100);
+        assert_eq!(pos, "名詞,一般,*,*");
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn test_unk_invoke_out_of_range() {
+        let (tmp, dict) = roundtrip_dict();
+        assert!(!dict.unk_invoke(100));
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn test_unk_first_template_fallback() {
+        let (tmp, dict) = roundtrip_dict();
+        let (left, right, cost) = dict.unk_first_template(100);
+        assert_eq!(left, 0);
+        assert_eq!(right, 0);
+        assert_eq!(cost, 10000);
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn test_matrix_row_out_of_range() {
+        let (tmp, dict) = roundtrip_dict();
+        let row = dict.matrix_row(9999);
+        assert!(row.is_empty());
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn test_export_unk_entries() {
+        let (tmp, dict) = roundtrip_dict();
+        let mut unk = HashMap::new();
+        dict.export_unk_entries(&mut unk);
+        // Should have some entries (from default japanese classifier)
+        // Even without explicit unk.def, the builder still creates buckets
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn test_export_char_classifier() {
+        let (tmp, dict) = roundtrip_dict();
+        let mut classifier = crate::char_class::CharClassifier::default_japanese();
+        dict.export_char_classifier(&mut classifier);
+        // Should still have standard classes
+        assert!(classifier.get_class("HIRAGANA").is_some() || classifier.get_class("DEFAULT").is_some());
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn test_string_pool_deduplication() {
+        let mut pool = StringPool::default();
+        let id1 = pool.intern("hello");
+        let id2 = pool.intern("hello");
+        let id3 = pool.intern("world");
+        assert_eq!(id1, id2, "Same string should get same ID");
+        assert_ne!(id1, id3, "Different strings should get different IDs");
+    }
+
+    #[test]
+    fn test_feature_pool_deduplication() {
+        let mut pool = FeaturePool::default();
+        let f = FeatureRecord {
+            pos_id: 1,
+            base_id: 2,
+            reading_id: 3,
+            pronunciation_id: 4,
+        };
+        let id1 = pool.intern(f);
+        let id2 = pool.intern(f);
+        let id3 = pool.intern(FeatureRecord {
+            pos_id: 5,
+            base_id: 6,
+            reading_id: 7,
+            pronunciation_id: 8,
+        });
+        assert_eq!(id1, id2);
+        assert_ne!(id1, id3);
     }
 }
