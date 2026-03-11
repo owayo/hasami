@@ -478,4 +478,210 @@ mod tests {
         let props = cc.props_for(CharType::Katakana);
         assert!(!props.invoke);
     }
+
+    // --- 追加テスト: 文字分類の網羅的カバレッジ ---
+
+    #[test]
+    fn test_classify_fullwidth_alpha() {
+        let cc = CharClassifier::default_japanese();
+        assert_eq!(cc.classify_char('Ａ'), CharType::Alpha);
+        assert_eq!(cc.classify_char('ｚ'), CharType::Alpha);
+    }
+
+    #[test]
+    fn test_classify_fullwidth_numeric() {
+        let cc = CharClassifier::default_japanese();
+        assert_eq!(cc.classify_char('０'), CharType::NumericWide);
+        assert_eq!(cc.classify_char('９'), CharType::NumericWide);
+    }
+
+    #[test]
+    fn test_classify_halfwidth_katakana() {
+        let cc = CharClassifier::default_japanese();
+        assert_eq!(cc.classify_char('ｱ'), CharType::Katakana);
+        assert_eq!(cc.classify_char('ﾝ'), CharType::Katakana);
+    }
+
+    #[test]
+    fn test_classify_cjk_extension_b() {
+        let cc = CharClassifier::default_japanese();
+        // CJK Unified Ideographs Extension B (U+20000)
+        assert_eq!(cc.classify_char('\u{20000}'), CharType::Kanji);
+    }
+
+    #[test]
+    fn test_classify_ascii_symbols() {
+        let cc = CharClassifier::default_japanese();
+        for c in "!@#$%^&*(){}[]|\\:;\"'<>,./~`".chars() {
+            let ct = cc.classify_char(c);
+            assert!(
+                ct == CharType::Symbol || ct == CharType::Default,
+                "Expected Symbol or Default for '{}', got {:?}",
+                c,
+                ct
+            );
+        }
+    }
+
+    #[test]
+    fn test_classify_fullwidth_symbols() {
+        let cc = CharClassifier::default_japanese();
+        assert_eq!(cc.classify_char('。'), CharType::Symbol);
+        assert_eq!(cc.classify_char('、'), CharType::Symbol);
+        assert_eq!(cc.classify_char('！'), CharType::Symbol);
+    }
+
+    #[test]
+    fn test_classify_space_variants() {
+        let cc = CharClassifier::default_japanese();
+        assert_eq!(cc.classify_char(' '), CharType::Space);     // ASCII space
+        assert_eq!(cc.classify_char('\u{3000}'), CharType::Space); // ideographic space
+        assert_eq!(cc.classify_char('\t'), CharType::Space);     // tab
+        assert_eq!(cc.classify_char('\n'), CharType::Space);     // newline
+    }
+
+    #[test]
+    fn test_classify_hiragana_range() {
+        let cc = CharClassifier::default_japanese();
+        assert_eq!(cc.classify_char('ぁ'), CharType::Hiragana);
+        assert_eq!(cc.classify_char('ん'), CharType::Hiragana);
+        assert_eq!(cc.classify_char('ゔ'), CharType::Hiragana);
+    }
+
+    #[test]
+    fn test_classify_katakana_range() {
+        let cc = CharClassifier::default_japanese();
+        assert_eq!(cc.classify_char('ァ'), CharType::Katakana);
+        assert_eq!(cc.classify_char('ン'), CharType::Katakana);
+        assert_eq!(cc.classify_char('ヴ'), CharType::Katakana);
+    }
+
+    #[test]
+    fn test_type_index_roundtrip() {
+        let all_types = [
+            CharType::Hiragana,
+            CharType::Katakana,
+            CharType::Kanji,
+            CharType::Alpha,
+            CharType::Numeric,
+            CharType::NumericWide,
+            CharType::Symbol,
+            CharType::Space,
+            CharType::Default,
+        ];
+        // Each type maps to a unique index 0..8
+        let mut indices: Vec<usize> = all_types.iter().map(|&ct| type_index(ct)).collect();
+        indices.sort();
+        assert_eq!(indices, (0..9).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn test_class_name_mapping() {
+        assert_eq!(CharType::Hiragana.class_name(), "HIRAGANA");
+        assert_eq!(CharType::Katakana.class_name(), "KATAKANA");
+        assert_eq!(CharType::Kanji.class_name(), "KANJI");
+        assert_eq!(CharType::Alpha.class_name(), "ALPHA");
+        assert_eq!(CharType::Numeric.class_name(), "NUMERIC");
+        assert_eq!(CharType::NumericWide.class_name(), "NUMERIC");
+        assert_eq!(CharType::Symbol.class_name(), "SYMBOL");
+        assert_eq!(CharType::Space.class_name(), "SPACE");
+        assert_eq!(CharType::Default.class_name(), "DEFAULT");
+    }
+
+    #[test]
+    fn test_group_at_empty_string() {
+        let cc = CharClassifier::default_japanese();
+        let groups = cc.group_at("", 0);
+        assert!(groups.is_empty());
+    }
+
+    #[test]
+    fn test_group_at_single_char() {
+        let cc = CharClassifier::default_japanese();
+        let groups = cc.group_at("A", 0);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].0, 1);
+        assert_eq!(groups[0].1, CharType::Alpha);
+    }
+
+    #[test]
+    fn test_group_at_mixed_script_boundary() {
+        let cc = CharClassifier::default_japanese();
+        // Alpha group followed by hiragana
+        let groups = cc.group_at("ABCあいう", 0);
+        assert_eq!(groups[0].1, CharType::Alpha);
+        assert_eq!(groups[0].0, 3); // "ABC" = 3 bytes
+    }
+
+    #[test]
+    fn test_group_at_kanji_max_length() {
+        let cc = CharClassifier::default_japanese();
+        // KANJI has group=false, length=2 → should get individual chars up to 2
+        let groups = cc.group_at("漢字列", 0);
+        assert!(groups.len() <= 2);
+        assert_eq!(groups[0].1, CharType::Kanji);
+    }
+
+    #[test]
+    fn test_group_at_cb_consistency() {
+        let cc = CharClassifier::default_japanese();
+        let text = "カタカナabc漢字";
+        let groups = cc.group_at(text, 0);
+
+        let mut cb_results = Vec::new();
+        cc.group_at_cb(text, 0, |len, ct| {
+            cb_results.push((len, ct));
+        });
+        assert_eq!(groups, cb_results);
+    }
+
+    #[test]
+    fn test_from_definitions() {
+        let mut classes = HashMap::new();
+        classes.insert(
+            "HIRAGANA".to_string(),
+            CharClass {
+                name: "HIRAGANA".to_string(),
+                invoke: true,
+                group: true,
+                length: 5,
+            },
+        );
+        let ranges = vec![(0x3040, 0x309F, "HIRAGANA".to_string())];
+        let cc = CharClassifier::from_definitions(classes, ranges);
+
+        assert_eq!(cc.classify_char('あ'), CharType::Hiragana);
+        let props = cc.props_for(CharType::Hiragana);
+        assert!(props.invoke);
+        assert_eq!(props.max_length, 5);
+    }
+
+    #[test]
+    fn test_get_class_existing() {
+        let cc = CharClassifier::default_japanese();
+        let cls = cc.get_class("KATAKANA");
+        assert!(cls.is_some());
+        assert!(cls.unwrap().group);
+    }
+
+    #[test]
+    fn test_get_class_nonexistent() {
+        let cc = CharClassifier::default_japanese();
+        assert!(cc.get_class("NONEXISTENT").is_none());
+    }
+
+    #[test]
+    fn test_default_japanese_has_all_classes() {
+        let cc = CharClassifier::default_japanese();
+        let expected = [
+            "DEFAULT", "SPACE", "KANJI", "HIRAGANA", "KATAKANA", "ALPHA", "NUMERIC", "SYMBOL",
+        ];
+        for name in expected {
+            assert!(
+                cc.get_class(name).is_some(),
+                "Missing class: {}",
+                name
+            );
+        }
+    }
 }

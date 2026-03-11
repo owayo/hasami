@@ -394,4 +394,133 @@ mod tests {
         let results = trie.common_prefix_search(b"world");
         assert!(results.is_empty());
     }
+
+    // --- 追加テスト ---
+
+    #[test]
+    fn test_empty_entries() {
+        let entries: Vec<(&[u8], u32)> = vec![];
+        let trie = DoubleArrayTrie::build(&entries);
+        let results = trie.common_prefix_search(b"anything");
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_empty_input() {
+        let entries = vec![("test".as_bytes(), 0u32)];
+        let trie = DoubleArrayTrie::build(&entries);
+        let results = trie.common_prefix_search(b"");
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_single_byte_key() {
+        let entries = vec![("a".as_bytes(), 42u32)];
+        let trie = DoubleArrayTrie::build(&entries);
+        let results = trie.common_prefix_search(b"abc");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0], (1, vec![42]));
+    }
+
+    #[test]
+    fn test_exact_match() {
+        let entries = vec![("hello".as_bytes(), 0u32)];
+        let trie = DoubleArrayTrie::build(&entries);
+        let results = trie.common_prefix_search(b"hello");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, 5);
+    }
+
+    #[test]
+    fn test_prefix_chain() {
+        // "a" < "ab" < "abc" < "abcd" should all match
+        let entries = vec![
+            ("a".as_bytes(), 0u32),
+            ("ab".as_bytes(), 1),
+            ("abc".as_bytes(), 2),
+            ("abcd".as_bytes(), 3),
+        ];
+        let trie = DoubleArrayTrie::build(&entries);
+        let results = trie.common_prefix_search(b"abcde");
+        assert_eq!(results.len(), 4);
+        assert_eq!(results[0], (1, vec![0]));
+        assert_eq!(results[1], (2, vec![1]));
+        assert_eq!(results[2], (3, vec![2]));
+        assert_eq!(results[3], (4, vec![3]));
+    }
+
+    #[test]
+    fn test_large_trie() {
+        // Build with many entries to stress test
+        let words: Vec<String> = (0..1000).map(|i| format!("word{:04}", i)).collect();
+        let entries: Vec<(&[u8], u32)> = words
+            .iter()
+            .enumerate()
+            .map(|(i, w)| (w.as_bytes(), i as u32))
+            .collect();
+        let trie = DoubleArrayTrie::build(&entries);
+
+        // Verify a few lookups
+        let results = trie.common_prefix_search(b"word0042xxx");
+        assert!(!results.is_empty());
+        // "word0042" should match with value 42
+        let found = results.iter().any(|(_, vals)| vals.contains(&42));
+        assert!(found, "Expected value 42 in results: {:?}", results);
+    }
+
+    #[test]
+    fn test_num_nodes_and_memory() {
+        let entries = vec![
+            ("cat".as_bytes(), 0u32),
+            ("car".as_bytes(), 1),
+            ("card".as_bytes(), 2),
+        ];
+        let trie = DoubleArrayTrie::build(&entries);
+        assert!(trie.num_nodes() > 0);
+        assert!(trie.memory_usage() > 0);
+    }
+
+    #[test]
+    fn test_progress_callback() {
+        let entries: Vec<String> = (0..100).map(|i| format!("entry{}", i)).collect();
+        let entries: Vec<(&[u8], u32)> = entries
+            .iter()
+            .enumerate()
+            .map(|(i, s)| (s.as_bytes(), i as u32))
+            .collect();
+
+        let mut called = false;
+        let _trie = DoubleArrayTrie::build_with_progress(&entries, |processed, total| {
+            assert!(processed <= total);
+            called = true;
+        });
+        // With 100 entries, progress might not be called (threshold is 10,000)
+        // but the trie should still be valid
+        let _ = called;
+    }
+
+    #[test]
+    fn test_shared_prefix_different_values() {
+        let entries = vec![
+            ("東京".as_bytes(), 0u32),
+            ("東京都".as_bytes(), 1),
+            ("東京タワー".as_bytes(), 2),
+        ];
+        let trie = DoubleArrayTrie::build(&entries);
+
+        let results = trie.common_prefix_search("東京都庁".as_bytes());
+        assert_eq!(results.len(), 2); // "東京" and "東京都"
+        assert_eq!(results[0].1, vec![0]);
+        assert_eq!(results[1].1, vec![1]);
+    }
+
+    #[test]
+    fn test_internal_slices_accessible() {
+        let entries = vec![("abc".as_bytes(), 0u32)];
+        let trie = DoubleArrayTrie::build(&entries);
+        assert!(!trie.base_slice().is_empty());
+        assert!(!trie.check_slice().is_empty());
+        assert!(!trie.output_slice().is_empty());
+        assert!(!trie.value_pool_slice().is_empty());
+    }
 }
