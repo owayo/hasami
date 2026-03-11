@@ -19,63 +19,116 @@ struct BuildNode {
     values: Vec<u32>,
 }
 
-/// 構築時の空きスロット管理
+/// 構築時の空きスロット管理（ビットセットベース）
+///
+/// 空きスロットを `Vec<u64>` のビットセットで管理し、
+/// `trailing_zeros` を使って次の空きスロットを高速に検索する。
+/// 従来の `Vec<bool>` + 線形スキャンに比べ、64 スロットを 1 命令で
+/// スキップできるため、大規模辞書の Trie 構築が大幅に高速化される。
 struct SlotAllocator {
-    used: Vec<bool>,
+    /// ビットセット: bit i が 1 ならスロット i は使用済み
+    words: Vec<u64>,
+    /// 最小の未使用スロット（キャッシュ）
     search_start: usize,
 }
 
 impl SlotAllocator {
     fn new(initial_size: usize) -> Self {
+        let nwords = initial_size.div_ceil(64);
         SlotAllocator {
-            used: vec![false; initial_size],
-            search_start: 1,
+            words: vec![0u64; nwords],
+            search_start: 0,
         }
     }
 
     fn ensure_size(&mut self, min_len: usize) {
-        if self.used.len() < min_len {
-            self.used.resize(min_len, false);
+        let nwords = min_len.div_ceil(64);
+        if nwords > self.words.len() {
+            self.words.resize(nwords, 0);
         }
     }
 
     fn mark_used(&mut self, pos: usize) {
         self.ensure_size(pos + 1);
-        self.used[pos] = true;
-        while self.search_start < self.used.len() && self.used[self.search_start] {
-            self.search_start += 1;
+        let word_idx = pos / 64;
+        self.words[word_idx] |= 1u64 << (pos % 64);
+        if pos == self.search_start {
+            self.search_start = self.next_free_from(pos + 1);
         }
     }
 
     #[inline]
     fn is_free(&self, pos: usize) -> bool {
-        pos >= self.used.len() || !self.used[pos]
+        let word_idx = pos / 64;
+        if word_idx >= self.words.len() {
+            return true; // 範囲外 = 空き
+        }
+        self.words[word_idx] & (1u64 << (pos % 64)) == 0
+    }
+
+    /// `start` 以降の最初の空きスロットをビット演算で高速検索
+    fn next_free_from(&self, start: usize) -> usize {
+        let mut word_idx = start / 64;
+        let bit_idx = start % 64;
+
+        if word_idx >= self.words.len() {
+            return start; // 範囲外 = 空き
+        }
+
+        // 最初のワード（部分マスク付き）
+        let mask = !0u64 << bit_idx;
+        let free_bits = !self.words[word_idx] & mask;
+        if free_bits != 0 {
+            return word_idx * 64 + free_bits.trailing_zeros() as usize;
+        }
+
+        // 後続ワードをスキャン
+        word_idx += 1;
+        while word_idx < self.words.len() {
+            if self.words[word_idx] != u64::MAX {
+                return word_idx * 64 + (!self.words[word_idx]).trailing_zeros() as usize;
+            }
+            word_idx += 1;
+        }
+
+        // 全て使用済み → 範囲外の先頭
+        self.words.len() * 64
     }
 
     fn find_base(&self, labels: &[u8]) -> i32 {
         let min_label = *labels.iter().min().unwrap() as usize;
-        let start = if self.search_start > min_label {
-            self.search_start - min_label
-        } else {
-            1
-        };
 
-        'outer: for b in start.. {
-            for &label in labels {
-                let idx = b + label as usize;
-                if !self.is_free(idx) {
-                    continue 'outer;
-                }
+        // b >= 1 なので pos = b + min_label >= min_label + 1
+        let start = self.search_start.max(min_label + 1);
+        let mut pos = self.next_free_from(start);
+
+        loop {
+            let b = pos - min_label;
+
+            let all_free = labels.iter().all(|&label| self.is_free(b + label as usize));
+
+            if all_free {
+                return b as i32;
             }
-            return b as i32;
+
+            pos = self.next_free_from(pos + 1);
         }
-        unreachable!()
     }
 }
 
 impl DoubleArrayTrie {
     /// ソートされたキー・値ペアからDouble-Array Trieを構築
     pub fn build(entries: &[(&[u8], u32)]) -> Self {
+        Self::build_with_progress(entries, |_, _| {})
+    }
+
+    /// プログレスコールバック付きでTrieを構築
+    ///
+    /// `progress(processed, total)` が定期的に呼び出される。
+    pub fn build_with_progress(
+        entries: &[(&[u8], u32)],
+        mut progress: impl FnMut(usize, usize),
+    ) -> Self {
         // Phase 1: 中間トライ構築
         let mut nodes: Vec<BuildNode> = vec![BuildNode {
             children: BTreeMap::new(),
@@ -122,8 +175,8 @@ impl DoubleArrayTrie {
             let da_node = node_map[int_node];
 
             processed += 1;
-            if processed % 100_000 == 0 {
-                eprintln!("  Trie progress: {}/{} nodes", processed, total);
+            if processed % 10_000 == 0 {
+                progress(processed, total);
             }
 
             if !nodes[int_node].values.is_empty() {

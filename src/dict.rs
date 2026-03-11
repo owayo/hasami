@@ -481,6 +481,13 @@ impl DictBuilder {
 
     /// 辞書をビルド
     pub fn build(self) -> Dictionary {
+        self.build_with_progress(|_, _| {})
+    }
+
+    /// プログレスコールバック付きで辞書をビルド
+    ///
+    /// `progress(processed, total)` が Trie 構築中に定期的に呼び出される。
+    pub fn build_with_progress(self, progress: impl FnMut(usize, usize)) -> Dictionary {
         // エントリからTrieを構築
         let mut trie_entries: Vec<(&[u8], u32)> = self
             .entries
@@ -492,13 +499,7 @@ impl DictBuilder {
         // バイト列でソート（Trie構築に必要ではないが効率向上）
         trie_entries.sort_by(|a, b| a.0.cmp(b.0));
 
-        eprintln!("Building trie with {} entries...", trie_entries.len());
-        let trie = DoubleArrayTrie::build(&trie_entries);
-        eprintln!(
-            "Trie built: {} nodes, {} bytes",
-            trie.num_nodes(),
-            trie.memory_usage()
-        );
+        let trie = DoubleArrayTrie::build_with_progress(&trie_entries, progress);
 
         let matrix = self.matrix.unwrap_or(ConnectionMatrix {
             left_size: 1,
