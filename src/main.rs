@@ -3,6 +3,7 @@
 use clap::{Parser, Subcommand};
 use hasami::analyzer::{Analyzer, format_mecab, format_wakachi};
 use hasami::dict::DictBuilder;
+use indicatif::{ProgressBar, ProgressStyle};
 use std::io::{self, BufRead, Write};
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
@@ -108,6 +109,18 @@ fn ensure_hsd_extension(path: &Path) -> PathBuf {
     }
 }
 
+fn make_trie_progress_bar() -> ProgressBar {
+    let pb = ProgressBar::new(0);
+    pb.set_style(
+        ProgressStyle::with_template(
+            "{spinner:.green} Building trie [{bar:40.cyan/blue}] {pos}/{len} nodes ({percent}%) [{elapsed_precise}<{eta_precise}, {per_sec}]"
+        )
+        .unwrap()
+        .progress_chars("█▉▊▋▌▍▎▏  "),
+    );
+    pb
+}
+
 fn cmd_build(input: &Path, output: &Path) -> io::Result<()> {
     eprintln!("Building dictionary from: {}", input.display());
     let start = Instant::now();
@@ -137,8 +150,14 @@ fn cmd_build(input: &Path, output: &Path) -> io::Result<()> {
         builder.load_unk(&unk_path)?;
     }
 
-    // 辞書をビルド
-    let dict = builder.build();
+    // 辞書をビルド（プログレスバー付き）
+    eprintln!("Building trie with {} entries...", builder.entry_count());
+    let pb = make_trie_progress_bar();
+    let dict = builder.build_with_progress(|processed, total| {
+        pb.set_length(total as u64);
+        pb.set_position(processed as u64);
+    });
+    pb.finish_and_clear();
     let entry_count = dict.entries.len();
 
     // .hsd 形式で保存
@@ -181,8 +200,14 @@ fn cmd_merge(dict_path: &Path, input: &Path, output: Option<&Path>) -> io::Resul
     let new_count = builder.entry_count() - old_count;
     eprintln!("Added {} new entries", new_count);
 
-    // リビルド
-    let dict = builder.build();
+    // リビルド（プログレスバー付き）
+    eprintln!("Building trie with {} entries...", builder.entry_count());
+    let pb = make_trie_progress_bar();
+    let dict = builder.build_with_progress(|processed, total| {
+        pb.set_length(total as u64);
+        pb.set_position(processed as u64);
+    });
+    pb.finish_and_clear();
     let total = dict.entries.len();
 
     // 保存
