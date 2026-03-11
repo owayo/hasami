@@ -211,4 +211,164 @@ mod tests {
             assert_eq!(tokens.len(), 4);
         }
     }
+
+    // --- 追加テスト ---
+
+    #[test]
+    fn test_sentence_boundary_detection() {
+        assert!(is_sentence_boundary('。'));
+        assert!(is_sentence_boundary('！'));
+        assert!(is_sentence_boundary('？'));
+        assert!(is_sentence_boundary('!'));
+        assert!(is_sentence_boundary('?'));
+        assert!(is_sentence_boundary('\n'));
+        assert!(!is_sentence_boundary('、'));
+        assert!(!is_sentence_boundary(' '));
+        assert!(!is_sentence_boundary('A'));
+    }
+
+    #[test]
+    fn test_tokenize_with_sentence_boundary() {
+        let mut analyzer = make_analyzer();
+        // "。" is a sentence boundary, each segment should be analyzed independently
+        let tokens = analyzer.tokenize("私は猫です。私は猫です。");
+        // Tokens should include the boundary character as unknown
+        let surfaces: Vec<&str> = tokens.iter().map(|t| &*t.surface).collect();
+        // Both sentences should be tokenized
+        assert!(surfaces.contains(&"私"));
+        assert!(surfaces.contains(&"猫"));
+    }
+
+    #[test]
+    fn test_tokenize_only_boundary_chars() {
+        let mut analyzer = make_analyzer();
+        let tokens = analyzer.tokenize("。！？");
+        // Boundary chars should still produce tokens (as unknown words)
+        assert!(!tokens.is_empty());
+    }
+
+    #[test]
+    fn test_format_mecab_basic() {
+        let mut analyzer = make_analyzer();
+        let tokens = analyzer.tokenize("私は猫です");
+        let output = format_mecab(&tokens);
+        assert!(output.contains("私\t"));
+        assert!(output.ends_with("EOS\n"));
+    }
+
+    #[test]
+    fn test_format_mecab_empty() {
+        let output = format_mecab(&[]);
+        assert_eq!(output, "EOS\n");
+    }
+
+    #[test]
+    fn test_format_wakachi_empty() {
+        let output = format_wakachi(&[]);
+        assert_eq!(output, "");
+    }
+
+    #[test]
+    fn test_tokenize_batch() {
+        let mut analyzer = make_analyzer();
+        let inputs = vec!["私は猫です", "私は猫です"];
+        let results = analyzer.tokenize_batch(&inputs);
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].len(), results[1].len());
+        // Same input should produce same output
+        let s0: Vec<&str> = results[0].iter().map(|t| &*t.surface).collect();
+        let s1: Vec<&str> = results[1].iter().map(|t| &*t.surface).collect();
+        assert_eq!(s0, s1);
+    }
+
+    #[test]
+    fn test_tokenize_batch_empty() {
+        let mut analyzer = make_analyzer();
+        let inputs: Vec<&str> = vec![];
+        let results = analyzer.tokenize_batch(&inputs);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_token_positions() {
+        let mut analyzer = make_analyzer();
+        let input = "私は猫です";
+        let tokens = analyzer.tokenize(input);
+        // Verify token positions cover the entire input without gaps
+        let mut pos = 0;
+        for t in &tokens {
+            assert_eq!(
+                t.start, pos,
+                "Gap in token positions at byte {}",
+                pos
+            );
+            assert!(t.end > t.start);
+            // Verify surface matches the input slice
+            assert_eq!(&*t.surface, &input[t.start..t.end]);
+            pos = t.end;
+        }
+        assert_eq!(pos, input.len());
+    }
+
+    #[test]
+    fn test_token_fields() {
+        let mut analyzer = make_analyzer();
+        let tokens = analyzer.tokenize("私は猫です");
+        let watashi = &tokens[0];
+        assert_eq!(&*watashi.surface, "私");
+        assert_eq!(&*watashi.pos, "名詞,代名詞,一般,*");
+        assert_eq!(&*watashi.base_form, "私");
+        assert_eq!(&*watashi.reading, "ワタシ");
+        assert!(watashi.is_known);
+    }
+
+    #[test]
+    fn test_unknown_word_handling() {
+        let mut analyzer = make_analyzer();
+        // "犬" is not in our test dictionary, should be handled as unknown
+        let tokens = analyzer.tokenize("犬");
+        assert!(!tokens.is_empty());
+        let dog = &tokens[0];
+        assert_eq!(&*dog.surface, "犬");
+        assert!(!dog.is_known);
+    }
+
+    #[test]
+    fn test_whitespace_only() {
+        let mut analyzer = make_analyzer();
+        let tokens = analyzer.tokenize("   ");
+        // Whitespace should be tokenized as unknown words
+        assert!(!tokens.is_empty());
+    }
+
+    #[test]
+    fn test_mixed_known_unknown() {
+        let mut analyzer = make_analyzer();
+        let tokens = analyzer.tokenize("私はDOGです");
+        assert!(tokens.len() >= 3);
+        // "私" should be known, "DOG" unknown, "です" known
+        let known: Vec<bool> = tokens.iter().map(|t| t.is_known).collect();
+        assert!(known[0]); // 私
+    }
+
+    #[test]
+    fn test_format_mecab_with_reading() {
+        let mut analyzer = make_analyzer();
+        let tokens = analyzer.tokenize("私は猫です");
+        let output = format_mecab(&tokens);
+        // Should include reading
+        assert!(output.contains("ワタシ"));
+    }
+
+    #[test]
+    fn test_tokenize_consistency() {
+        let mut analyzer = make_analyzer();
+        // Same input should always produce same output
+        let t1 = analyzer.tokenize("私は猫です");
+        let t2 = analyzer.tokenize("私は猫です");
+        assert_eq!(t1.len(), t2.len());
+        for (a, b) in t1.iter().zip(t2.iter()) {
+            assert_eq!(&*a.surface, &*b.surface);
+        }
+    }
 }

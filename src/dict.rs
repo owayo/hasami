@@ -455,7 +455,7 @@ impl DictBuilder {
         Ok(())
     }
 
-    fn parse_range(s: &str) -> Option<(u32, u32)> {
+    pub(crate) fn parse_range(s: &str) -> Option<(u32, u32)> {
         if let Some(pos) = s.find("..") {
             let start = u32::from_str_radix(s[2..pos].trim(), 16).ok()?;
             let end_str = &s[pos + 2..];
@@ -469,7 +469,7 @@ impl DictBuilder {
     }
 
     /// バイト列をUTF-8にデコード（EUC-JP自動検出対応）
-    fn decode_to_utf8(bytes: &[u8]) -> String {
+    pub(crate) fn decode_to_utf8(bytes: &[u8]) -> String {
         // まずUTF-8として試す
         if let Ok(s) = std::str::from_utf8(bytes) {
             return s.to_string();
@@ -549,5 +549,203 @@ mod tests {
         let results = dict.lookup("東京都".as_bytes());
         assert!(!results.is_empty());
         assert_eq!(&*results[0].1[0].surface, "東京");
+    }
+
+    // --- 追加テスト ---
+
+    #[test]
+    fn test_connection_matrix_cost() {
+        let matrix = ConnectionMatrix {
+            left_size: 3,
+            right_size: 3,
+            // 3x3 matrix: costs[right_id * left_size + left_id]
+            costs: vec![0, 1, 2, 3, 4, 5, 6, 7, 8],
+        };
+        assert_eq!(matrix.cost(0, 0), 0);
+        assert_eq!(matrix.cost(0, 1), 1);
+        assert_eq!(matrix.cost(0, 2), 2);
+        assert_eq!(matrix.cost(1, 0), 3);
+        assert_eq!(matrix.cost(2, 2), 8);
+    }
+
+    #[test]
+    fn test_connection_matrix_row() {
+        let matrix = ConnectionMatrix {
+            left_size: 3,
+            right_size: 2,
+            costs: vec![10, 20, 30, 40, 50, 60],
+        };
+        assert_eq!(matrix.row(0), &[10, 20, 30]);
+        assert_eq!(matrix.row(1), &[40, 50, 60]);
+    }
+
+    #[test]
+    fn test_connection_matrix_out_of_bounds() {
+        let matrix = ConnectionMatrix {
+            left_size: 2,
+            right_size: 2,
+            costs: vec![0, 1, 2, 3],
+        };
+        // Out of bounds should return 0 or empty
+        assert_eq!(matrix.cost(10, 0), 0);
+        assert!(matrix.row(10).is_empty());
+    }
+
+    #[test]
+    fn test_dict_builder_default() {
+        let builder = DictBuilder::default();
+        assert_eq!(builder.entry_count(), 0);
+    }
+
+    #[test]
+    fn test_dict_builder_entry_count() {
+        let mut builder = DictBuilder::new();
+        assert_eq!(builder.entry_count(), 0);
+
+        builder.add_entry(DictEntry {
+            surface: "test".into(),
+            left_id: 0,
+            right_id: 0,
+            cost: 0,
+            pos: "名詞,一般,*,*".into(),
+            base_form: "test".into(),
+            reading: "".into(),
+            pronunciation: "".into(),
+        });
+        assert_eq!(builder.entry_count(), 1);
+    }
+
+    #[test]
+    fn test_dict_lookup_multiple_entries_same_surface() {
+        let mut builder = DictBuilder::new();
+        // Two entries with same surface but different POS
+        builder.add_entry(DictEntry {
+            surface: "金".into(),
+            left_id: 1,
+            right_id: 1,
+            cost: 3000,
+            pos: "名詞,一般,*,*".into(),
+            base_form: "金".into(),
+            reading: "キン".into(),
+            pronunciation: "キン".into(),
+        });
+        builder.add_entry(DictEntry {
+            surface: "金".into(),
+            left_id: 2,
+            right_id: 2,
+            cost: 3500,
+            pos: "名詞,固有名詞,人名,姓".into(),
+            base_form: "金".into(),
+            reading: "カネ".into(),
+            pronunciation: "カネ".into(),
+        });
+
+        let dict = builder.build();
+        let results = dict.lookup("金曜日".as_bytes());
+        assert!(!results.is_empty());
+        // Should find both entries for "金"
+        let entries_for_gold = &results[0].1;
+        assert_eq!(entries_for_gold.len(), 2);
+    }
+
+    #[test]
+    fn test_dict_lookup_no_match() {
+        let mut builder = DictBuilder::new();
+        builder.add_entry(DictEntry {
+            surface: "東京".into(),
+            left_id: 1,
+            right_id: 1,
+            cost: 3000,
+            pos: "名詞,固有名詞,地域,一般".into(),
+            base_form: "東京".into(),
+            reading: "".into(),
+            pronunciation: "".into(),
+        });
+        let dict = builder.build();
+        let results = dict.lookup("大阪".as_bytes());
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_dict_builder_build_with_default_matrix() {
+        let mut builder = DictBuilder::new();
+        builder.add_entry(DictEntry {
+            surface: "テスト".into(),
+            left_id: 0,
+            right_id: 0,
+            cost: 1000,
+            pos: "名詞,一般,*,*".into(),
+            base_form: "テスト".into(),
+            reading: "テスト".into(),
+            pronunciation: "テスト".into(),
+        });
+
+        // Build without setting matrix - should use default
+        let dict = builder.build();
+        assert_eq!(dict.matrix.left_size, 1);
+        assert_eq!(dict.matrix.right_size, 1);
+    }
+
+    #[test]
+    fn test_dict_builder_set_matrix() {
+        let mut builder = DictBuilder::new();
+        builder.set_matrix(ConnectionMatrix {
+            left_size: 5,
+            right_size: 5,
+            costs: vec![0; 25],
+        });
+        let dict = builder.build();
+        assert_eq!(dict.matrix.left_size, 5);
+        assert_eq!(dict.matrix.right_size, 5);
+    }
+
+    #[test]
+    fn test_parse_range_single_value() {
+        let result = DictBuilder::parse_range("0x3040");
+        assert_eq!(result, Some((0x3040, 0x3040)));
+    }
+
+    #[test]
+    fn test_parse_range_range() {
+        let result = DictBuilder::parse_range("0x3040..0x309F");
+        assert_eq!(result, Some((0x3040, 0x309F)));
+    }
+
+    #[test]
+    fn test_parse_range_invalid() {
+        let result = DictBuilder::parse_range("invalid");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_decode_to_utf8_valid_utf8() {
+        let utf8_bytes = "こんにちは".as_bytes();
+        let result = DictBuilder::decode_to_utf8(utf8_bytes);
+        assert_eq!(result, "こんにちは");
+    }
+
+    #[test]
+    fn test_decode_to_utf8_euc_jp() {
+        // "日本語" in EUC-JP
+        let euc_jp_bytes: &[u8] = &[0xC6, 0xFC, 0xCB, 0xDC, 0xB8, 0xEC];
+        let result = DictBuilder::decode_to_utf8(euc_jp_bytes);
+        assert_eq!(result, "日本語");
+    }
+
+    #[test]
+    fn test_dict_entry_clone() {
+        let entry = DictEntry {
+            surface: "テスト".into(),
+            left_id: 1,
+            right_id: 2,
+            cost: 3000,
+            pos: "名詞,一般,*,*".into(),
+            base_form: "テスト".into(),
+            reading: "テスト".into(),
+            pronunciation: "テスト".into(),
+        };
+        let cloned = entry.clone();
+        assert_eq!(&*cloned.surface, "テスト");
+        assert_eq!(cloned.left_id, 1);
     }
 }
