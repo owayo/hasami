@@ -85,6 +85,10 @@ dict-neologd: dict-ipadic dict-download-neologd ## Build IPAdic + NEologd dictio
 		--dict $(DICT_OUT)/ipadic.hsd \
 		--input $(DICT_SRC)/neologd-seed \
 		--output $(DICT_OUT)/ipadic-neologd.hsd
+	@if [ -d "$(DICT_OUT)/user" ] && [ "$$(ls -A $(DICT_OUT)/user/*.csv 2>/dev/null)" ]; then \
+		echo "Merging user dictionary entries..."; \
+		$(HASAMI) merge --dict $(DICT_OUT)/ipadic-neologd.hsd --input $(DICT_OUT)/user; \
+	fi
 
 dict-unidic-cwj: release dict-download-unidic-cwj ## Build UniDic CWJ (書き言葉) dictionary
 	@mkdir -p $(DICT_SRC)/unidic-cwj-converted $(DICT_OUT)
