@@ -7,6 +7,11 @@ use std::io;
 use std::path::Path;
 use std::sync::Arc;
 
+/// 文字列が全てカタカナ（U+30A0〜U+30FF）かどうか判定する
+fn is_katakana_str(s: &str) -> bool {
+    !s.is_empty() && s.chars().all(|c| ('\u{30A0}'..='\u{30FF}').contains(&c))
+}
+
 /// 辞書エントリ（1形態素に対応）
 #[derive(Clone, Debug)]
 pub struct DictEntry {
@@ -191,6 +196,26 @@ impl DictBuilder {
     /// 現在のエントリ数
     pub fn entry_count(&self) -> usize {
         self.entries.len()
+    }
+
+    /// pronunciation が カタカナでないエントリを reading で置き換える
+    ///
+    /// SudachiDict 由来のエントリで pronunciation に表層形（漢字・ひらがな等）が
+    /// 入っているケースを修復する。
+    ///
+    /// Returns: 修復されたエントリ数
+    pub fn repair_pronunciation(&mut self) -> usize {
+        let mut fixed = 0;
+        for entry in &mut self.entries {
+            if !entry.pronunciation.is_empty()
+                && !is_katakana_str(&entry.pronunciation)
+                && is_katakana_str(&entry.reading)
+            {
+                entry.pronunciation = entry.reading.clone();
+                fixed += 1;
+            }
+        }
+        fixed
     }
 
     /// 接続行列を直接設定
