@@ -119,21 +119,33 @@ def tokenize_sudachi(text):
         return "(実行失敗)"
 
 
-def extract_surfaces(output):
-    """解析出力から表層形のリストを抽出する.
+def extract_tokens(output, is_sudachi_rs=False):
+    """解析出力から表層形と読みのリストを抽出する.
 
     Returns:
-        list[str]: 表層形のリスト。
+        list[tuple[str, str]]: (表層形, 読み) のリスト。
 
     """
-    surfaces = []
+    tokens = []
     for line in output.splitlines():
         if line == "EOS" or not line.strip():
             continue
         parts = line.split("\t")
-        if parts:
-            surfaces.append(parts[0])
-    return surfaces
+        if not parts:
+            continue
+        surface = parts[0]
+        reading = ""
+        if is_sudachi_rs and len(parts) >= 4:
+            # sudachi.rs -a: surface\tpos\tnorm\tsurf\treading
+            reading = parts[4] if len(parts) >= 5 else ""
+        elif len(parts) >= 2:
+            # hasami format: surface \t pos,reading,pronunciation
+            fields = parts[1].split(",")
+            # hasami output: POS1,POS2,POS3,POS4,base_form,reading,pronunciation
+            if len(fields) >= 6:
+                reading = fields[5]
+        tokens.append((surface, reading))
+    return tokens
 
 
 def compare(text):
@@ -147,20 +159,25 @@ def compare(text):
     # hasami 各辞書
     for label, dict_path in HASAMI_DICTS:
         output = tokenize_hasami(text, dict_path)
-        surfaces = extract_surfaces(output)
-        results.append((label, surfaces, output))
+        tokens = extract_tokens(output)
+        results.append((label, tokens, output))
 
     # sudachi.rs
     output = tokenize_sudachi(text)
-    surfaces = extract_surfaces(output)
-    results.append(("sudachi.rs", surfaces, output))
+    tokens = extract_tokens(output, is_sudachi_rs=True)
+    results.append(("sudachi.rs", tokens, output))
 
-    # 分割結果サマリ
+    # 分割 + 読みサマリ
     print()
     max_label = max(len(r[0]) for r in results)
-    for label, surfaces, _ in results:
-        seg = " | ".join(surfaces) if surfaces else "(解析失敗)"
+    for label, tokens, _ in results:
+        if not tokens:
+            print(f"  {label:<{max_label}}  (解析失敗)")
+            continue
+        seg = " | ".join(t[0] for t in tokens)
+        reading = "".join(t[1] for t in tokens)
         print(f"  {label:<{max_label}}  {seg}")
+        print(f"  {'':<{max_label}}  読み: {reading}")
 
     # 詳細出力
     print(f"\n{'─' * 60}")
