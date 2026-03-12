@@ -82,7 +82,9 @@ cargo build --workspace
 | ファイル | 内容 | 推奨用途 |
 |---------|------|---------|
 | `dict/ipadic.hsd` | IPAdic 単体 | 軽量・基本用途 |
-| `dict/ipadic-neologd.hsd` | IPAdic + NEologd | **推奨**（新語・固有名詞対応） |
+| `dict/ipadic-neologd.hsd` | IPAdic + NEologd | 新語・固有名詞対応 |
+| `dict/ipadic-neologd-sudachi.hsd` | IPAdic + NEologd + SudachiDict | **推奨**（最大語彙） |
+| `dict/sudachi.hsd` | SudachiDict Core 単体 | Sudachi互換解析 |
 | `dict/unidic-cwj.hsd` | UniDic CWJ（書き言葉） | 言語研究・高精度品詞体系 |
 | `dict/unidic-csj.hsd` | UniDic CSJ（話し言葉） | 音声認識・会話分析 |
 
@@ -324,6 +326,16 @@ make dict
 > limitations under the License.
 
 NEologd は Apache License 2.0 に加え、IPAdic のライセンス条件も適用されます。
+
+#### SudachiDict (`dict/sudachi.hsd`, `dict/ipadic-neologd-sudachi.hsd`)
+
+[SudachiDict](https://github.com/WorksApplications/SudachiDict) Core の語彙データを変換して構築。統合辞書では品詞体系を IPAdic 互換にリマッピングしています。
+
+> Copyright (c) 2017-2023 Works Applications Co., Ltd.
+>
+> Licensed under the Apache License, Version 2.0
+
+SudachiDict には UniDic（BSD 3-Clause）および NEologd（Apache 2.0）由来のデータが含まれます。詳細は [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) を参照してください。
 
 #### UniDic (`dict/unidic-cwj.hsd`, `dict/unidic-csj.hsd`)
 
