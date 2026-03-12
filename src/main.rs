@@ -79,6 +79,17 @@ enum Commands {
         #[arg(short, long)]
         dict: PathBuf,
     },
+
+    /// 辞書のpronunciationフィールドを修復（非カタカナをreadingで置換）
+    Repair {
+        /// 辞書ファイルのパス (.hsd)
+        #[arg(short, long)]
+        dict: PathBuf,
+
+        /// 出力辞書ファイル (.hsd)。省略時は既存辞書を上書き
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
 }
 
 fn main() -> io::Result<()> {
@@ -98,6 +109,7 @@ fn main() -> io::Result<()> {
             iterations,
         } => cmd_bench(&dict, &text, iterations.get()),
         Commands::Info { dict } => cmd_info(&dict),
+        Commands::Repair { dict, output } => cmd_repair(&dict, output.as_deref()),
     }
 }
 
@@ -312,6 +324,51 @@ fn cmd_bench(dict_path: &Path, text: &str, iterations: usize) -> io::Result<()> 
     println!("Total time: {:.3}s", elapsed.as_secs_f64());
     println!("Per sentence: {:.0}ns", per_sentence);
     println!("Throughput: {:.0} sentences/sec", sentences_per_sec);
+
+    Ok(())
+}
+
+fn cmd_repair(dict_path: &Path, output: Option<&Path>) -> io::Result<()> {
+    eprintln!("Loading dictionary: {}", dict_path.display());
+    let start = Instant::now();
+
+    let mut builder = DictBuilder::new();
+    builder.load_hsd(dict_path)?;
+
+    let fixed = builder.repair_pronunciation();
+    eprintln!("Fixed {} entries with non-katakana pronunciation", fixed);
+
+    if fixed == 0 {
+        eprintln!("No entries to fix. Skipping rebuild.");
+        return Ok(());
+    }
+
+    // リビルド
+    eprintln!("Rebuilding trie with {} entries...", builder.entry_count());
+    let pb = make_trie_progress_bar();
+    let dict = builder.build_with_progress(|processed, total| {
+        pb.set_length(total as u64);
+        pb.set_position(processed as u64);
+    });
+    pb.finish_and_clear();
+    let total = dict.entries.len();
+
+    // 保存
+    let output_path = output.map_or_else(|| dict_path.to_path_buf(), |p| p.to_path_buf());
+    let output_path = ensure_hsd_extension(&output_path);
+    let v2_builder = hasami::mmap_dict::MmapDictBuilder::from_dictionary(&dict);
+    v2_builder.write(&output_path)?;
+
+    let elapsed = start.elapsed();
+    if let Ok(meta) = std::fs::metadata(&output_path) {
+        eprintln!(
+            "Repaired in {:.2}s: {} total entries, {:.1} MB -> {}",
+            elapsed.as_secs_f64(),
+            total,
+            meta.len() as f64 / 1024.0 / 1024.0,
+            output_path.display()
+        );
+    }
 
     Ok(())
 }

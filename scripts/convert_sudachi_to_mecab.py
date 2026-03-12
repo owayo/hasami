@@ -28,7 +28,7 @@ winfo CSV format (19 fields):
     [9]  conjugation_type
     [10] conjugation_form
     [11] reading
-    [12] surface_form (pronunciation)
+    [12] surface_form (書字形出現形 — NOT pronunciation)
     [13] ?
     [14] split_mode (A/B/C)
     [15-18] other
@@ -95,7 +95,10 @@ def convert_winfo(winfo_path, output_dir):
             conj_type = row[9] if row[9] else "*"
             conj_form = row[10] if row[10] else "*"
             reading = row[11] if row[11] and row[11] != "*" else ""
-            pronunciation = row[12] if row[12] and row[12] != "*" else ""
+            # SudachiDict の field 12 は書字形出現形（surface_form）であり、
+            # 発音形ではない。発音形がないため reading をそのまま使う。
+            # 助詞の読み替え（は→ワ等）は kotonoha の NJD 処理で行われる。
+            pronunciation = reading
 
             # MeCab互換CSV: 13フィールド
             writer.writerow(
