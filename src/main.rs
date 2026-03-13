@@ -90,6 +90,17 @@ enum Commands {
         #[arg(short, long)]
         output: Option<PathBuf>,
     },
+
+    /// 辞書をv2形式に変換（Trieリビルド不要、高速）
+    Convert {
+        /// 入力辞書ファイル (.hsd)
+        #[arg(short, long)]
+        dict: PathBuf,
+
+        /// 出力辞書ファイル (.hsd)。省略時は既存辞書を上書き
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
 }
 
 fn main() -> io::Result<()> {
@@ -110,6 +121,7 @@ fn main() -> io::Result<()> {
         } => cmd_bench(&dict, &text, iterations.get()),
         Commands::Info { dict } => cmd_info(&dict),
         Commands::Repair { dict, output } => cmd_repair(&dict, output.as_deref()),
+        Commands::Convert { dict, output } => cmd_convert(&dict, output.as_deref()),
     }
 }
 
@@ -365,6 +377,31 @@ fn cmd_repair(dict_path: &Path, output: Option<&Path>) -> io::Result<()> {
             "Repaired in {:.2}s: {} total entries, {:.1} MB -> {}",
             elapsed.as_secs_f64(),
             total,
+            meta.len() as f64 / 1024.0 / 1024.0,
+            output_path.display()
+        );
+    }
+
+    Ok(())
+}
+
+fn cmd_convert(dict_path: &Path, output: Option<&Path>) -> io::Result<()> {
+    eprintln!("Loading dictionary: {}", dict_path.display());
+    let start = Instant::now();
+
+    let dict = hasami::MmapDictionary::load(dict_path)?;
+
+    let output_path = output.map_or_else(|| dict_path.to_path_buf(), |p| p.to_path_buf());
+    let output_path = ensure_hsd_extension(&output_path);
+
+    dict.save_as_v2(&output_path)?;
+
+    let elapsed = start.elapsed();
+    if let Ok(meta) = std::fs::metadata(&output_path) {
+        eprintln!(
+            "Converted to v2 in {:.2}s: {} entries, {:.1} MB -> {}",
+            elapsed.as_secs_f64(),
+            dict.entry_count(),
             meta.len() as f64 / 1024.0 / 1024.0,
             output_path.display()
         );
