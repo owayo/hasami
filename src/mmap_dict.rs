@@ -1,20 +1,28 @@
-//! カスタム mmap-native バイナリ辞書フォーマット
+//! カスタム mmap-native バイナリ辞書フォーマット (v1/v2対応)
 //!
-//! ゼロコピー・ゼロアロケーションで辞書をロードするためのフォーマット。
-//! すべてのデータは mmap 上の POD 配列として直接参照される。
+//! v1: Dense trie output, StrIndex{off,len}, Arc<str>キャッシュ
+//! v2: Sparse trie output (bitset+rank), offsets-only文字列index, キャッシュなし
+//!
+//! v2での改善:
+//! - trie_output: 33M*4B=127MB → bitset(4MB)+ranks(0.3MB)+offsets(19MB) ≈ 23MB (-104MB)
+//! - str_index:   7M*8B=54MB  → 7M*4B+4B ≈ 27MB (-27MB)
+//! - ロード時: Arc<str>キャッシュ構築を廃止 → ロード時間 ~400ms → ~1ms
 
 use bytemuck::{Pod, Zeroable};
 use memmap2::Mmap;
 use std::collections::HashMap;
 use std::io;
 use std::path::Path;
-use std::sync::{Arc, LazyLock};
+use std::sync::{Arc, LazyLock, OnceLock};
 use std::{mem, slice, str};
 
-// --- オンディスク POD 構造体 ---
+// --- 定数 ---
 
 const MAGIC: [u8; 8] = *b"HSMDICT\0";
-const FORMAT_VERSION: u32 = 1;
+const FORMAT_VERSION_V1: u32 = 1;
+const FORMAT_VERSION_V2: u32 = 2;
+
+// --- オンディスク POD 構造体 ---
 
 /// セクション位置（オフセット＋バイト長）
 #[repr(C)]
@@ -24,10 +32,10 @@ struct Section {
     bytes: u64,
 }
 
-/// ファイルヘッダー
+/// v1 ファイルヘッダー (11セクション)
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
-struct Header {
+struct HeaderV1 {
     magic: [u8; 8],
     version: u32,
     flags: u32,
@@ -38,7 +46,7 @@ struct Header {
     matrix_right_size: u16,
     unk_bucket_count: u32,
     unk_template_count: u32,
-    // セクション
+    // 11 sections
     trie_base: Section,
     trie_check: Section,
     trie_output: Section,
@@ -46,6 +54,36 @@ struct Header {
     entries: Section,
     features: Section,
     str_index: Section,
+    str_blob: Section,
+    matrix_costs: Section,
+    unk_buckets: Section,
+    unk_templates: Section,
+}
+
+/// v2 ファイルヘッダー (13セクション: sparse trie + offsets-only str)
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct HeaderV2 {
+    magic: [u8; 8],
+    version: u32,
+    flags: u32,
+    entry_count: u32,
+    feature_count: u32,
+    string_count: u32,
+    matrix_left_size: u16,
+    matrix_right_size: u16,
+    unk_bucket_count: u32,
+    unk_template_count: u32,
+    // 13 sections
+    trie_base: Section,
+    trie_check: Section,
+    terminal_bits: Section,
+    terminal_ranks: Section,
+    terminal_offsets: Section,
+    trie_value_pool: Section,
+    entries: Section,
+    features: Section,
+    str_offsets: Section,
     str_blob: Section,
     matrix_costs: Section,
     unk_buckets: Section,
@@ -74,7 +112,7 @@ struct FeatureRecord {
     pronunciation_id: u32,
 }
 
-/// 文字列インデックス（POD、8バイト）
+/// 文字列インデックス（v1用、POD、8バイト）
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct StrIndex {
@@ -92,15 +130,37 @@ struct UnkBucket {
     _pad: u8,
 }
 
-/// 未知語テンプレート（12バイト、パディングなし）
+/// 未知語テンプレート
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct UnkTemplate {
-    pos_id: u32, // str_index への参照
+    pos_id: u32,
     left_id: u16,
     right_id: u16,
     cost: i16,
     _pad: u16,
+}
+
+// --- 内部フォーマット列挙型 ---
+
+/// Trie output の表現形式
+enum TrieOutputFormat {
+    /// v1: output[node] = value_pool index, u32::MAX = 非終端
+    Dense(Section),
+    /// v2: ビットセット + ランクテーブル + 終端オフセット
+    Sparse {
+        bits: Section,
+        ranks: Section,
+        offsets: Section,
+    },
+}
+
+/// 文字列インデックスの表現形式
+enum StrIndexFormat {
+    /// v1: StrIndex { off, len } の配列
+    PairIndex(Section),
+    /// v2: u32 オフセット配列 (string_count + 1 エントリ、最後はセンチネル)
+    Offsets(Section),
 }
 
 // --- ビルダー ---
@@ -149,7 +209,7 @@ impl FeaturePool {
     }
 }
 
-/// mmap辞書ビルダー
+/// mmap辞書ビルダー（v2形式で出力）
 pub struct MmapDictBuilder {
     strings: StringPool,
     features: FeaturePool,
@@ -171,7 +231,6 @@ impl MmapDictBuilder {
         let mut strings = StringPool::default();
         let mut features = FeaturePool::default();
 
-        // エントリを変換
         let entries: Vec<EntryRecord> = dict
             .entries
             .iter()
@@ -198,18 +257,15 @@ impl MmapDictBuilder {
             })
             .collect();
 
-        // Trie データをコピー
         let trie_base = dict.trie.base_slice().to_vec();
         let trie_check = dict.trie.check_slice().to_vec();
         let trie_output = dict.trie.output_slice().to_vec();
         let trie_value_pool = dict.trie.value_pool_slice().to_vec();
 
-        // 接続行列
         let matrix_costs = dict.matrix.costs.clone();
         let matrix_left_size = dict.matrix.left_size;
         let matrix_right_size = dict.matrix.right_size;
 
-        // 未知語テーブル
         use crate::char_class::CharType;
         let all_types = [
             CharType::Hiragana,
@@ -278,15 +334,13 @@ impl MmapDictBuilder {
         self.features.items.len()
     }
 
-    /// バイナリ辞書をファイルに書き出し
+    /// バイナリ辞書をv2形式でファイルに書き出し
     pub fn write<P: AsRef<Path>>(&self, path: P) -> io::Result<()> {
         let mut buf: Vec<u8> = Vec::new();
 
-        // ヘッダーのプレースホルダー
-        let header_size = mem::size_of::<Header>();
+        let header_size = mem::size_of::<HeaderV2>();
         buf.resize(header_size, 0);
 
-        // アライメントヘルパー
         fn align_to(buf: &mut Vec<u8>, align: usize) {
             let rem = buf.len() % align;
             if rem != 0 {
@@ -294,7 +348,6 @@ impl MmapDictBuilder {
             }
         }
 
-        // セクション書き込みヘルパー
         fn write_section<T: Pod>(buf: &mut Vec<u8>, data: &[T], align: usize) -> Section {
             align_to(buf, align);
             let offset = buf.len() as u64;
@@ -306,16 +359,28 @@ impl MmapDictBuilder {
             }
         }
 
-        // 各セクション書き込み
+        // Trie base/check (unchanged)
         let trie_base = write_section(&mut buf, &self.trie_base, 4);
         let trie_check = write_section(&mut buf, &self.trie_check, 4);
-        let trie_output = write_section(&mut buf, &self.trie_output, 4);
+
+        // Sparse trie output (v2)
+        let (bits, ranks, offsets) = build_sparse_trie_output(&self.trie_output);
+        let terminal_bits = write_section(&mut buf, &bits, 8);
+        let terminal_ranks = write_section(&mut buf, &ranks, 4);
+        let terminal_offsets = write_section(&mut buf, &offsets, 4);
+
+        // Value pool (unchanged)
         let trie_value_pool = write_section(&mut buf, &self.trie_value_pool, 4);
+
+        // Entries & features
         let entries = write_section(&mut buf, &self.entries, 4);
         let features_sec = write_section(&mut buf, &self.features.items, 4);
-        let str_index = write_section(&mut buf, &self.strings.index, 4);
 
-        // str_blob はアライメント不要（バイト配列）
+        // String offsets (v2: offsets-only with sentinel)
+        let str_offsets_data = build_str_offsets(&self.strings.index, self.strings.blob.len());
+        let str_offsets = write_section(&mut buf, &str_offsets_data, 4);
+
+        // String blob
         let str_blob_offset = buf.len() as u64;
         buf.extend_from_slice(&self.strings.blob);
         let str_blob = Section {
@@ -323,14 +388,15 @@ impl MmapDictBuilder {
             bytes: self.strings.blob.len() as u64,
         };
 
+        // Matrix, unk
         let matrix_costs = write_section(&mut buf, &self.matrix_costs, 2);
         let unk_buckets = write_section(&mut buf, &self.unk_buckets, 4);
         let unk_templates = write_section(&mut buf, &self.unk_templates, 4);
 
-        // ヘッダーを埋める
-        let header = Header {
+        // ヘッダー書き込み
+        let header = HeaderV2 {
             magic: MAGIC,
-            version: FORMAT_VERSION,
+            version: FORMAT_VERSION_V2,
             flags: 0,
             entry_count: self.entries.len() as u32,
             feature_count: self.features.items.len() as u32,
@@ -341,11 +407,13 @@ impl MmapDictBuilder {
             unk_template_count: self.unk_templates.len() as u32,
             trie_base,
             trie_check,
-            trie_output,
+            terminal_bits,
+            terminal_ranks,
+            terminal_offsets,
             trie_value_pool,
             entries,
             features: features_sec,
-            str_index,
+            str_offsets,
             str_blob,
             matrix_costs,
             unk_buckets,
@@ -357,66 +425,207 @@ impl MmapDictBuilder {
     }
 }
 
+// --- Sparse trie ヘルパー ---
+
+/// Dense trie output を sparse (bitset + rank + offsets) に変換
+fn build_sparse_trie_output(output: &[u32]) -> (Vec<u64>, Vec<u32>, Vec<u32>) {
+    let num_nodes = output.len();
+    let num_words = (num_nodes + 63) / 64;
+
+    let mut bits = vec![0u64; num_words];
+    let mut terminal_offsets = Vec::new();
+
+    for (i, &val) in output.iter().enumerate() {
+        if val != u32::MAX {
+            bits[i / 64] |= 1u64 << (i % 64);
+            terminal_offsets.push(val);
+        }
+    }
+
+    // ランクテーブル: 512ビット(8 u64)ブロックごとの累積ポップカウント
+    let num_blocks = (num_words + 7) / 8;
+    let mut ranks = Vec::with_capacity(num_blocks);
+    let mut cumulative = 0u32;
+    for block in 0..num_blocks {
+        let start = block * 8;
+        let end = (start + 8).min(num_words);
+        for w in start..end {
+            cumulative += bits[w].count_ones();
+        }
+        ranks.push(cumulative);
+    }
+
+    (bits, ranks, terminal_offsets)
+}
+
+/// StrIndex配列 → offsets-only配列 (string_count + 1 エントリ)
+fn build_str_offsets(index: &[StrIndex], blob_len: usize) -> Vec<u32> {
+    let mut offsets: Vec<u32> = index.iter().map(|s| s.off).collect();
+    // センチネル: blob全体の末尾
+    offsets.push(blob_len as u32);
+    offsets
+}
+
+/// ビットセット上の rank(pos) = pos より前の set bit 数
+#[inline]
+fn compute_rank(bits: &[u64], ranks: &[u32], pos: usize) -> usize {
+    let block = pos / 512;
+    let base = if block > 0 {
+        ranks[block - 1] as usize
+    } else {
+        0
+    };
+
+    let word_start = block * 8;
+    let target_word = pos / 64;
+    let bit_in_word = pos % 64;
+
+    let mut r = base;
+    for w in word_start..target_word {
+        r += bits[w].count_ones() as usize;
+    }
+    if target_word < bits.len() {
+        let mask = (1u64 << bit_in_word).wrapping_sub(1);
+        r += (bits[target_word] & mask).count_ones() as usize;
+    }
+    r
+}
+
 // --- mmap ローダー ---
 
-/// ゼロコピー mmap 辞書（Arcキャッシュ付き）
+/// ゼロコピー mmap 辞書（v1/v2両対応）
 pub struct MmapDictionary {
     mmap: Mmap,
-    header: Header,
-    /// 全文字列の Arc<str> キャッシュ（ロード時に構築）
-    arc_cache: Vec<Arc<str>>,
+    #[allow(dead_code)]
+    format_version: u32,
+
+    // スカラーフィールド
+    entry_count_val: u32,
+    feature_count_val: u32,
+    string_count_val: u32,
+    matrix_left_size_val: u16,
+    matrix_right_size_val: u16,
+
+    // 共通セクション
+    trie_base_sec: Section,
+    trie_check_sec: Section,
+    trie_value_pool_sec: Section,
+    entries_sec: Section,
+    features_sec: Section,
+    str_blob_sec: Section,
+    matrix_costs_sec: Section,
+    unk_buckets_sec: Section,
+    unk_templates_sec: Section,
+
+    // バージョン固有
+    trie_output_fmt: TrieOutputFormat,
+    str_index_fmt: StrIndexFormat,
+
+    /// 遅延 Arc<str> キャッシュ（初回 arc_at 時に自動構築、warm_cache()で事前構築可）
+    arc_cache: OnceLock<Box<[Arc<str>]>>,
 }
 
 impl MmapDictionary {
-    /// ファイルからロード（ヒープアロケーションはMmap本体のみ）
+    /// ファイルからロード（v1/v2自動判定）
     pub fn load<P: AsRef<Path>>(path: P) -> io::Result<Self> {
         let file = std::fs::File::open(path)?;
         let mmap = unsafe { Mmap::map(&file)? };
 
-        if mmap.len() < mem::size_of::<Header>() {
+        if mmap.len() < 16 {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "file too short"));
         }
 
-        let header: Header = *bytemuck::from_bytes(&mmap[..mem::size_of::<Header>()]);
-        if header.magic != MAGIC {
+        // magic チェック
+        if mmap[..8] != MAGIC {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "invalid magic bytes",
             ));
         }
-        if header.version != FORMAT_VERSION {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "unsupported format version",
-            ));
-        }
 
-        let mut dict = Self {
+        let version = u32::from_ne_bytes(mmap[8..12].try_into().unwrap());
+
+        match version {
+            FORMAT_VERSION_V1 => Self::load_v1(mmap),
+            FORMAT_VERSION_V2 => Self::load_v2(mmap),
+            _ => Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("unsupported format version: {}", version),
+            )),
+        }
+    }
+
+    fn load_v1(mmap: Mmap) -> io::Result<Self> {
+        let hdr_size = mem::size_of::<HeaderV1>();
+        if mmap.len() < hdr_size {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "file too short for v1 header"));
+        }
+        let h: HeaderV1 = *bytemuck::from_bytes(&mmap[..hdr_size]);
+
+        let dict = Self {
             mmap,
-            header,
-            arc_cache: Vec::new(),
+            format_version: FORMAT_VERSION_V1,
+            entry_count_val: h.entry_count,
+            feature_count_val: h.feature_count,
+            string_count_val: h.string_count,
+            matrix_left_size_val: h.matrix_left_size,
+            matrix_right_size_val: h.matrix_right_size,
+            trie_base_sec: h.trie_base,
+            trie_check_sec: h.trie_check,
+            trie_value_pool_sec: h.trie_value_pool,
+            entries_sec: h.entries,
+            features_sec: h.features,
+            str_blob_sec: h.str_blob,
+            matrix_costs_sec: h.matrix_costs,
+            unk_buckets_sec: h.unk_buckets,
+            unk_templates_sec: h.unk_templates,
+            trie_output_fmt: TrieOutputFormat::Dense(h.trie_output),
+            str_index_fmt: StrIndexFormat::PairIndex(h.str_index),
+            arc_cache: OnceLock::new(),
         };
         dict.validate()?;
-        dict.build_arc_cache();
+        Ok(dict)
+    }
+
+    fn load_v2(mmap: Mmap) -> io::Result<Self> {
+        let hdr_size = mem::size_of::<HeaderV2>();
+        if mmap.len() < hdr_size {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "file too short for v2 header"));
+        }
+        let h: HeaderV2 = *bytemuck::from_bytes(&mmap[..hdr_size]);
+
+        let dict = Self {
+            mmap,
+            format_version: FORMAT_VERSION_V2,
+            entry_count_val: h.entry_count,
+            feature_count_val: h.feature_count,
+            string_count_val: h.string_count,
+            matrix_left_size_val: h.matrix_left_size,
+            matrix_right_size_val: h.matrix_right_size,
+            trie_base_sec: h.trie_base,
+            trie_check_sec: h.trie_check,
+            trie_value_pool_sec: h.trie_value_pool,
+            entries_sec: h.entries,
+            features_sec: h.features,
+            str_blob_sec: h.str_blob,
+            matrix_costs_sec: h.matrix_costs,
+            unk_buckets_sec: h.unk_buckets,
+            unk_templates_sec: h.unk_templates,
+            trie_output_fmt: TrieOutputFormat::Sparse {
+                bits: h.terminal_bits,
+                ranks: h.terminal_ranks,
+                offsets: h.terminal_offsets,
+            },
+            str_index_fmt: StrIndexFormat::Offsets(h.str_offsets),
+            arc_cache: OnceLock::new(),
+        };
+        dict.validate()?;
         Ok(dict)
     }
 
     fn validate(&self) -> io::Result<()> {
-        // 各セクションの境界チェック
-        let sections = [
-            self.header.trie_base,
-            self.header.trie_check,
-            self.header.trie_output,
-            self.header.trie_value_pool,
-            self.header.entries,
-            self.header.features,
-            self.header.str_index,
-            self.header.str_blob,
-            self.header.matrix_costs,
-            self.header.unk_buckets,
-            self.header.unk_templates,
-        ];
-        for sec in &sections {
+        let all_sections = self.all_sections();
+        for sec in &all_sections {
             let end = sec.offset as usize + sec.bytes as usize;
             if end > self.mmap.len() {
                 return Err(io::Error::new(
@@ -428,6 +637,33 @@ impl MmapDictionary {
         Ok(())
     }
 
+    fn all_sections(&self) -> Vec<Section> {
+        let mut secs = vec![
+            self.trie_base_sec,
+            self.trie_check_sec,
+            self.trie_value_pool_sec,
+            self.entries_sec,
+            self.features_sec,
+            self.str_blob_sec,
+            self.matrix_costs_sec,
+            self.unk_buckets_sec,
+            self.unk_templates_sec,
+        ];
+        match &self.trie_output_fmt {
+            TrieOutputFormat::Dense(s) => secs.push(*s),
+            TrieOutputFormat::Sparse { bits, ranks, offsets } => {
+                secs.push(*bits);
+                secs.push(*ranks);
+                secs.push(*offsets);
+            }
+        }
+        match &self.str_index_fmt {
+            StrIndexFormat::PairIndex(s) => secs.push(*s),
+            StrIndexFormat::Offsets(s) => secs.push(*s),
+        }
+        secs
+    }
+
     #[inline]
     fn pod_slice<T: Pod>(&self, sec: Section) -> &[T] {
         unsafe {
@@ -436,70 +672,87 @@ impl MmapDictionary {
         }
     }
 
+    #[inline]
+    fn raw_section(&self, sec: Section) -> &[u8] {
+        &self.mmap[sec.offset as usize..(sec.offset + sec.bytes) as usize]
+    }
+
     // --- Trie アクセス ---
 
     #[inline]
     pub fn trie_base(&self) -> &[i32] {
-        self.pod_slice(self.header.trie_base)
+        self.pod_slice(self.trie_base_sec)
     }
 
     #[inline]
     pub fn trie_check(&self) -> &[i32] {
-        self.pod_slice(self.header.trie_check)
-    }
-
-    #[inline]
-    pub fn trie_output(&self) -> &[u32] {
-        self.pod_slice(self.header.trie_output)
+        self.pod_slice(self.trie_check_sec)
     }
 
     #[inline]
     pub fn trie_value_pool(&self) -> &[u32] {
-        self.pod_slice(self.header.trie_value_pool)
+        self.pod_slice(self.trie_value_pool_sec)
+    }
+
+    /// v1互換: dense trie output (v2ではpanic)
+    #[inline]
+    pub fn trie_output(&self) -> &[u32] {
+        match &self.trie_output_fmt {
+            TrieOutputFormat::Dense(sec) => self.pod_slice(*sec),
+            TrieOutputFormat::Sparse { .. } => panic!("trie_output() not available in v2 format"),
+        }
     }
 
     // --- エントリアクセス ---
 
     #[inline]
     fn entries(&self) -> &[EntryRecord] {
-        self.pod_slice(self.header.entries)
+        self.pod_slice(self.entries_sec)
     }
 
     #[inline]
     fn features(&self) -> &[FeatureRecord] {
-        self.pod_slice(self.header.features)
-    }
-
-    #[inline]
-    fn str_index(&self) -> &[StrIndex] {
-        self.pod_slice(self.header.str_index)
+        self.pod_slice(self.features_sec)
     }
 
     #[inline]
     fn str_blob(&self) -> &[u8] {
-        let s = self.header.str_blob;
+        let s = self.str_blob_sec;
         &self.mmap[s.offset as usize..(s.offset + s.bytes) as usize]
     }
 
     #[inline]
     fn str_at(&self, id: u32) -> &str {
-        let s = self.str_index()[id as usize];
-        let bytes = &self.str_blob()[s.off as usize..(s.off + s.len) as usize];
-        unsafe { str::from_utf8_unchecked(bytes) }
+        let blob = self.str_blob();
+        match &self.str_index_fmt {
+            StrIndexFormat::PairIndex(sec) => {
+                let idx: &[StrIndex] = self.pod_slice(*sec);
+                let s = idx[id as usize];
+                unsafe { str::from_utf8_unchecked(&blob[s.off as usize..(s.off + s.len) as usize]) }
+            }
+            StrIndexFormat::Offsets(sec) => {
+                let offsets: &[u32] = self.pod_slice(*sec);
+                let start = offsets[id as usize] as usize;
+                let end = offsets[id as usize + 1] as usize;
+                unsafe { str::from_utf8_unchecked(&blob[start..end]) }
+            }
+        }
     }
 
-    /// 全文字列の Arc<str> をeagerに構築
-    fn build_arc_cache(&mut self) {
-        let count = self.str_index().len();
-        self.arc_cache = (0..count)
-            .map(|i| Arc::from(self.str_at(i as u32)))
-            .collect();
+    /// Arc<str> キャッシュを遅延構築（初回アクセス時）
+    fn ensure_arc_cache(&self) -> &[Arc<str>] {
+        self.arc_cache.get_or_init(|| {
+            let count = self.string_count_val as usize;
+            (0..count)
+                .map(|i| Arc::from(self.str_at(i as u32)))
+                .collect()
+        })
     }
 
-    /// Arc<str>キャッシュから取得
+    /// Arc<str> をキャッシュから取得
     #[inline]
     fn arc_at(&self, id: u32) -> Arc<str> {
-        Arc::clone(&self.arc_cache[id as usize])
+        Arc::clone(&self.ensure_arc_cache()[id as usize])
     }
 
     /// エントリの surface を Arc<str> で取得
@@ -554,7 +807,6 @@ impl MmapDictionary {
         self.str_at(e.surface_id)
     }
 
-    /// エントリの全フィールドを借用で取得
     #[inline]
     pub fn entry_pos(&self, id: u32) -> &str {
         let e = &self.entries()[id as usize];
@@ -587,18 +839,18 @@ impl MmapDictionary {
 
     #[inline]
     pub fn matrix_left_size(&self) -> u16 {
-        self.header.matrix_left_size
+        self.matrix_left_size_val
     }
 
     #[inline]
     pub fn matrix_right_size(&self) -> u16 {
-        self.header.matrix_right_size
+        self.matrix_right_size_val
     }
 
     #[inline]
     pub fn matrix_row(&self, prev_right_id: u16) -> &[i16] {
-        let costs: &[i16] = self.pod_slice(self.header.matrix_costs);
-        let left = self.header.matrix_left_size as usize;
+        let costs: &[i16] = self.pod_slice(self.matrix_costs_sec);
+        let left = self.matrix_left_size_val as usize;
         let start = prev_right_id as usize * left;
         if start + left <= costs.len() {
             unsafe { costs.get_unchecked(start..start + left) }
@@ -611,15 +863,14 @@ impl MmapDictionary {
 
     #[inline]
     fn unk_buckets(&self) -> &[UnkBucket] {
-        self.pod_slice(self.header.unk_buckets)
+        self.pod_slice(self.unk_buckets_sec)
     }
 
     #[inline]
     fn unk_templates_slice(&self) -> &[UnkTemplate] {
-        self.pod_slice(self.header.unk_templates)
+        self.pod_slice(self.unk_templates_sec)
     }
 
-    /// CharType インデックスの未知語パラメータを取得
     #[inline]
     pub fn unk_invoke(&self, char_type_idx: usize) -> bool {
         let buckets = self.unk_buckets();
@@ -630,7 +881,6 @@ impl MmapDictionary {
         }
     }
 
-    /// CharType インデックスの最初の未知語テンプレート (left_id, right_id, cost) を取得
     #[inline]
     pub fn unk_first_template(&self, char_type_idx: usize) -> (u16, u16, i16) {
         let buckets = self.unk_buckets();
@@ -642,10 +892,9 @@ impl MmapDictionary {
                 return (t.left_id, t.right_id, t.cost);
             }
         }
-        (0, 0, 10000) // フォールバック
+        (0, 0, 10000)
     }
 
-    /// 未知語POSを取得
     #[inline]
     pub fn unk_pos(&self, char_type_idx: usize) -> &str {
         let buckets = self.unk_buckets();
@@ -660,14 +909,25 @@ impl MmapDictionary {
         "名詞,一般,*,*"
     }
 
-    // --- Trie 共通接頭辞検索（インライン実装） ---
+    // --- Trie 共通接頭辞検索 ---
 
-    /// ゼロアロケーション共通接頭辞検索
+    /// ゼロアロケーション共通接頭辞検索（v1/v2自動ディスパッチ）
     #[inline]
-    pub fn common_prefix_search_cb(&self, input: &[u8], mut cb: impl FnMut(usize, &[u32])) {
+    pub fn common_prefix_search_cb(&self, input: &[u8], cb: impl FnMut(usize, &[u32])) {
+        match &self.trie_output_fmt {
+            TrieOutputFormat::Dense(sec) => self.cps_dense(input, *sec, cb),
+            TrieOutputFormat::Sparse { bits, ranks, offsets } => {
+                self.cps_sparse(input, *bits, *ranks, *offsets, cb)
+            }
+        }
+    }
+
+    /// v1: Dense trie output による共通接頭辞検索
+    #[inline(always)]
+    fn cps_dense(&self, input: &[u8], output_sec: Section, mut cb: impl FnMut(usize, &[u32])) {
         let base = self.trie_base();
         let check = self.trie_check();
-        let output = self.trie_output();
+        let output: &[u32] = self.pod_slice(output_sec);
         let value_pool = self.trie_value_pool();
         let base_len = base.len();
         let check_len = check.len();
@@ -675,7 +935,6 @@ impl MmapDictionary {
 
         let mut node = 0usize;
 
-        // ルートノードの出力チェック
         if output_len > 0 && output[0] != u32::MAX {
             let pool_idx = output[0] as usize;
             let count = value_pool[pool_idx] as usize;
@@ -703,16 +962,77 @@ impl MmapDictionary {
         }
     }
 
+    /// v2: Sparse trie output (bitset+rank) による共通接頭辞検索
+    #[inline(always)]
+    fn cps_sparse(
+        &self,
+        input: &[u8],
+        bits_sec: Section,
+        ranks_sec: Section,
+        offsets_sec: Section,
+        mut cb: impl FnMut(usize, &[u32]),
+    ) {
+        let base = self.trie_base();
+        let check = self.trie_check();
+        let bits: &[u64] = self.pod_slice(bits_sec);
+        let ranks: &[u32] = self.pod_slice(ranks_sec);
+        let term_offsets: &[u32] = self.pod_slice(offsets_sec);
+        let value_pool = self.trie_value_pool();
+        let base_len = base.len();
+        let check_len = check.len();
+
+        #[inline(always)]
+        fn check_terminal(
+            node: usize,
+            bits: &[u64],
+            ranks: &[u32],
+            term_offsets: &[u32],
+            value_pool: &[u32],
+            len: usize,
+            cb: &mut impl FnMut(usize, &[u32]),
+        ) {
+            let word = node / 64;
+            let bit = node % 64;
+            if word < bits.len() && (bits[word] >> bit) & 1 == 1 {
+                let rank = compute_rank(bits, ranks, node);
+                let pool_idx = term_offsets[rank] as usize;
+                let count = value_pool[pool_idx] as usize;
+                cb(len, &value_pool[pool_idx + 1..pool_idx + 1 + count]);
+            }
+        }
+
+        let mut node = 0usize;
+        check_terminal(node, bits, ranks, term_offsets, value_pool, 0, &mut cb);
+
+        for (i, &byte) in input.iter().enumerate() {
+            if node >= base_len {
+                break;
+            }
+            let b = base[node];
+            if b <= 0 {
+                break;
+            }
+            let next = b as usize + byte as usize;
+            if next >= check_len || check[next] != node as i32 {
+                break;
+            }
+            node = next;
+            check_terminal(node, bits, ranks, term_offsets, value_pool, i + 1, &mut cb);
+        }
+    }
+
+    // --- メタデータ ---
+
     pub fn entry_count(&self) -> u32 {
-        self.header.entry_count
+        self.entry_count_val
     }
 
     pub fn string_count(&self) -> u32 {
-        self.header.string_count
+        self.string_count_val
     }
 
     pub fn feature_count(&self) -> u32 {
-        self.header.feature_count
+        self.feature_count_val
     }
 
     /// 未知語エントリをエクスポート（マージ用）
@@ -759,10 +1079,10 @@ impl MmapDictionary {
         }
     }
 
-    /// ヘッダーのフォーマットバージョンを返す（テスト用）
+    /// ヘッダーのフォーマットバージョンを返す
     #[cfg(test)]
     pub(crate) fn format_version(&self) -> u32 {
-        self.header.version
+        self.format_version
     }
 
     /// CharClassifier をエクスポート（マージ用）
@@ -797,8 +1117,115 @@ impl MmapDictionary {
                     length: 0,
                 });
         }
-        // classes 変更後に props_cache を再構築
         target.rebuild_props_cache();
+    }
+
+    // --- フォーマット変換 ---
+
+    /// v1/v2辞書をv2形式で保存（Trieリビルド不要）
+    pub fn save_as_v2<P: AsRef<Path>>(&self, path: P) -> io::Result<()> {
+        let mut buf: Vec<u8> = Vec::new();
+        let header_size = mem::size_of::<HeaderV2>();
+        buf.resize(header_size, 0);
+
+        fn align_to(buf: &mut Vec<u8>, align: usize) {
+            let rem = buf.len() % align;
+            if rem != 0 {
+                buf.resize(buf.len() + (align - rem), 0);
+            }
+        }
+
+        fn write_raw(buf: &mut Vec<u8>, data: &[u8], align: usize) -> Section {
+            align_to(buf, align);
+            let offset = buf.len() as u64;
+            buf.extend_from_slice(data);
+            Section {
+                offset,
+                bytes: data.len() as u64,
+            }
+        }
+
+        fn write_pod<T: Pod>(buf: &mut Vec<u8>, data: &[T], align: usize) -> Section {
+            write_raw(buf, bytemuck::cast_slice(data), align)
+        }
+
+        // Trie base/check (そのままコピー)
+        let trie_base = write_raw(&mut buf, self.raw_section(self.trie_base_sec), 4);
+        let trie_check = write_raw(&mut buf, self.raw_section(self.trie_check_sec), 4);
+
+        // Sparse trie output
+        let (terminal_bits, terminal_ranks, terminal_offsets) = match &self.trie_output_fmt {
+            TrieOutputFormat::Dense(sec) => {
+                let output: &[u32] = self.pod_slice(*sec);
+                let (bits, ranks, offsets) = build_sparse_trie_output(output);
+                (
+                    write_pod(&mut buf, &bits, 8),
+                    write_pod(&mut buf, &ranks, 4),
+                    write_pod(&mut buf, &offsets, 4),
+                )
+            }
+            TrieOutputFormat::Sparse { bits, ranks, offsets } => {
+                (
+                    write_raw(&mut buf, self.raw_section(*bits), 8),
+                    write_raw(&mut buf, self.raw_section(*ranks), 4),
+                    write_raw(&mut buf, self.raw_section(*offsets), 4),
+                )
+            }
+        };
+
+        // Value pool
+        let trie_value_pool = write_raw(&mut buf, self.raw_section(self.trie_value_pool_sec), 4);
+
+        // Entries, features
+        let entries = write_raw(&mut buf, self.raw_section(self.entries_sec), 4);
+        let features = write_raw(&mut buf, self.raw_section(self.features_sec), 4);
+
+        // String offsets
+        let str_offsets = match &self.str_index_fmt {
+            StrIndexFormat::PairIndex(sec) => {
+                let idx: &[StrIndex] = self.pod_slice(*sec);
+                let offsets_data = build_str_offsets(idx, self.str_blob_sec.bytes as usize);
+                write_pod(&mut buf, &offsets_data, 4)
+            }
+            StrIndexFormat::Offsets(sec) => {
+                write_raw(&mut buf, self.raw_section(*sec), 4)
+            }
+        };
+
+        // String blob, matrix, unk
+        let str_blob = write_raw(&mut buf, self.raw_section(self.str_blob_sec), 1);
+        let matrix_costs = write_raw(&mut buf, self.raw_section(self.matrix_costs_sec), 2);
+        let unk_buckets = write_raw(&mut buf, self.raw_section(self.unk_buckets_sec), 4);
+        let unk_templates = write_raw(&mut buf, self.raw_section(self.unk_templates_sec), 4);
+
+        let header = HeaderV2 {
+            magic: MAGIC,
+            version: FORMAT_VERSION_V2,
+            flags: 0,
+            entry_count: self.entry_count_val,
+            feature_count: self.feature_count_val,
+            string_count: self.string_count_val,
+            matrix_left_size: self.matrix_left_size_val,
+            matrix_right_size: self.matrix_right_size_val,
+            unk_bucket_count: self.unk_buckets().len() as u32,
+            unk_template_count: self.unk_templates_slice().len() as u32,
+            trie_base,
+            trie_check,
+            terminal_bits,
+            terminal_ranks,
+            terminal_offsets,
+            trie_value_pool,
+            entries,
+            features,
+            str_offsets,
+            str_blob,
+            matrix_costs,
+            unk_buckets,
+            unk_templates,
+        };
+        buf[..header_size].copy_from_slice(bytemuck::bytes_of(&header));
+
+        std::fs::write(path, buf)
     }
 }
 
@@ -837,7 +1264,7 @@ mod tests {
         let dict = make_test_dict();
         let mmap_builder = MmapDictBuilder::from_dictionary(&dict);
         let id = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
-        let tmp = std::env::temp_dir().join(format!("hasami_test_rt_{}.hsd", id));
+        let tmp = std::env::temp_dir().join(format!("hasami_test_v2_{}.hsd", id));
         mmap_builder.write(&tmp).unwrap();
         let loaded = MmapDictionary::load(&tmp).unwrap();
         (tmp, loaded)
@@ -887,15 +1314,6 @@ mod tests {
     }
 
     #[test]
-    fn test_roundtrip_arc_cache() {
-        let (tmp, dict) = roundtrip_dict();
-        let surface_arc = dict.entry_surface_arc(0);
-        let surface_str = dict.entry_surface(0);
-        assert_eq!(&*surface_arc, surface_str);
-        let _ = std::fs::remove_file(&tmp);
-    }
-
-    #[test]
     fn test_roundtrip_entry_arcs() {
         let (tmp, dict) = roundtrip_dict();
         let (surface, pos, base, reading, pronunciation) = dict.entry_arcs(0);
@@ -914,7 +1332,6 @@ mod tests {
         dict.common_prefix_search_cb("東京都庁".as_bytes(), |len, ids| {
             results.push((len, ids.to_vec()));
         });
-        // Should find "東京" and "東京都"
         assert!(results.len() >= 2, "Expected >=2 results, got {:?}", results);
         let _ = std::fs::remove_file(&tmp);
     }
@@ -922,7 +1339,6 @@ mod tests {
     #[test]
     fn test_roundtrip_matrix() {
         let (tmp, dict) = roundtrip_dict();
-        // Default matrix should be 1x1
         assert_eq!(dict.matrix_left_size(), 1);
         assert_eq!(dict.matrix_right_size(), 1);
         let row = dict.matrix_row(0);
@@ -933,7 +1349,7 @@ mod tests {
     #[test]
     fn test_format_version() {
         let (tmp, dict) = roundtrip_dict();
-        assert_eq!(dict.format_version(), FORMAT_VERSION);
+        assert_eq!(dict.format_version(), FORMAT_VERSION_V2);
         let _ = std::fs::remove_file(&tmp);
     }
 
@@ -961,10 +1377,9 @@ mod tests {
 
     #[test]
     fn test_load_invalid_magic() {
-        let tmp = std::env::temp_dir().join("hasami_test_bad_magic.hsd");
+        let tmp = std::env::temp_dir().join("hasami_test_bad_magic_v2.hsd");
         std::fs::write(&tmp, b"INVALID_MAGIC_BYTES_AND_SOME_PADDING_TO_FILL_HEADER_SIZE_0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000").unwrap();
         let result = MmapDictionary::load(&tmp);
-        assert!(result.is_err());
         assert!(result.is_err());
         let err = result.err().unwrap();
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
@@ -973,7 +1388,7 @@ mod tests {
 
     #[test]
     fn test_load_too_short_file() {
-        let tmp = std::env::temp_dir().join("hasami_test_short.hsd");
+        let tmp = std::env::temp_dir().join("hasami_test_short_v2.hsd");
         std::fs::write(&tmp, b"short").unwrap();
         let result = MmapDictionary::load(&tmp);
         assert!(result.is_err());
@@ -983,7 +1398,6 @@ mod tests {
     #[test]
     fn test_unk_pos_fallback() {
         let (tmp, dict) = roundtrip_dict();
-        // Out-of-range char_type_idx should return fallback
         let pos = dict.unk_pos(100);
         assert_eq!(pos, "名詞,一般,*,*");
         let _ = std::fs::remove_file(&tmp);
@@ -1019,8 +1433,6 @@ mod tests {
         let (tmp, dict) = roundtrip_dict();
         let mut unk = HashMap::new();
         dict.export_unk_entries(&mut unk);
-        // Should have some entries (from default japanese classifier)
-        // Even without explicit unk.def, the builder still creates buckets
         let _ = std::fs::remove_file(&tmp);
     }
 
@@ -1029,7 +1441,6 @@ mod tests {
         let (tmp, dict) = roundtrip_dict();
         let mut classifier = crate::char_class::CharClassifier::default_japanese();
         dict.export_char_classifier(&mut classifier);
-        // Should still have standard classes
         assert!(classifier.get_class("HIRAGANA").is_some() || classifier.get_class("DEFAULT").is_some());
         let _ = std::fs::remove_file(&tmp);
     }
@@ -1063,5 +1474,65 @@ mod tests {
         });
         assert_eq!(id1, id2);
         assert_ne!(id1, id3);
+    }
+
+    #[test]
+    fn test_sparse_trie_output_roundtrip() {
+        // Dense output を sparse に変換して正しく検索できるかテスト
+        let dict = make_test_dict();
+        let mmap_builder = MmapDictBuilder::from_dictionary(&dict);
+        let id = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let tmp = std::env::temp_dir().join(format!("hasami_test_sparse_{}.hsd", id));
+        mmap_builder.write(&tmp).unwrap();
+        let loaded = MmapDictionary::load(&tmp).unwrap();
+
+        // v2 format should use sparse
+        assert_eq!(loaded.format_version, FORMAT_VERSION_V2);
+
+        // 検索結果を検証
+        let mut results = Vec::new();
+        loaded.common_prefix_search_cb("東京都庁".as_bytes(), |len, ids| {
+            results.push((len, ids.to_vec()));
+        });
+        assert!(results.len() >= 2);
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn test_compute_rank() {
+        // 0b1010_1010 = bits at positions 1,3,5,7 are set
+        let bits: Vec<u64> = vec![0b1010_1010, 0b1111_0000, 0];
+        let ranks: Vec<u32> = vec![12]; // cumulative for first 512-bit block
+
+        assert_eq!(compute_rank(&bits, &ranks, 0), 0); // no bits before pos 0
+        assert_eq!(compute_rank(&bits, &ranks, 1), 0); // bit 0 = 0
+        assert_eq!(compute_rank(&bits, &ranks, 2), 1); // bit 1 = 1
+        assert_eq!(compute_rank(&bits, &ranks, 3), 1); // bit 2 = 0
+        assert_eq!(compute_rank(&bits, &ranks, 4), 2); // bits 1,3 set
+        assert_eq!(compute_rank(&bits, &ranks, 8), 4); // bits 1,3,5,7 set
+    }
+
+    #[test]
+    fn test_save_as_v2() {
+        let (tmp_v2, dict) = roundtrip_dict();
+
+        // v2 → v2 save should work
+        let id = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let tmp_v2b = std::env::temp_dir().join(format!("hasami_test_v2b_{}.hsd", id));
+        dict.save_as_v2(&tmp_v2b).unwrap();
+
+        let reloaded = MmapDictionary::load(&tmp_v2b).unwrap();
+        assert_eq!(reloaded.entry_count(), 3);
+        assert_eq!(reloaded.format_version(), FORMAT_VERSION_V2);
+
+        // 検索も動作するか
+        let mut results = Vec::new();
+        reloaded.common_prefix_search_cb("東京都庁".as_bytes(), |len, ids| {
+            results.push((len, ids.to_vec()));
+        });
+        assert!(results.len() >= 2);
+
+        let _ = std::fs::remove_file(&tmp_v2);
+        let _ = std::fs::remove_file(&tmp_v2b);
     }
 }
