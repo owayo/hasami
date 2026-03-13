@@ -430,7 +430,7 @@ impl MmapDictBuilder {
 /// Dense trie output を sparse (bitset + rank + offsets) に変換
 fn build_sparse_trie_output(output: &[u32]) -> (Vec<u64>, Vec<u32>, Vec<u32>) {
     let num_nodes = output.len();
-    let num_words = (num_nodes + 63) / 64;
+    let num_words = num_nodes.div_ceil(64);
 
     let mut bits = vec![0u64; num_words];
     let mut terminal_offsets = Vec::new();
@@ -443,14 +443,14 @@ fn build_sparse_trie_output(output: &[u32]) -> (Vec<u64>, Vec<u32>, Vec<u32>) {
     }
 
     // ランクテーブル: 512ビット(8 u64)ブロックごとの累積ポップカウント
-    let num_blocks = (num_words + 7) / 8;
+    let num_blocks = num_words.div_ceil(8);
     let mut ranks = Vec::with_capacity(num_blocks);
     let mut cumulative = 0u32;
     for block in 0..num_blocks {
         let start = block * 8;
         let end = (start + 8).min(num_words);
-        for w in start..end {
-            cumulative += bits[w].count_ones();
+        for word in &bits[start..end] {
+            cumulative += word.count_ones();
         }
         ranks.push(cumulative);
     }
@@ -481,8 +481,8 @@ fn compute_rank(bits: &[u64], ranks: &[u32], pos: usize) -> usize {
     let bit_in_word = pos % 64;
 
     let mut r = base;
-    for w in word_start..target_word {
-        r += bits[w].count_ones() as usize;
+    for word in &bits[word_start..target_word] {
+        r += word.count_ones() as usize;
     }
     if target_word < bits.len() {
         let mask = (1u64 << bit_in_word).wrapping_sub(1);
