@@ -348,7 +348,7 @@ fn test_workspace_reuse_produces_consistent_results() {
     let dict = build_test_dictionary();
     let mut analyzer = Analyzer::from_dict(dict);
 
-    let inputs = vec![
+    let inputs = [
         "私は猫です",
         "東京都に住んでいる",
         "猫が多い",

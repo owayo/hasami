@@ -7,6 +7,24 @@ use std::io;
 use std::path::Path;
 use std::sync::Arc;
 
+/// フィールドのパースヘルパー（エラー時にファイル名・行番号・フィールド名を含む）
+fn parse_field<T: std::str::FromStr>(
+    path: &Path,
+    line_no: usize,
+    field: &str,
+    raw: &str,
+) -> io::Result<T>
+where
+    T::Err: std::fmt::Display,
+{
+    raw.parse().map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("{}:{}: invalid {} `{}`: {}", path.display(), line_no, field, raw, e),
+        )
+    })
+}
+
 /// 文字列が全てカタカナ（U+30A0〜U+30FF）かどうか判定する
 fn is_katakana_str(s: &str) -> bool {
     !s.is_empty() && s.chars().all(|c| ('\u{30A0}'..='\u{30FF}').contains(&c))
@@ -242,19 +260,30 @@ impl DictBuilder {
             .flexible(true)
             .from_reader(content.as_bytes());
 
-        for result in rdr.records() {
-            let record = match result {
-                Ok(r) => r,
-                Err(_) => continue,
-            };
+        for (idx, result) in rdr.records().enumerate() {
+            let line_no = idx + 1;
+            let record = result.map_err(|e| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("{}:{}: CSV parse error: {}", path.display(), line_no, e),
+                )
+            })?;
             if record.len() < 5 {
-                continue;
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "{}:{}: too few columns ({})",
+                        path.display(),
+                        line_no,
+                        record.len()
+                    ),
+                ));
             }
 
             let surface: Arc<str> = Arc::from(&record[0]);
-            let left_id: u16 = record[1].parse().unwrap_or(0);
-            let right_id: u16 = record[2].parse().unwrap_or(0);
-            let cost: i16 = record[3].parse().unwrap_or(0);
+            let left_id: u16 = parse_field(path, line_no, "left_id", &record[1])?;
+            let right_id: u16 = parse_field(path, line_no, "right_id", &record[2])?;
+            let cost: i16 = parse_field(path, line_no, "cost", &record[3])?;
 
             // 品詞情報を結合
             let pos_parts: Vec<&str> = (4..record.len().min(8))
@@ -311,6 +340,7 @@ impl DictBuilder {
 
     /// matrix.def を読み込み
     pub fn load_matrix<P: AsRef<Path>>(&mut self, path: P) -> io::Result<()> {
+        let path = path.as_ref();
         let raw_bytes = std::fs::read(path)?;
         let content = Self::decode_to_utf8(&raw_bytes);
         let mut lines = content.lines();
@@ -342,7 +372,7 @@ impl DictBuilder {
         let total = left_size as usize * right_size as usize;
         let mut costs = vec![0i16; total];
 
-        for line in lines {
+        for (line_no, line) in lines.enumerate().map(|(i, l)| (i + 2, l)) {
             let line = line.trim();
             if line.is_empty() || line.starts_with('#') {
                 continue;
@@ -351,14 +381,21 @@ impl DictBuilder {
             if parts.len() < 3 {
                 continue;
             }
-            let right_id: usize = parts[0].parse().unwrap_or(0);
-            let left_id: usize = parts[1].parse().unwrap_or(0);
-            let cost: i16 = parts[2].parse().unwrap_or(0);
+            let right_id: usize = parse_field(path, line_no, "right_id", parts[0])?;
+            let left_id: usize = parse_field(path, line_no, "left_id", parts[1])?;
+            let cost: i16 = parse_field(path, line_no, "cost", parts[2])?;
 
             let idx = right_id * left_size as usize + left_id;
-            if idx < costs.len() {
-                costs[idx] = cost;
+            if idx >= costs.len() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "matrix id out of range: right_id={}, left_id={} (max {}x{})",
+                        right_id, left_id, right_size, left_size
+                    ),
+                ));
             }
+            costs[idx] = cost;
         }
 
         self.matrix = Some(ConnectionMatrix {
@@ -377,6 +414,7 @@ impl DictBuilder {
 
     /// unk.def を読み込み（未知語テンプレート）
     pub fn load_unk<P: AsRef<Path>>(&mut self, path: P) -> io::Result<()> {
+        let path = path.as_ref();
         let raw_bytes = std::fs::read(path)?;
         let content = Self::decode_to_utf8(&raw_bytes);
 
@@ -385,19 +423,25 @@ impl DictBuilder {
             .flexible(true)
             .from_reader(content.as_bytes());
 
-        for result in rdr.records() {
-            let record = match result {
-                Ok(r) => r,
-                Err(_) => continue,
-            };
+        for (idx, result) in rdr.records().enumerate() {
+            let line_no = idx + 1;
+            let record = result.map_err(|e| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("unk.def:{}: CSV parse error: {}", line_no, e),
+                )
+            })?;
             if record.len() < 5 {
-                continue;
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("unk.def:{}: too few columns ({})", line_no, record.len()),
+                ));
             }
 
             let char_class = record[0].to_string();
-            let left_id: u16 = record[1].parse().unwrap_or(0);
-            let right_id: u16 = record[2].parse().unwrap_or(0);
-            let cost: i16 = record[3].parse().unwrap_or(0);
+            let left_id: u16 = parse_field(path, line_no, "left_id", &record[1])?;
+            let right_id: u16 = parse_field(path, line_no, "right_id", &record[2])?;
+            let cost: i16 = parse_field(path, line_no, "cost", &record[3])?;
             let pos_parts: Vec<&str> = (4..record.len().min(8))
                 .filter_map(|i| record.get(i))
                 .collect();
@@ -422,6 +466,7 @@ impl DictBuilder {
 
     /// char.def を読み込み
     pub fn load_char_def<P: AsRef<Path>>(&mut self, path: P) -> io::Result<()> {
+        let path = path.as_ref();
         let raw_bytes = std::fs::read(path)?;
         let content = Self::decode_to_utf8(&raw_bytes);
 
@@ -458,7 +503,12 @@ impl DictBuilder {
                     let name = parts[0].to_string();
                     let invoke: bool = parts[1] == "1";
                     let group: bool = parts[2] == "1";
-                    let length: u32 = parts[3].parse().unwrap_or(0);
+                    let length: u32 = parts[3].parse().map_err(|e| {
+                        io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!("char.def: invalid length `{}`: {}", parts[3], e),
+                        )
+                    })?;
 
                     categories.insert(
                         name.clone(),
