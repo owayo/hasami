@@ -470,14 +470,74 @@ fn test_known_token_reading() {
 }
 
 #[test]
-fn test_unknown_token_empty_reading() {
+fn test_unknown_alpha_token_has_kana_reading() {
     let dict = build_test_dictionary();
     let mut analyzer = Analyzer::from_dict(dict);
     let tokens = analyzer.tokenize("XYZ");
 
     for t in &tokens {
+        if !t.is_known && t.surface.chars().all(|c| c.is_ascii_alphabetic()) {
+            assert!(
+                !t.reading.is_empty(),
+                "Unknown alpha word '{}' should have kana reading",
+                &*t.surface
+            );
+            assert!(
+                !t.pronunciation.is_empty(),
+                "Unknown alpha word '{}' should have kana pronunciation",
+                &*t.surface
+            );
+        }
+    }
+}
+
+#[test]
+fn test_unit_reading_after_number() {
+    let dict = build_test_dictionary();
+    let mut analyzer = Analyzer::from_dict(dict);
+
+    // 数字 + 単位文字の場合、単位読みになること
+    let tokens = analyzer.tokenize("100W");
+    let w_token = tokens.iter().find(|t| &*t.surface == "W");
+    assert!(w_token.is_some(), "Should have a W token");
+    assert_eq!(&*w_token.unwrap().reading, "ワット");
+
+    let tokens = analyzer.tokenize("5A");
+    let a_token = tokens.iter().find(|t| &*t.surface == "A");
+    assert!(a_token.is_some(), "Should have an A token");
+    assert_eq!(&*a_token.unwrap().reading, "アンペア");
+
+    let tokens = analyzer.tokenize("12V");
+    let v_token = tokens.iter().find(|t| &*t.surface == "V");
+    assert!(v_token.is_some(), "Should have a V token");
+    assert_eq!(&*v_token.unwrap().reading, "ボルト");
+}
+
+#[test]
+fn test_alpha_reading_without_number() {
+    let dict = build_test_dictionary();
+    let mut analyzer = Analyzer::from_dict(dict);
+
+    // 数字が前にない場合はアルファベット読み
+    let tokens = analyzer.tokenize("W");
+    let w_token = tokens.iter().find(|t| &*t.surface == "W");
+    assert!(w_token.is_some(), "Should have a W token");
+    assert_eq!(&*w_token.unwrap().reading, "ダブリュー");
+}
+
+#[test]
+fn test_unknown_non_alpha_token_empty_reading() {
+    let dict = build_test_dictionary();
+    let mut analyzer = Analyzer::from_dict(dict);
+    // 絵文字は辞書に存在しないので未知語になる
+    let tokens = analyzer.tokenize("🍣");
+
+    for t in &tokens {
         if !t.is_known {
-            assert!(t.reading.is_empty(), "Unknown word should have empty reading");
+            assert!(
+                t.reading.is_empty(),
+                "Unknown non-alpha word should have empty reading"
+            );
         }
     }
 }
