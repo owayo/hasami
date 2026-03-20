@@ -72,6 +72,19 @@ pub enum CharType {
     Default,
 }
 
+/// 全 CharType の一覧（type_index の順序と一致）
+pub const ALL_CHAR_TYPES: [CharType; 9] = [
+    CharType::Hiragana,
+    CharType::Katakana,
+    CharType::Kanji,
+    CharType::Alpha,
+    CharType::Numeric,
+    CharType::NumericWide,
+    CharType::Symbol,
+    CharType::Space,
+    CharType::Default,
+];
+
 /// CharType → 配列インデックス変換
 #[inline]
 pub fn type_index(ct: CharType) -> usize {
@@ -107,19 +120,8 @@ impl CharType {
 
 /// classes HashMap から props_cache を構築する
 fn build_props_cache(classes: &HashMap<String, CharClass>) -> [ClassProps; NUM_CHAR_TYPES] {
-    let all_types = [
-        CharType::Hiragana,
-        CharType::Katakana,
-        CharType::Kanji,
-        CharType::Alpha,
-        CharType::Numeric,
-        CharType::NumericWide,
-        CharType::Symbol,
-        CharType::Space,
-        CharType::Default,
-    ];
     let mut cache = [ClassProps::default(); NUM_CHAR_TYPES];
-    for &ct in &all_types {
+    for &ct in &ALL_CHAR_TYPES {
         let idx = type_index(ct);
         if let Some(class) = classes.get(ct.class_name()) {
             cache[idx] = ClassProps {
@@ -444,18 +446,7 @@ mod tests {
     fn test_props_cache_consistency() {
         let cc = CharClassifier::default_japanese();
         // props_cache と HashMap の結果が一致することを確認
-        let all_types = [
-            CharType::Hiragana,
-            CharType::Katakana,
-            CharType::Kanji,
-            CharType::Alpha,
-            CharType::Numeric,
-            CharType::NumericWide,
-            CharType::Symbol,
-            CharType::Space,
-            CharType::Default,
-        ];
-        for ct in all_types {
+        for ct in ALL_CHAR_TYPES {
             let props = cc.props_for(ct);
             let class = cc.classes.get(ct.class_name());
             let expected_group = class.is_none_or(|c| c.group);
@@ -558,19 +549,8 @@ mod tests {
 
     #[test]
     fn test_type_index_roundtrip() {
-        let all_types = [
-            CharType::Hiragana,
-            CharType::Katakana,
-            CharType::Kanji,
-            CharType::Alpha,
-            CharType::Numeric,
-            CharType::NumericWide,
-            CharType::Symbol,
-            CharType::Space,
-            CharType::Default,
-        ];
         // Each type maps to a unique index 0..8
-        let mut indices: Vec<usize> = all_types.iter().map(|&ct| type_index(ct)).collect();
+        let mut indices: Vec<usize> = ALL_CHAR_TYPES.iter().map(|&ct| type_index(ct)).collect();
         indices.sort();
         assert_eq!(indices, (0..9).collect::<Vec<_>>());
     }

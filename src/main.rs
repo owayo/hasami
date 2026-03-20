@@ -16,6 +16,17 @@ struct Cli {
     command: Commands,
 }
 
+/// 出力形式
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum OutputFormat {
+    /// MeCab互換形式
+    Mecab,
+    /// 分かち書き形式
+    Wakachi,
+    /// JSON形式
+    Json,
+}
+
 #[derive(Subcommand)]
 enum Commands {
     /// 辞書を構築（MeCab形式のCSVから）
@@ -50,9 +61,9 @@ enum Commands {
         #[arg(short, long)]
         dict: PathBuf,
 
-        /// 出力形式: mecab, wakachi, json
-        #[arg(short, long, default_value = "mecab")]
-        format: String,
+        /// 出力形式
+        #[arg(short, long, value_enum, default_value_t = OutputFormat::Mecab)]
+        format: OutputFormat,
 
         /// 解析するテキスト（省略時は標準入力から読み込み）
         text: Option<String>,
@@ -103,7 +114,7 @@ fn main() -> io::Result<()> {
             input,
             output,
         } => cmd_merge(&dict, &input, output.as_deref()),
-        Commands::Tokenize { dict, format, text } => cmd_tokenize(&dict, &format, text),
+        Commands::Tokenize { dict, format, text } => cmd_tokenize(&dict, format, text),
         Commands::Bench {
             dict,
             text,
@@ -243,7 +254,7 @@ fn cmd_merge(dict_path: &Path, input: &Path, output: Option<&Path>) -> io::Resul
     Ok(())
 }
 
-fn cmd_tokenize(dict_path: &Path, format: &str, text: Option<String>) -> io::Result<()> {
+fn cmd_tokenize(dict_path: &Path, format: OutputFormat, text: Option<String>) -> io::Result<()> {
     let start = Instant::now();
     let mut analyzer = Analyzer::load(dict_path)?;
     eprintln!(
@@ -274,12 +285,16 @@ fn cmd_tokenize(dict_path: &Path, format: &str, text: Option<String>) -> io::Res
     Ok(())
 }
 
-fn write_output(out: &mut impl Write, tokens: &[hasami::Token], format: &str) -> io::Result<()> {
+fn write_output(
+    out: &mut impl Write,
+    tokens: &[hasami::Token],
+    format: OutputFormat,
+) -> io::Result<()> {
     match format {
-        "wakachi" => {
+        OutputFormat::Wakachi => {
             writeln!(out, "{}", format_wakachi(tokens))?;
         }
-        "json" => {
+        OutputFormat::Json => {
             let json_tokens: Vec<serde_json::Value> = tokens
                 .iter()
                 .map(|t| {
@@ -296,8 +311,7 @@ fn write_output(out: &mut impl Write, tokens: &[hasami::Token], format: &str) ->
                 .collect();
             writeln!(out, "{}", serde_json::to_string(&json_tokens).unwrap())?;
         }
-        _ => {
-            // MeCab形式
+        OutputFormat::Mecab => {
             write!(out, "{}", format_mecab(tokens))?;
         }
     }
