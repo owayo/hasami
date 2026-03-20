@@ -65,7 +65,7 @@ impl Analyzer {
 
     /// テキストを文境界で分割して各文を独立に解析
     fn tokenize_sentences(&mut self, input: &str) -> Vec<Token> {
-        let mut all_tokens = Vec::new();
+        let mut all_tokens = Vec::with_capacity(input.len() / 3);
         let mut seg_start = 0;
 
         for (i, c) in input.char_indices() {
@@ -116,7 +116,7 @@ impl Analyzer {
 
 /// MeCab互換の出力フォーマット
 pub fn format_mecab(tokens: &[Token]) -> String {
-    let mut output = String::new();
+    let mut output = String::with_capacity(tokens.len() * 48 + 4);
     for token in tokens {
         output.push_str(&token.surface);
         output.push('\t');
@@ -141,11 +141,14 @@ pub fn format_mecab(tokens: &[Token]) -> String {
 
 /// Wakachi（分かち書き）出力
 pub fn format_wakachi(tokens: &[Token]) -> String {
-    tokens
-        .iter()
-        .map(|t| &*t.surface)
-        .collect::<Vec<_>>()
-        .join(" ")
+    let mut output = String::with_capacity(tokens.len() * 4);
+    for (i, t) in tokens.iter().enumerate() {
+        if i > 0 {
+            output.push(' ');
+        }
+        output.push_str(&t.surface);
+    }
+    output
 }
 
 #[cfg(test)]

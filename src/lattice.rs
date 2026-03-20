@@ -1,6 +1,6 @@
 //! ラティス構築 + Viterbi デコーディング（最適化版）
 
-use crate::char_class::{CharType, type_index};
+use crate::char_class::{CharType, ALL_CHAR_TYPES, type_index};
 use crate::dict::Dictionary;
 use std::sync::{Arc, LazyLock};
 
@@ -247,17 +247,6 @@ const NUM_CHAR_TYPES: usize = 9;
 
 /// 辞書から未知語パラメータの事前計算テーブルを構築（全テンプレートを保持）
 fn build_unk_table(dict: &Dictionary) -> Vec<UnkTemplates> {
-    let all_types = [
-        CharType::Hiragana,
-        CharType::Katakana,
-        CharType::Kanji,
-        CharType::Alpha,
-        CharType::Numeric,
-        CharType::NumericWide,
-        CharType::Symbol,
-        CharType::Space,
-        CharType::Default,
-    ];
     let mut table: Vec<UnkTemplates> = (0..NUM_CHAR_TYPES)
         .map(|_| UnkTemplates {
             templates: Vec::new(),
@@ -265,7 +254,7 @@ fn build_unk_table(dict: &Dictionary) -> Vec<UnkTemplates> {
         })
         .collect();
 
-    for &ct in &all_types {
+    for &ct in &ALL_CHAR_TYPES {
         let idx = type_index(ct);
         let class_name = ct.class_name();
         let invoke = dict
@@ -819,16 +808,15 @@ impl LatticeWorkspace {
             .map(|&idx| {
                 let node = &self.nodes[idx as usize];
                 if node.is_known() {
-                    let (surface, pos, base_form, reading, pronunciation) =
-                        dict.entry_arcs(node.entry_id);
+                    let arcs = dict.entry_arcs(node.entry_id);
                     Token {
-                        surface,
+                        surface: arcs.surface,
                         start: node.start as usize,
                         end: node.end as usize,
-                        pos,
-                        base_form,
-                        reading,
-                        pronunciation,
+                        pos: arcs.pos,
+                        base_form: arcs.base_form,
+                        reading: arcs.reading,
+                        pronunciation: arcs.pronunciation,
                         word_cost: node.word_cost,
                         is_known: true,
                     }

@@ -101,6 +101,15 @@ struct UnkTemplate {
     _pad: u16,
 }
 
+/// エントリの全フィールド Arc<str> 参照（トークン生成用）
+pub struct EntryArcs {
+    pub surface: Arc<str>,
+    pub pos: Arc<str>,
+    pub base_form: Arc<str>,
+    pub reading: Arc<str>,
+    pub pronunciation: Arc<str>,
+}
+
 // --- ビルダー ---
 
 /// 文字列プール（重複排除 + 連続バッファ）
@@ -208,22 +217,11 @@ impl MmapDictBuilder {
         let matrix_left_size = dict.matrix.left_size;
         let matrix_right_size = dict.matrix.right_size;
 
-        use crate::char_class::CharType;
-        let all_types = [
-            CharType::Hiragana,
-            CharType::Katakana,
-            CharType::Kanji,
-            CharType::Alpha,
-            CharType::Numeric,
-            CharType::NumericWide,
-            CharType::Symbol,
-            CharType::Space,
-            CharType::Default,
-        ];
+        use crate::char_class::ALL_CHAR_TYPES;
         let mut unk_buckets = Vec::new();
         let mut unk_templates_vec = Vec::new();
 
-        for &ct in &all_types {
+        for &ct in &ALL_CHAR_TYPES {
             let class_name = ct.class_name();
             let invoke = dict
                 .char_classifier
@@ -618,17 +616,16 @@ impl MmapDictionary {
 
     /// エントリの全フィールドを Arc<str> で取得（トークン生成用）
     #[inline]
-    #[allow(clippy::type_complexity)]
-    pub fn entry_arcs(&self, id: u32) -> (Arc<str>, Arc<str>, Arc<str>, Arc<str>, Arc<str>) {
+    pub fn entry_arcs(&self, id: u32) -> EntryArcs {
         let e = &self.entries()[id as usize];
         let f = &self.features()[e.feature_id as usize];
-        (
-            self.arc_at(e.surface_id),
-            self.arc_at(f.pos_id),
-            self.arc_at(f.base_id),
-            self.arc_at(f.reading_id),
-            self.arc_at(f.pronunciation_id),
-        )
+        EntryArcs {
+            surface: self.arc_at(e.surface_id),
+            pos: self.arc_at(f.pos_id),
+            base_form: self.arc_at(f.base_id),
+            reading: self.arc_at(f.reading_id),
+            pronunciation: self.arc_at(f.pronunciation_id),
+        }
     }
 
     /// 未知語POSを Arc<str> で取得
@@ -833,22 +830,11 @@ impl MmapDictionary {
 
     /// 未知語エントリをエクスポート（マージ用）
     pub fn export_unk_entries(&self, target: &mut HashMap<String, Vec<crate::dict::UnkEntry>>) {
-        use crate::char_class::CharType;
-        let all_types = [
-            CharType::Hiragana,
-            CharType::Katakana,
-            CharType::Kanji,
-            CharType::Alpha,
-            CharType::Numeric,
-            CharType::NumericWide,
-            CharType::Symbol,
-            CharType::Space,
-            CharType::Default,
-        ];
+        use crate::char_class::ALL_CHAR_TYPES;
         let buckets = self.unk_buckets();
         let templates = self.unk_templates_slice();
 
-        for (i, &ct) in all_types.iter().enumerate() {
+        for (i, &ct) in ALL_CHAR_TYPES.iter().enumerate() {
             if i >= buckets.len() {
                 break;
             }
@@ -877,21 +863,10 @@ impl MmapDictionary {
 
     /// CharClassifier をエクスポート（マージ用）
     pub fn export_char_classifier(&self, target: &mut crate::char_class::CharClassifier) {
-        use crate::char_class::{CharClass, CharType};
-        let all_types = [
-            CharType::Hiragana,
-            CharType::Katakana,
-            CharType::Kanji,
-            CharType::Alpha,
-            CharType::Numeric,
-            CharType::NumericWide,
-            CharType::Symbol,
-            CharType::Space,
-            CharType::Default,
-        ];
+        use crate::char_class::{CharClass, ALL_CHAR_TYPES};
         let buckets = self.unk_buckets();
 
-        for (i, &ct) in all_types.iter().enumerate() {
+        for (i, &ct) in ALL_CHAR_TYPES.iter().enumerate() {
             if i >= buckets.len() {
                 break;
             }
@@ -998,12 +973,12 @@ mod tests {
     #[test]
     fn test_roundtrip_entry_arcs() {
         let (tmp, dict) = roundtrip_dict();
-        let (surface, pos, base, reading, pronunciation) = dict.entry_arcs(0);
-        assert!(!surface.is_empty());
-        assert!(!pos.is_empty());
-        assert!(!base.is_empty());
-        assert!(!reading.is_empty());
-        assert!(!pronunciation.is_empty());
+        let arcs = dict.entry_arcs(0);
+        assert!(!arcs.surface.is_empty());
+        assert!(!arcs.pos.is_empty());
+        assert!(!arcs.base_form.is_empty());
+        assert!(!arcs.reading.is_empty());
+        assert!(!arcs.pronunciation.is_empty());
         let _ = std::fs::remove_file(&tmp);
     }
 
