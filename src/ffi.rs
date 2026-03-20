@@ -27,6 +27,8 @@ pub struct HasamiToken {
     pub base_form: *mut c_char,
     /// 読み（UTF-8 のヌル終端文字列）
     pub reading: *mut c_char,
+    /// 発音（UTF-8 のヌル終端文字列）
+    pub pronunciation: *mut c_char,
     /// 辞書由来フラグ
     pub is_known: u8,
 }
@@ -178,6 +180,9 @@ pub unsafe extern "C" fn hasami_tokenize(
                 reading: CString::new(t.reading.as_ref())
                     .unwrap_or_default()
                     .into_raw(),
+                pronunciation: CString::new(t.pronunciation.as_ref())
+                    .unwrap_or_default()
+                    .into_raw(),
                 is_known: if t.is_known { 1 } else { 0 },
             })
             .collect();
@@ -219,6 +224,9 @@ pub unsafe extern "C" fn hasami_free_tokens(list: HasamiTokenList) {
             }
             if !token.reading.is_null() {
                 drop(CString::from_raw(token.reading));
+            }
+            if !token.pronunciation.is_null() {
+                drop(CString::from_raw(token.pronunciation));
             }
         }
     }

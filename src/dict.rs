@@ -117,15 +117,13 @@ pub struct Dictionary {
 impl Dictionary {
     /// 表層形の共通接頭辞検索
     pub fn lookup(&self, input: &[u8]) -> Vec<(usize, Vec<&DictEntry>)> {
-        self.trie
-            .common_prefix_search(input)
-            .into_iter()
-            .map(|(len, ids)| {
-                let entries: Vec<&DictEntry> =
-                    ids.iter().map(|&id| &self.entries[id as usize]).collect();
-                (len, entries)
-            })
-            .collect()
+        let mut results = Vec::new();
+        self.trie.common_prefix_search_cb(input, |len, ids| {
+            let entries: Vec<&DictEntry> =
+                ids.iter().map(|&id| &self.entries[id as usize]).collect();
+            results.push((len, entries));
+        });
+        results
     }
 }
 
