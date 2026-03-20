@@ -174,7 +174,7 @@ fn apply_contextual_readings(tokens: &mut [Token]) {
         // アルファベット読み（スペルアウト）
         let kana = if tokens[i].surface.len() == 1 {
             let c = tokens[i].surface.chars().next().unwrap();
-            alpha_to_kana(c).map(|s| Arc::from(s))
+            alpha_to_kana(c).map(Arc::from)
         } else {
             alphabet_reading(&tokens[i].surface)
         };
