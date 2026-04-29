@@ -541,3 +541,202 @@ fn test_unknown_non_alpha_token_empty_reading() {
         }
     }
 }
+
+// ==========================================================================
+// 並行解析テスト（Clone impl で辞書共有）
+// ==========================================================================
+
+#[test]
+fn test_analyzer_clone_shares_dict_and_isolates_workspace() {
+    let dict = build_test_dictionary();
+    let builder = MmapDictBuilder::from_dictionary(&dict);
+    let tmp = std::env::temp_dir().join("hasami_clone_share.hsd");
+    builder.write(&tmp).unwrap();
+
+    let mut a = Analyzer::load(&tmp).unwrap();
+    let mut b = a.clone();
+
+    // 両方が同じ結果を返す（辞書を共有）
+    let ta: Vec<String> = a
+        .tokenize("私は猫です")
+        .into_iter()
+        .map(|t| t.surface.to_string())
+        .collect();
+    let tb: Vec<String> = b
+        .tokenize("私は猫です")
+        .into_iter()
+        .map(|t| t.surface.to_string())
+        .collect();
+    assert_eq!(ta, tb);
+    assert_eq!(ta, vec!["私", "は", "猫", "です"]);
+
+    let _ = std::fs::remove_file(&tmp);
+}
+
+#[test]
+fn test_concurrent_tokenize_across_threads() {
+    let dict = build_test_dictionary();
+    let builder = MmapDictBuilder::from_dictionary(&dict);
+    let tmp = std::env::temp_dir().join("hasami_concurrent.hsd");
+    builder.write(&tmp).unwrap();
+
+    let analyzer = Analyzer::load(&tmp).unwrap();
+    analyzer.prewarm(); // 並列前にArcキャッシュ温める
+
+    let inputs = vec![
+        "私は猫です",
+        "東京都に住んでいる",
+        "人が多い",
+        "私は猫です。東京都に住んでいる。",
+    ];
+
+    let results = std::thread::scope(|s| {
+        let handles: Vec<_> = inputs
+            .iter()
+            .map(|input| {
+                let mut worker = analyzer.clone();
+                let input = *input;
+                s.spawn(move || {
+                    let tokens = worker.tokenize(input);
+                    tokens
+                        .into_iter()
+                        .map(|t| t.surface.to_string())
+                        .collect::<Vec<_>>()
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|h| h.join().unwrap())
+            .collect::<Vec<_>>()
+    });
+
+    // 各スレッドが入力を完全再構築できているはず
+    for (input, surfaces) in inputs.iter().zip(results.iter()) {
+        let reconstructed: String = surfaces.concat();
+        assert_eq!(&reconstructed, input, "Reconstruction failed for {input}");
+    }
+
+    let _ = std::fs::remove_file(&tmp);
+}
+
+#[test]
+fn test_analyzer_send_and_sync() {
+    fn assert_send<T: Send>() {}
+    fn assert_sync<T: Sync>() {}
+    assert_send::<Analyzer>();
+    assert_sync::<Analyzer>();
+}
+
+#[test]
+fn test_prewarm_idempotent() {
+    let dict = build_test_dictionary();
+    let builder = MmapDictBuilder::from_dictionary(&dict);
+    let tmp = std::env::temp_dir().join("hasami_prewarm.hsd");
+    builder.write(&tmp).unwrap();
+
+    let analyzer = Analyzer::load(&tmp).unwrap();
+    // 複数回呼んでも問題ない
+    analyzer.prewarm();
+    analyzer.prewarm();
+    analyzer.prewarm();
+
+    let _ = std::fs::remove_file(&tmp);
+}
+
+// ==========================================================================
+// char.def 復元テスト（v3 フォーマット）
+// ==========================================================================
+
+#[test]
+fn test_v2_backward_compat_load() {
+    // v3 ファイルを書き出した後、version バイト (offset=8..12) を 2 に書き換えて
+    // v2 後方互換パスで読めるかを検証する。
+    let dict = build_test_dictionary();
+    let builder = MmapDictBuilder::from_dictionary(&dict);
+    let tmp = std::env::temp_dir().join("hasami_v2_compat.hsd");
+    builder.write(&tmp).unwrap();
+
+    let mut bytes = std::fs::read(&tmp).unwrap();
+    // version バイト書き換え（little-endian u32）
+    bytes[8..12].copy_from_slice(&2u32.to_le_bytes());
+    std::fs::write(&tmp, &bytes).unwrap();
+
+    // v2 として読めることを確認
+    let mut analyzer = Analyzer::load(&tmp).unwrap();
+    let tokens = analyzer.tokenize("私は猫です");
+    let surfaces: Vec<&str> = tokens.iter().map(|t| &*t.surface).collect();
+    assert_eq!(surfaces, vec!["私", "は", "猫", "です"]);
+
+    let _ = std::fs::remove_file(&tmp);
+}
+
+#[test]
+fn test_char_def_roundtrip_v3() {
+    use hasami::char_class::{CharClass, CharClassifier, CharType};
+    use std::collections::HashMap;
+
+    // カスタム char.def を持つ辞書を構築
+    let mut classes = HashMap::new();
+    classes.insert(
+        "HIRAGANA".to_string(),
+        CharClass {
+            name: "HIRAGANA".to_string(),
+            invoke: true,
+            group: false,
+            length: 7, // 通常 default_japanese は length=2
+        },
+    );
+    classes.insert(
+        "KATAKANA".to_string(),
+        CharClass {
+            name: "KATAKANA".to_string(),
+            invoke: false,
+            group: true,
+            length: 5,
+        },
+    );
+    let ranges = vec![
+        (0x3040, 0x309F, "HIRAGANA".to_string()),
+        (0x30A0, 0x30FF, "KATAKANA".to_string()),
+    ];
+    let custom_classifier = CharClassifier::from_definitions(classes, ranges);
+
+    let mut builder = DictBuilder::new();
+    builder.add_entry(DictEntry {
+        surface: "猫".into(),
+        left_id: 1,
+        right_id: 1,
+        cost: 100,
+        pos: "名詞,一般,*,*".into(),
+        base_form: "猫".into(),
+        reading: "ネコ".into(),
+        pronunciation: "ネコ".into(),
+    });
+    builder.set_char_classifier(custom_classifier);
+    let dict = builder.build();
+
+    let mmap_builder = MmapDictBuilder::from_dictionary(&dict);
+    let tmp = std::env::temp_dir().join("hasami_char_def_v3.hsd");
+    mmap_builder.write(&tmp).unwrap();
+
+    let loaded = MmapDictionary::load(&tmp).unwrap();
+    let restored = loaded.build_classifier();
+
+    // カスタム length が復元されているか
+    let h = restored.get_class("HIRAGANA").expect("HIRAGANA missing");
+    assert!(h.invoke);
+    assert!(!h.group);
+    assert_eq!(h.length, 7);
+
+    let k = restored.get_class("KATAKANA").expect("KATAKANA missing");
+    assert!(!k.invoke);
+    assert!(k.group);
+    assert_eq!(k.length, 5);
+
+    // ranges が復元され、classify_char が正しく動作するか
+    assert_eq!(restored.classify_char('あ'), CharType::Hiragana);
+    assert_eq!(restored.classify_char('ア'), CharType::Katakana);
+
+    let _ = std::fs::remove_file(&tmp);
+}

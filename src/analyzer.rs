@@ -14,33 +14,65 @@ fn is_sentence_boundary(c: char) -> bool {
     matches!(c, '。' | '！' | '？' | '!' | '?' | '\n')
 }
 
+/// mmap辞書バックエンドの共有データ（Arc で複数 Analyzer から共有可能）
+pub struct SharedMmapBackend {
+    pub dict: MmapDictionary,
+    pub classifier: CharClassifier,
+}
+
 /// 辞書バックエンド
+#[derive(Clone)]
 enum DictBackend {
-    /// mmap辞書（本番用、ゼロコピー高速）
-    Mmap {
-        dict: Box<MmapDictionary>,
-        classifier: CharClassifier,
-    },
+    /// mmap辞書（本番用、ゼロコピー高速）。Arc共有で複数スレッドからアクセス可能
+    Mmap(Arc<SharedMmapBackend>),
     /// インメモリ辞書（テスト用）
-    InMemory { dict: Arc<Dictionary> },
+    InMemory(Arc<Dictionary>),
 }
 
 /// 形態素解析器
+///
+/// # 並行解析
+/// `Analyzer` は `Clone` を実装しており、辞書（mmap）を共有しつつ
+/// 各クローンが独自のラティスワークスペースを持つ。
+/// 複数スレッドで並行に解析する場合は、ワーカーごとに `analyzer.clone()` する。
+///
+/// ```ignore
+/// let analyzer = Analyzer::load("dict.hsd")?;
+/// std::thread::scope(|s| {
+///     for input in inputs.chunks(100) {
+///         let mut worker = analyzer.clone();
+///         s.spawn(move || {
+///             for text in input {
+///                 let _tokens = worker.tokenize(text);
+///             }
+///         });
+///     }
+/// });
+/// ```
 pub struct Analyzer {
     backend: DictBackend,
     workspace: LatticeWorkspace,
+}
+
+impl Clone for Analyzer {
+    /// 辞書を共有しつつ、新しいワークスペースを持つアナライザーを生成
+    ///
+    /// 辞書は `Arc` 共有のためゼロコピー。ワークスペースのみ新規確保される。
+    fn clone(&self) -> Self {
+        Analyzer {
+            backend: self.backend.clone(),
+            workspace: LatticeWorkspace::new(),
+        }
+    }
 }
 
 impl Analyzer {
     /// .hsd 辞書ファイルからアナライザーを生成
     pub fn load<P: AsRef<Path>>(dict_path: P) -> io::Result<Self> {
         let dict = MmapDictionary::load(dict_path)?;
-        let classifier = CharClassifier::default_japanese();
+        let classifier = dict.build_classifier();
         Ok(Analyzer {
-            backend: DictBackend::Mmap {
-                dict: Box::new(dict),
-                classifier,
-            },
+            backend: DictBackend::Mmap(Arc::new(SharedMmapBackend { dict, classifier })),
             workspace: LatticeWorkspace::new(),
         })
     }
@@ -48,10 +80,21 @@ impl Analyzer {
     /// 辞書オブジェクトから直接生成（テスト用）
     pub fn from_dict(dict: Dictionary) -> Self {
         Analyzer {
-            backend: DictBackend::InMemory {
-                dict: Arc::new(dict),
-            },
+            backend: DictBackend::InMemory(Arc::new(dict)),
             workspace: LatticeWorkspace::new(),
+        }
+    }
+
+    /// mmap 辞書の Arc<str> キャッシュを事前構築する
+    ///
+    /// 並行解析で複数スレッドから同時にアクセスする場合、初回のキャッシュ構築が
+    /// 1スレッドにシリアライズされてしまう。事前にキャッシュを温めることで
+    /// 初回並列リクエストのレイテンシスパイクを回避できる。
+    ///
+    /// インメモリ辞書の場合は何もしない。
+    pub fn prewarm(&self) {
+        if let DictBackend::Mmap(shared) = &self.backend {
+            shared.dict.prewarm_arc_cache();
         }
     }
 
@@ -101,10 +144,11 @@ impl Analyzer {
     #[inline]
     fn tokenize_segment(&mut self, segment: &str) -> Vec<Token> {
         match &self.backend {
-            DictBackend::Mmap { dict, classifier } => {
-                self.workspace.tokenize_v2(segment, dict, classifier)
+            DictBackend::Mmap(shared) => {
+                self.workspace
+                    .tokenize_v2(segment, &shared.dict, &shared.classifier)
             }
-            DictBackend::InMemory { dict } => self.workspace.tokenize(segment, dict),
+            DictBackend::InMemory(dict) => self.workspace.tokenize(segment, dict),
         }
     }
 
