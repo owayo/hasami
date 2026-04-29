@@ -1,0 +1,482 @@
+[
+    {
+        "label": "runpy",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "runpy",
+        "description": "runpy",
+        "detail": "runpy",
+        "documentation": {}
+    },
+    {
+        "label": "annotations",
+        "importPath": "__future__",
+        "description": "__future__",
+        "isExtraImport": true,
+        "detail": "__future__",
+        "documentation": {}
+    },
+    {
+        "label": "os",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "os",
+        "description": "os",
+        "detail": "os",
+        "documentation": {}
+    },
+    {
+        "label": "site",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "site",
+        "description": "site",
+        "detail": "site",
+        "documentation": {}
+    },
+    {
+        "label": "sys",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "sys",
+        "description": "sys",
+        "detail": "sys",
+        "documentation": {}
+    },
+    {
+        "label": "subprocess",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "subprocess",
+        "description": "subprocess",
+        "detail": "subprocess",
+        "documentation": {}
+    },
+    {
+        "label": "time",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "time",
+        "description": "time",
+        "detail": "time",
+        "documentation": {}
+    },
+    {
+        "label": "Path",
+        "importPath": "pathlib",
+        "description": "pathlib",
+        "isExtraImport": true,
+        "detail": "pathlib",
+        "documentation": {}
+    },
+    {
+        "label": "Path",
+        "importPath": "pathlib",
+        "description": "pathlib",
+        "isExtraImport": true,
+        "detail": "pathlib",
+        "documentation": {}
+    },
+    {
+        "label": "Path",
+        "importPath": "pathlib",
+        "description": "pathlib",
+        "isExtraImport": true,
+        "detail": "pathlib",
+        "documentation": {}
+    },
+    {
+        "label": "Path",
+        "importPath": "pathlib",
+        "description": "pathlib",
+        "isExtraImport": true,
+        "detail": "pathlib",
+        "documentation": {}
+    },
+    {
+        "label": "tabulate",
+        "importPath": "tabulate",
+        "description": "tabulate",
+        "isExtraImport": true,
+        "detail": "tabulate",
+        "documentation": {}
+    },
+    {
+        "label": "argparse",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "argparse",
+        "description": "argparse",
+        "detail": "argparse",
+        "documentation": {}
+    },
+    {
+        "label": "csv",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "csv",
+        "description": "csv",
+        "detail": "csv",
+        "documentation": {}
+    },
+    {
+        "label": "glob",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "glob",
+        "description": "glob",
+        "detail": "glob",
+        "documentation": {}
+    },
+    {
+        "label": "shutil",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "shutil",
+        "description": "shutil",
+        "detail": "shutil",
+        "documentation": {}
+    },
+    {
+        "label": "bin_dir",
+        "kind": 5,
+        "importPath": "eval..venv.Scripts.activate_this",
+        "description": "eval..venv.Scripts.activate_this",
+        "peekOfCode": "bin_dir = os.path.dirname(abs_file)\nbase = bin_dir[: -len(\"Scripts\") - 1]  # strip away the bin part from the __file__, plus the path separator\n# prepend bin to PATH (this file is inside the bin directory)\nos.environ[\"PATH\"] = os.pathsep.join([bin_dir, *os.environ.get(\"PATH\", \"\").split(os.pathsep)])\nos.environ[\"VIRTUAL_ENV\"] = base  # virtual env is right above bin directory\nos.environ[\"VIRTUAL_ENV_PROMPT\"] = \"hasami-eval\" or os.path.basename(base)  # noqa: SIM222\n# add the virtual environments libraries to the host python import mechanism\nprev_length = len(sys.path)\nfor lib in \"..\\\\Lib\\\\site-packages\".split(os.pathsep):\n    path = os.path.realpath(os.path.join(bin_dir, lib))",
+        "detail": "eval..venv.Scripts.activate_this",
+        "documentation": {}
+    },
+    {
+        "label": "base",
+        "kind": 5,
+        "importPath": "eval..venv.Scripts.activate_this",
+        "description": "eval..venv.Scripts.activate_this",
+        "peekOfCode": "base = bin_dir[: -len(\"Scripts\") - 1]  # strip away the bin part from the __file__, plus the path separator\n# prepend bin to PATH (this file is inside the bin directory)\nos.environ[\"PATH\"] = os.pathsep.join([bin_dir, *os.environ.get(\"PATH\", \"\").split(os.pathsep)])\nos.environ[\"VIRTUAL_ENV\"] = base  # virtual env is right above bin directory\nos.environ[\"VIRTUAL_ENV_PROMPT\"] = \"hasami-eval\" or os.path.basename(base)  # noqa: SIM222\n# add the virtual environments libraries to the host python import mechanism\nprev_length = len(sys.path)\nfor lib in \"..\\\\Lib\\\\site-packages\".split(os.pathsep):\n    path = os.path.realpath(os.path.join(bin_dir, lib))\n    site.addsitedir(path)",
+        "detail": "eval..venv.Scripts.activate_this",
+        "documentation": {}
+    },
+    {
+        "label": "os.environ[\"PATH\"]",
+        "kind": 5,
+        "importPath": "eval..venv.Scripts.activate_this",
+        "description": "eval..venv.Scripts.activate_this",
+        "peekOfCode": "os.environ[\"PATH\"] = os.pathsep.join([bin_dir, *os.environ.get(\"PATH\", \"\").split(os.pathsep)])\nos.environ[\"VIRTUAL_ENV\"] = base  # virtual env is right above bin directory\nos.environ[\"VIRTUAL_ENV_PROMPT\"] = \"hasami-eval\" or os.path.basename(base)  # noqa: SIM222\n# add the virtual environments libraries to the host python import mechanism\nprev_length = len(sys.path)\nfor lib in \"..\\\\Lib\\\\site-packages\".split(os.pathsep):\n    path = os.path.realpath(os.path.join(bin_dir, lib))\n    site.addsitedir(path)\nsys.path[:] = sys.path[prev_length:] + sys.path[0:prev_length]\nsys.real_prefix = sys.prefix",
+        "detail": "eval..venv.Scripts.activate_this",
+        "documentation": {}
+    },
+    {
+        "label": "os.environ[\"VIRTUAL_ENV\"]",
+        "kind": 5,
+        "importPath": "eval..venv.Scripts.activate_this",
+        "description": "eval..venv.Scripts.activate_this",
+        "peekOfCode": "os.environ[\"VIRTUAL_ENV\"] = base  # virtual env is right above bin directory\nos.environ[\"VIRTUAL_ENV_PROMPT\"] = \"hasami-eval\" or os.path.basename(base)  # noqa: SIM222\n# add the virtual environments libraries to the host python import mechanism\nprev_length = len(sys.path)\nfor lib in \"..\\\\Lib\\\\site-packages\".split(os.pathsep):\n    path = os.path.realpath(os.path.join(bin_dir, lib))\n    site.addsitedir(path)\nsys.path[:] = sys.path[prev_length:] + sys.path[0:prev_length]\nsys.real_prefix = sys.prefix\nsys.prefix = base",
+        "detail": "eval..venv.Scripts.activate_this",
+        "documentation": {}
+    },
+    {
+        "label": "os.environ[\"VIRTUAL_ENV_PROMPT\"]",
+        "kind": 5,
+        "importPath": "eval..venv.Scripts.activate_this",
+        "description": "eval..venv.Scripts.activate_this",
+        "peekOfCode": "os.environ[\"VIRTUAL_ENV_PROMPT\"] = \"hasami-eval\" or os.path.basename(base)  # noqa: SIM222\n# add the virtual environments libraries to the host python import mechanism\nprev_length = len(sys.path)\nfor lib in \"..\\\\Lib\\\\site-packages\".split(os.pathsep):\n    path = os.path.realpath(os.path.join(bin_dir, lib))\n    site.addsitedir(path)\nsys.path[:] = sys.path[prev_length:] + sys.path[0:prev_length]\nsys.real_prefix = sys.prefix\nsys.prefix = base",
+        "detail": "eval..venv.Scripts.activate_this",
+        "documentation": {}
+    },
+    {
+        "label": "prev_length",
+        "kind": 5,
+        "importPath": "eval..venv.Scripts.activate_this",
+        "description": "eval..venv.Scripts.activate_this",
+        "peekOfCode": "prev_length = len(sys.path)\nfor lib in \"..\\\\Lib\\\\site-packages\".split(os.pathsep):\n    path = os.path.realpath(os.path.join(bin_dir, lib))\n    site.addsitedir(path)\nsys.path[:] = sys.path[prev_length:] + sys.path[0:prev_length]\nsys.real_prefix = sys.prefix\nsys.prefix = base",
+        "detail": "eval..venv.Scripts.activate_this",
+        "documentation": {}
+    },
+    {
+        "label": "sys.path[:]",
+        "kind": 5,
+        "importPath": "eval..venv.Scripts.activate_this",
+        "description": "eval..venv.Scripts.activate_this",
+        "peekOfCode": "sys.path[:] = sys.path[prev_length:] + sys.path[0:prev_length]\nsys.real_prefix = sys.prefix\nsys.prefix = base",
+        "detail": "eval..venv.Scripts.activate_this",
+        "documentation": {}
+    },
+    {
+        "label": "sys.real_prefix",
+        "kind": 5,
+        "importPath": "eval..venv.Scripts.activate_this",
+        "description": "eval..venv.Scripts.activate_this",
+        "peekOfCode": "sys.real_prefix = sys.prefix\nsys.prefix = base",
+        "detail": "eval..venv.Scripts.activate_this",
+        "documentation": {}
+    },
+    {
+        "label": "sys.prefix",
+        "kind": 5,
+        "importPath": "eval..venv.Scripts.activate_this",
+        "description": "eval..venv.Scripts.activate_this",
+        "peekOfCode": "sys.prefix = base",
+        "detail": "eval..venv.Scripts.activate_this",
+        "documentation": {}
+    },
+    {
+        "label": "main",
+        "kind": 2,
+        "importPath": "eval.benchmark",
+        "description": "eval.benchmark",
+        "peekOfCode": "def main():\n    \"\"\"評価比較のメインエントリポイント.\"\"\"\n    has_sudachi_rs = SUDACHI_RS_BIN.exists()\n    sudachi_rs_dict = _find_sudachi_rs_dict() if has_sudachi_rs else None\n    engines = \"hasami vs MeCab vs Sudachi(py)\"\n    if has_sudachi_rs:\n        engines += \" vs sudachi.rs\"\n    print(\"=\" * 78)\n    print(f\"  {engines} 評価比較ベンチマーク\")\n    print(\"=\" * 78)",
+        "detail": "eval.benchmark",
+        "documentation": {}
+    },
+    {
+        "label": "TEST_SENTENCES",
+        "kind": 5,
+        "importPath": "eval.benchmark",
+        "description": "eval.benchmark",
+        "peekOfCode": "TEST_SENTENCES = [\n    \"東京都に住んでいる人々が増えている。\",\n    \"私は昨日の夜、友人と一緒に映画を観に行きました。\",\n    \"人工知能の発展により、多くの産業が大きく変わりつつある。\",\n    \"日本の四季は美しく、特に春の桜と秋の紅葉が有名です。\",\n    \"彼女は大学で計算機科学を専攻し、卒業後はソフトウェアエンジニアとして働いている。\",\n    \"環境問題に対する意識が高まり、再生可能エネルギーの導入が加速している。\",\n    \"量子コンピュータの実用化に向けた研究開発が世界中で活発に行われている。\",\n    \"この問題を解決するためには、政府と民間企業の連携が不可欠である。\",\n    \"少子高齢化が進む日本では、労働力不足が深刻な社会問題となっている。\",",
+        "detail": "eval.benchmark",
+        "documentation": {}
+    },
+    {
+        "label": "ITERATIONS_SPEED",
+        "kind": 5,
+        "importPath": "eval.benchmark",
+        "description": "eval.benchmark",
+        "peekOfCode": "ITERATIONS_SPEED = 3000\nWARMUP = 100\nHASAMI_DICT = Path(__file__).parent / \"hasami-dict.hsd\"\nHASAMI_BIN = Path(__file__).parent.parent / \"target\" / \"release\" / \"hasami\"\n# sudachi.rs のパスを自動検出（隣接リポジトリまたは環境変数で指定可能）\n_os = __import__(\"os\")\nSUDACHI_RS_ROOT = Path(\n    _os.environ.get(\n        \"SUDACHI_RS_ROOT\",\n        str(Path(__file__).parent.parent.parent / \"sudachi.rs\"),",
+        "detail": "eval.benchmark",
+        "documentation": {}
+    },
+    {
+        "label": "WARMUP",
+        "kind": 5,
+        "importPath": "eval.benchmark",
+        "description": "eval.benchmark",
+        "peekOfCode": "WARMUP = 100\nHASAMI_DICT = Path(__file__).parent / \"hasami-dict.hsd\"\nHASAMI_BIN = Path(__file__).parent.parent / \"target\" / \"release\" / \"hasami\"\n# sudachi.rs のパスを自動検出（隣接リポジトリまたは環境変数で指定可能）\n_os = __import__(\"os\")\nSUDACHI_RS_ROOT = Path(\n    _os.environ.get(\n        \"SUDACHI_RS_ROOT\",\n        str(Path(__file__).parent.parent.parent / \"sudachi.rs\"),\n    )",
+        "detail": "eval.benchmark",
+        "documentation": {}
+    },
+    {
+        "label": "HASAMI_DICT",
+        "kind": 5,
+        "importPath": "eval.benchmark",
+        "description": "eval.benchmark",
+        "peekOfCode": "HASAMI_DICT = Path(__file__).parent / \"hasami-dict.hsd\"\nHASAMI_BIN = Path(__file__).parent.parent / \"target\" / \"release\" / \"hasami\"\n# sudachi.rs のパスを自動検出（隣接リポジトリまたは環境変数で指定可能）\n_os = __import__(\"os\")\nSUDACHI_RS_ROOT = Path(\n    _os.environ.get(\n        \"SUDACHI_RS_ROOT\",\n        str(Path(__file__).parent.parent.parent / \"sudachi.rs\"),\n    )\n)",
+        "detail": "eval.benchmark",
+        "documentation": {}
+    },
+    {
+        "label": "HASAMI_BIN",
+        "kind": 5,
+        "importPath": "eval.benchmark",
+        "description": "eval.benchmark",
+        "peekOfCode": "HASAMI_BIN = Path(__file__).parent.parent / \"target\" / \"release\" / \"hasami\"\n# sudachi.rs のパスを自動検出（隣接リポジトリまたは環境変数で指定可能）\n_os = __import__(\"os\")\nSUDACHI_RS_ROOT = Path(\n    _os.environ.get(\n        \"SUDACHI_RS_ROOT\",\n        str(Path(__file__).parent.parent.parent / \"sudachi.rs\"),\n    )\n)\nSUDACHI_RS_BIN = SUDACHI_RS_ROOT / \"target\" / \"release\" / \"sudachi\"",
+        "detail": "eval.benchmark",
+        "documentation": {}
+    },
+    {
+        "label": "_os",
+        "kind": 5,
+        "importPath": "eval.benchmark",
+        "description": "eval.benchmark",
+        "peekOfCode": "_os = __import__(\"os\")\nSUDACHI_RS_ROOT = Path(\n    _os.environ.get(\n        \"SUDACHI_RS_ROOT\",\n        str(Path(__file__).parent.parent.parent / \"sudachi.rs\"),\n    )\n)\nSUDACHI_RS_BIN = SUDACHI_RS_ROOT / \"target\" / \"release\" / \"sudachi\"\n# Windows 対応\nif not SUDACHI_RS_BIN.exists() and (SUDACHI_RS_BIN.with_suffix(\".exe\")).exists():",
+        "detail": "eval.benchmark",
+        "documentation": {}
+    },
+    {
+        "label": "SUDACHI_RS_ROOT",
+        "kind": 5,
+        "importPath": "eval.benchmark",
+        "description": "eval.benchmark",
+        "peekOfCode": "SUDACHI_RS_ROOT = Path(\n    _os.environ.get(\n        \"SUDACHI_RS_ROOT\",\n        str(Path(__file__).parent.parent.parent / \"sudachi.rs\"),\n    )\n)\nSUDACHI_RS_BIN = SUDACHI_RS_ROOT / \"target\" / \"release\" / \"sudachi\"\n# Windows 対応\nif not SUDACHI_RS_BIN.exists() and (SUDACHI_RS_BIN.with_suffix(\".exe\")).exists():\n    SUDACHI_RS_BIN = SUDACHI_RS_BIN.with_suffix(\".exe\")",
+        "detail": "eval.benchmark",
+        "documentation": {}
+    },
+    {
+        "label": "SUDACHI_RS_BIN",
+        "kind": 5,
+        "importPath": "eval.benchmark",
+        "description": "eval.benchmark",
+        "peekOfCode": "SUDACHI_RS_BIN = SUDACHI_RS_ROOT / \"target\" / \"release\" / \"sudachi\"\n# Windows 対応\nif not SUDACHI_RS_BIN.exists() and (SUDACHI_RS_BIN.with_suffix(\".exe\")).exists():\n    SUDACHI_RS_BIN = SUDACHI_RS_BIN.with_suffix(\".exe\")\nif not HASAMI_BIN.exists() and (HASAMI_BIN.with_suffix(\".exe\")).exists():\n    HASAMI_BIN = HASAMI_BIN.with_suffix(\".exe\")\n# sudachi.rs の辞書パス (system.dic)\nSUDACHI_RS_DICT = Path(_os.environ.get(\"SUDACHI_RS_DICT\", \"\"))\n# ===========================================================================\n# エンジンセットアップ",
+        "detail": "eval.benchmark",
+        "documentation": {}
+    },
+    {
+        "label": "SUDACHI_RS_DICT",
+        "kind": 5,
+        "importPath": "eval.benchmark",
+        "description": "eval.benchmark",
+        "peekOfCode": "SUDACHI_RS_DICT = Path(_os.environ.get(\"SUDACHI_RS_DICT\", \"\"))\n# ===========================================================================\n# エンジンセットアップ\n# ===========================================================================\ndef _setup_mecab():\n    \"\"\"MeCab (fugashi) のセットアップ.\n    Returns:\n        fugashi.GenericTagger: MeCab tagger インスタンス.\n    \"\"\"\n    import fugashi",
+        "detail": "eval.benchmark",
+        "documentation": {}
+    },
+    {
+        "label": "tokenize_hasami",
+        "kind": 2,
+        "importPath": "eval.compare",
+        "description": "eval.compare",
+        "peekOfCode": "def tokenize_hasami(text, dict_path):\n    \"\"\"Hasami で形態素解析する.\n    Returns:\n        str: 解析結果。\n    \"\"\"\n    binary = _find_hasami_binary()\n    full_path = PROJECT_ROOT / dict_path\n    if not full_path.exists():\n        return \"(辞書なし)\"\n    try:",
+        "detail": "eval.compare",
+        "documentation": {}
+    },
+    {
+        "label": "tokenize_sudachi",
+        "kind": 2,
+        "importPath": "eval.compare",
+        "description": "eval.compare",
+        "peekOfCode": "def tokenize_sudachi(text):\n    \"\"\"sudachi.rs で形態素解析する.\n    Returns:\n        str: 解析結果。\n    \"\"\"\n    binary = _find_sudachi_binary()\n    if not binary:\n        return \"(sudachi.rs 未検出)\"\n    if not Path(SUDACHI_RS_DICT).exists():\n        return \"(辞書未検出)\"",
+        "detail": "eval.compare",
+        "documentation": {}
+    },
+    {
+        "label": "extract_tokens",
+        "kind": 2,
+        "importPath": "eval.compare",
+        "description": "eval.compare",
+        "peekOfCode": "def extract_tokens(output, is_sudachi_rs=False):\n    \"\"\"解析出力から表層形と読みのリストを抽出する.\n    Returns:\n        list[tuple[str, str]]: (表層形, 読み) のリスト。\n    \"\"\"\n    tokens = []\n    for line in output.splitlines():\n        if line == \"EOS\" or not line.strip():\n            continue\n        parts = line.split(\"\\t\")",
+        "detail": "eval.compare",
+        "documentation": {}
+    },
+    {
+        "label": "compare",
+        "kind": 2,
+        "importPath": "eval.compare",
+        "description": "eval.compare",
+        "peekOfCode": "def compare(text):\n    \"\"\"1つのテキストを全エンジンで解析して比較表示する.\"\"\"\n    print(f\"\\n{'=' * 60}\")\n    print(f\"  入力: {text}\")\n    print(f\"{'=' * 60}\")\n    results = []\n    # hasami 各辞書\n    for label, dict_path in HASAMI_DICTS:\n        output = tokenize_hasami(text, dict_path)\n        tokens = extract_tokens(output)",
+        "detail": "eval.compare",
+        "documentation": {}
+    },
+    {
+        "label": "main",
+        "kind": 2,
+        "importPath": "eval.compare",
+        "description": "eval.compare",
+        "peekOfCode": "def main():\n    \"\"\"複数エンジンで形態素解析結果を比較する.\"\"\"\n    parser = argparse.ArgumentParser(\n        description=\"Compare tokenization across engines and dictionaries\"\n    )\n    parser.add_argument(\"texts\", nargs=\"*\", help=\"テキスト（複数可）\")\n    parser.add_argument(\"--file\", \"-f\", help=\"入力テキストファイル（1行1文）\")\n    args = parser.parse_args()\n    texts = list(args.texts) if args.texts else []\n    if args.file:",
+        "detail": "eval.compare",
+        "documentation": {}
+    },
+    {
+        "label": "PROJECT_ROOT",
+        "kind": 5,
+        "importPath": "eval.compare",
+        "description": "eval.compare",
+        "peekOfCode": "PROJECT_ROOT = Path(__file__).resolve().parent.parent\n# hasami 辞書設定\nHASAMI_DICTS = [\n    (\"hasami (ipadic)\", \"dict/ipadic.hsd\"),\n    (\"hasami (neologd)\", \"dict/ipadic-neologd.hsd\"),\n    (\"hasami (unified)\", \"dict/ipadic-neologd-sudachi.hsd\"),\n    (\"hasami (sudachi)\", \"dict/sudachi.hsd\"),\n]\n# sudachi.rs 設定\nSUDACHI_RS_ROOT = os.environ.get(\"SUDACHI_RS_ROOT\", r\"C:\\GitHub\\sudachi.rs\")",
+        "detail": "eval.compare",
+        "documentation": {}
+    },
+    {
+        "label": "HASAMI_DICTS",
+        "kind": 5,
+        "importPath": "eval.compare",
+        "description": "eval.compare",
+        "peekOfCode": "HASAMI_DICTS = [\n    (\"hasami (ipadic)\", \"dict/ipadic.hsd\"),\n    (\"hasami (neologd)\", \"dict/ipadic-neologd.hsd\"),\n    (\"hasami (unified)\", \"dict/ipadic-neologd-sudachi.hsd\"),\n    (\"hasami (sudachi)\", \"dict/sudachi.hsd\"),\n]\n# sudachi.rs 設定\nSUDACHI_RS_ROOT = os.environ.get(\"SUDACHI_RS_ROOT\", r\"C:\\GitHub\\sudachi.rs\")\nSUDACHI_RS_DICT = os.environ.get(\n    \"SUDACHI_RS_DICT\",",
+        "detail": "eval.compare",
+        "documentation": {}
+    },
+    {
+        "label": "SUDACHI_RS_ROOT",
+        "kind": 5,
+        "importPath": "eval.compare",
+        "description": "eval.compare",
+        "peekOfCode": "SUDACHI_RS_ROOT = os.environ.get(\"SUDACHI_RS_ROOT\", r\"C:\\GitHub\\sudachi.rs\")\nSUDACHI_RS_DICT = os.environ.get(\n    \"SUDACHI_RS_DICT\",\n    os.path.join(\n        os.path.expanduser(\"~\"),\n        \".rye/py/cpython@3.12.9/Lib/site-packages/\"\n        \"sudachidict_core/resources/system.dic\",\n    ),\n)\ndef _find_hasami_binary():",
+        "detail": "eval.compare",
+        "documentation": {}
+    },
+    {
+        "label": "SUDACHI_RS_DICT",
+        "kind": 5,
+        "importPath": "eval.compare",
+        "description": "eval.compare",
+        "peekOfCode": "SUDACHI_RS_DICT = os.environ.get(\n    \"SUDACHI_RS_DICT\",\n    os.path.join(\n        os.path.expanduser(\"~\"),\n        \".rye/py/cpython@3.12.9/Lib/site-packages/\"\n        \"sudachidict_core/resources/system.dic\",\n    ),\n)\ndef _find_hasami_binary():\n    \"\"\"Hasami バイナリを探す.",
+        "detail": "eval.compare",
+        "documentation": {}
+    },
+    {
+        "label": "main",
+        "kind": 2,
+        "importPath": "eval.main",
+        "description": "eval.main",
+        "peekOfCode": "def main():\n    \"\"\"メイン関数.\"\"\"\n    print(\"Hello from hasami-eval!\")\nif __name__ == \"__main__\":\n    main()",
+        "detail": "eval.main",
+        "documentation": {}
+    },
+    {
+        "label": "convert_file",
+        "kind": 2,
+        "importPath": "scripts.convert-unidic-csv",
+        "description": "scripts.convert-unidic-csv",
+        "peekOfCode": "def convert_file(input_path: str, output_path: str) -> int:\n    \"\"\"Convert a single UniDic CSV file to IPAdic-compatible format.\n    Returns:\n        Number of entries converted.\n    \"\"\"\n    count = 0\n    with (\n        open(input_path, encoding=\"utf-8\") as inf,\n        open(output_path, \"w\", encoding=\"utf-8\", newline=\"\") as outf,\n    ):",
+        "detail": "scripts.convert-unidic-csv",
+        "documentation": {}
+    },
+    {
+        "label": "main",
+        "kind": 2,
+        "importPath": "scripts.convert-unidic-csv",
+        "description": "scripts.convert-unidic-csv",
+        "peekOfCode": "def main() -> None:\n    \"\"\"Convert all UniDic CSV files in a directory to IPAdic-compatible format.\"\"\"\n    if len(sys.argv) != 3:\n        print(f\"Usage: {sys.argv[0]} <input-dir> <output-dir>\", file=sys.stderr)\n        sys.exit(1)\n    input_dir = sys.argv[1]\n    output_dir = sys.argv[2]\n    os.makedirs(output_dir, exist_ok=True)\n    csv_files = sorted(glob.glob(os.path.join(input_dir, \"*.csv\")))\n    if not csv_files:",
+        "detail": "scripts.convert-unidic-csv",
+        "documentation": {}
+    },
+    {
+        "label": "convert_winfo",
+        "kind": 2,
+        "importPath": "scripts.convert_sudachi_to_mecab",
+        "description": "scripts.convert_sudachi_to_mecab",
+        "peekOfCode": "def convert_winfo(winfo_path, output_dir):\n    \"\"\"winfo.txt を MeCab互換 CSV に変換.\n    MeCab CSV format (13 fields):\n        surface, left_id, right_id, cost,\n        POS1, POS2, POS3, POS4,\n        conjugation_type, conjugation_form,\n        base_form, reading, pronunciation\n    Returns:\n        int: 変換されたエントリ数.\n    \"\"\"",
+        "detail": "scripts.convert_sudachi_to_mecab",
+        "documentation": {}
+    },
+    {
+        "label": "copy_matrix",
+        "kind": 2,
+        "importPath": "scripts.convert_sudachi_to_mecab",
+        "description": "scripts.convert_sudachi_to_mecab",
+        "peekOfCode": "def copy_matrix(matrix_path, output_dir):\n    \"\"\"matrix.def をそのままコピー (形式はMeCabと同一).\n    Returns:\n        Path: コピー先パス.\n    \"\"\"\n    dest = output_dir / \"matrix.def\"\n    shutil.copy2(matrix_path, dest)\n    with open(matrix_path, encoding=\"utf-8\") as f:\n        header = f.readline().strip().split()\n        left = header[0]",
+        "detail": "scripts.convert_sudachi_to_mecab",
+        "documentation": {}
+    },
+    {
+        "label": "main",
+        "kind": 2,
+        "importPath": "scripts.convert_sudachi_to_mecab",
+        "description": "scripts.convert_sudachi_to_mecab",
+        "peekOfCode": "def main():\n    \"\"\"SudachiDict を hasami 形式に変換.\"\"\"\n    parser = argparse.ArgumentParser(\n        description=\"SudachiDict winfo dump -> hasami MeCab CSV\"\n    )\n    parser.add_argument(\n        \"--winfo\",\n        required=True,\n        help=\"Path to winfo dump (from sudachi dump ... winfo)\",\n    )",
+        "detail": "scripts.convert_sudachi_to_mecab",
+        "documentation": {}
+    },
+    {
+        "label": "lookup_mapping",
+        "kind": 2,
+        "importPath": "scripts.remap_sudachi_to_ipadic",
+        "description": "scripts.remap_sudachi_to_ipadic",
+        "peekOfCode": "def lookup_mapping(pos1, pos2, pos3, pos4):\n    \"\"\"SudachiDict POSからIPAdic POS + IDを検索する.\n    Returns:\n        tuple: (ipadic_pos, ipadic_id) or None.\n    \"\"\"\n    # 4要素から順に短いキーで検索\n    keys = [\n        (pos1, pos2, pos3, pos4),\n        (pos1, pos2, pos3),\n        (pos1, pos2),",
+        "detail": "scripts.remap_sudachi_to_ipadic",
+        "documentation": {}
+    },
+    {
+        "label": "remap_csv",
+        "kind": 2,
+        "importPath": "scripts.remap_sudachi_to_ipadic",
+        "description": "scripts.remap_sudachi_to_ipadic",
+        "peekOfCode": "def remap_csv(input_csv, output_csv):\n    \"\"\"SudachiDict CSVをIPAdic互換にリマップする.\n    Returns:\n        tuple: (converted, skipped, unmapped_pos_set).\n    \"\"\"\n    converted = 0\n    skipped = 0\n    unmapped = set()\n    with (\n        open(input_csv, encoding=\"utf-8\") as fin,",
+        "detail": "scripts.remap_sudachi_to_ipadic",
+        "documentation": {}
+    },
+    {
+        "label": "main",
+        "kind": 2,
+        "importPath": "scripts.remap_sudachi_to_ipadic",
+        "description": "scripts.remap_sudachi_to_ipadic",
+        "peekOfCode": "def main():\n    \"\"\"SudachiDict CSVをIPAdic互換にリマップする.\"\"\"\n    parser = argparse.ArgumentParser(\n        description=\"Remap SudachiDict CSV to IPAdic-compatible IDs\"\n    )\n    parser.add_argument(\n        \"--input\",\n        required=True,\n        help=\"Input SudachiDict CSV (MeCab format from convert script)\",\n    )",
+        "detail": "scripts.remap_sudachi_to_ipadic",
+        "documentation": {}
+    },
+    {
+        "label": "SUDACHI_TO_IPADIC",
+        "kind": 5,
+        "importPath": "scripts.remap_sudachi_to_ipadic",
+        "description": "scripts.remap_sudachi_to_ipadic",
+        "peekOfCode": "SUDACHI_TO_IPADIC = {\n    # 名詞系\n    (\"名詞\", \"普通名詞\", \"一般\"): (\"名詞,一般,*,*\", 1285),\n    (\"名詞\", \"普通名詞\", \"サ変可能\"): (\"名詞,サ変接続,*,*\", 1283),\n    (\"名詞\", \"普通名詞\", \"形状詞可能\"): (\"名詞,形容動詞語幹,*,*\", 1287),\n    (\"名詞\", \"普通名詞\", \"サ変形状詞可能\"): (\"名詞,サ変接続,*,*\", 1283),\n    (\"名詞\", \"普通名詞\", \"副詞可能\"): (\"名詞,副詞可能,*,*\", 1314),\n    (\"名詞\", \"普通名詞\", \"助数詞可能\"): (\"名詞,一般,*,*\", 1285),\n    (\"名詞\", \"固有名詞\", \"一般\"): (\"名詞,固有名詞,一般,*\", 1288),\n    (\"名詞\", \"固有名詞\", \"人名\", \"一般\"): (\"名詞,固有名詞,人名,一般\", 1289),",
+        "detail": "scripts.remap_sudachi_to_ipadic",
+        "documentation": {}
+    }
+]
