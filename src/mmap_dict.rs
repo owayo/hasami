@@ -16,7 +16,10 @@ use std::{mem, slice, str};
 // --- 定数 ---
 
 const MAGIC: [u8; 8] = *b"HSMDICT\0";
-const FORMAT_VERSION: u32 = 2;
+/// v2: char.def 情報を保存しない旧フォーマット
+const FORMAT_VERSION_V2: u32 = 2;
+/// v3: char.def の categories/ranges を完全保存する現行フォーマット
+const FORMAT_VERSION: u32 = 3;
 
 // --- オンディスク POD 構造体 ---
 
@@ -28,7 +31,10 @@ struct Section {
     bytes: u64,
 }
 
-/// ファイルヘッダー (13セクション: sparse trie + offsets-only str)
+/// ファイルヘッダー (v3: 15セクション = v2の13 + char.def 2セクション)
+///
+/// v2 Header は v3 Header の strict prefix（先頭248バイト分）。
+/// 旧 v2 ファイルをロードする際は、末尾の v3 専用フィールドをゼロ埋めして読み込む。
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct Header {
@@ -42,7 +48,7 @@ struct Header {
     matrix_right_size: u16,
     unk_bucket_count: u32,
     unk_template_count: u32,
-    // 13 sections
+    // --- v2 sections (13) ---
     trie_base: Section,
     trie_check: Section,
     terminal_bits: Section,
@@ -56,6 +62,43 @@ struct Header {
     matrix_costs: Section,
     unk_buckets: Section,
     unk_templates: Section,
+    // --- v3 additions (char.def 完全保存用) ---
+    char_category_count: u32,
+    char_range_count: u32,
+    char_categories: Section,
+    char_ranges: Section,
+}
+
+/// v2 Header のサイズ（互換性チェック用）。char_category_count 以降は除いた248バイト。
+const HEADER_V2_SIZE: usize = 248;
+
+/// 文字カテゴリレコード（POD、16バイト）
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct CharCategoryRecord {
+    /// カテゴリ名の string pool ID
+    name_id: u32,
+    /// invoke=1 なら常に未知語処理を起動
+    invoke: u8,
+    /// group=1 なら同一カテゴリ文字をグルーピング
+    group: u8,
+    _pad0: u16,
+    /// グルーピング時の最大長（0=無制限）
+    length: u32,
+    _pad1: u32,
+}
+
+/// 文字 Unicode 範囲レコード（POD、16バイト）
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct CharRangeRecord {
+    /// 範囲の開始コードポイント
+    start: u32,
+    /// 範囲の終了コードポイント（包含）
+    end: u32,
+    /// カテゴリ名の string pool ID
+    category_name_id: u32,
+    _pad: u32,
 }
 
 /// 辞書エントリ（POD、16バイト）
@@ -174,6 +217,8 @@ pub struct MmapDictBuilder {
     matrix_right_size: u16,
     unk_buckets: Vec<UnkBucket>,
     unk_templates: Vec<UnkTemplate>,
+    char_categories: Vec<CharCategoryRecord>,
+    char_ranges: Vec<CharRangeRecord>,
 }
 
 impl MmapDictBuilder {
@@ -250,6 +295,35 @@ impl MmapDictBuilder {
             });
         }
 
+        // char.def の categories と ranges を保存
+        let mut char_categories = Vec::new();
+        for (name, class) in dict.char_classifier.classes.iter() {
+            let name_id = strings.intern(name);
+            char_categories.push(CharCategoryRecord {
+                name_id,
+                invoke: class.invoke as u8,
+                group: class.group as u8,
+                _pad0: 0,
+                length: class.length,
+                _pad1: 0,
+            });
+        }
+
+        let char_ranges: Vec<CharRangeRecord> = dict
+            .char_classifier
+            .ranges
+            .iter()
+            .map(|(start, end, name)| {
+                let category_name_id = strings.intern(name);
+                CharRangeRecord {
+                    start: *start,
+                    end: *end,
+                    category_name_id,
+                    _pad: 0,
+                }
+            })
+            .collect();
+
         MmapDictBuilder {
             strings,
             features,
@@ -263,6 +337,8 @@ impl MmapDictBuilder {
             matrix_right_size,
             unk_buckets,
             unk_templates: unk_templates_vec,
+            char_categories,
+            char_ranges,
         }
     }
 
@@ -333,6 +409,10 @@ impl MmapDictBuilder {
         let unk_buckets = write_section(&mut buf, &self.unk_buckets, 4);
         let unk_templates = write_section(&mut buf, &self.unk_templates, 4);
 
+        // v3: char.def categories/ranges
+        let char_categories = write_section(&mut buf, &self.char_categories, 4);
+        let char_ranges = write_section(&mut buf, &self.char_ranges, 4);
+
         // ヘッダー書き込み
         let header = Header {
             magic: MAGIC,
@@ -358,6 +438,10 @@ impl MmapDictBuilder {
             matrix_costs,
             unk_buckets,
             unk_templates,
+            char_category_count: self.char_categories.len() as u32,
+            char_range_count: self.char_ranges.len() as u32,
+            char_categories,
+            char_ranges,
         };
         buf[..header_size].copy_from_slice(bytemuck::bytes_of(&header));
 
@@ -450,36 +534,64 @@ pub struct MmapDictionary {
     matrix_costs_sec: Section,
     unk_buckets_sec: Section,
     unk_templates_sec: Section,
+    char_categories_sec: Section,
+    char_ranges_sec: Section,
 
     /// 遅延 Arc<str> キャッシュ（初回 arc_at 時に自動構築）
     arc_cache: OnceLock<Box<[Arc<str>]>>,
 }
 
 impl MmapDictionary {
-    /// ファイルからロード
+    /// ファイルからロード（v2/v3 両対応）
     pub fn load<P: AsRef<Path>>(path: P) -> io::Result<Self> {
         let file = std::fs::File::open(path)?;
         let mmap = unsafe { Mmap::map(&file)? };
 
-        let hdr_size = mem::size_of::<Header>();
-        if mmap.len() < hdr_size {
+        // 最低限 magic+version の12バイトが必要
+        if mmap.len() < 12 {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "file too short"));
         }
-
-        let h: Header = *bytemuck::from_bytes(&mmap[..hdr_size]);
-
-        if h.magic != MAGIC {
+        if mmap[..8] != MAGIC {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "invalid magic bytes",
             ));
         }
-        if h.version != FORMAT_VERSION {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("unsupported format version: {} (expected {})", h.version, FORMAT_VERSION),
-            ));
-        }
+        let version = u32::from_le_bytes(mmap[8..12].try_into().unwrap());
+
+        let v3_size = mem::size_of::<Header>();
+        let h: Header = match version {
+            FORMAT_VERSION => {
+                if mmap.len() < v3_size {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "file too short for v3 header",
+                    ));
+                }
+                *bytemuck::from_bytes(&mmap[..v3_size])
+            }
+            FORMAT_VERSION_V2 => {
+                // v2 Header は v3 Header の strict prefix。後半をゼロ埋めして読み込む。
+                if mmap.len() < HEADER_V2_SIZE {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "file too short for v2 header",
+                    ));
+                }
+                let mut hdr_bytes = vec![0u8; v3_size];
+                hdr_bytes[..HEADER_V2_SIZE].copy_from_slice(&mmap[..HEADER_V2_SIZE]);
+                *bytemuck::from_bytes(&hdr_bytes)
+            }
+            _ => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "unsupported format version: {} (supported: {}, {})",
+                        version, FORMAT_VERSION_V2, FORMAT_VERSION
+                    ),
+                ));
+            }
+        };
 
         let dict = Self {
             mmap,
@@ -501,6 +613,8 @@ impl MmapDictionary {
             matrix_costs_sec: h.matrix_costs,
             unk_buckets_sec: h.unk_buckets,
             unk_templates_sec: h.unk_templates,
+            char_categories_sec: h.char_categories,
+            char_ranges_sec: h.char_ranges,
             arc_cache: OnceLock::new(),
         };
         dict.validate()?;
@@ -522,6 +636,8 @@ impl MmapDictionary {
             self.matrix_costs_sec,
             self.unk_buckets_sec,
             self.unk_templates_sec,
+            self.char_categories_sec,
+            self.char_ranges_sec,
         ];
         for sec in &sections {
             let end = sec.offset as usize + sec.bytes as usize;
@@ -599,6 +715,15 @@ impl MmapDictionary {
                 .map(|i| Arc::from(self.str_at(i as u32)))
                 .collect()
         })
+    }
+
+    /// Arc<str> キャッシュを事前構築する
+    ///
+    /// 並行解析で複数スレッドから同時にアクセスする際、初回のキャッシュ構築が
+    /// 1スレッドにシリアライズされる問題を回避するために使う。
+    /// 既に構築済みの場合は何もしない。
+    pub fn prewarm_arc_cache(&self) {
+        let _ = self.ensure_arc_cache();
     }
 
     /// Arc<str> をキャッシュから取得
@@ -859,6 +984,64 @@ impl MmapDictionary {
                 }
             }
         }
+    }
+
+    #[inline]
+    fn char_categories_slice(&self) -> &[CharCategoryRecord] {
+        if self.char_categories_sec.bytes == 0 {
+            &[]
+        } else {
+            self.pod_slice(self.char_categories_sec)
+        }
+    }
+
+    #[inline]
+    fn char_ranges_slice(&self) -> &[CharRangeRecord] {
+        if self.char_ranges_sec.bytes == 0 {
+            &[]
+        } else {
+            self.pod_slice(self.char_ranges_sec)
+        }
+    }
+
+    /// 辞書情報から CharClassifier を構築する
+    ///
+    /// v3 辞書では char.def の categories/ranges を完全復元する。
+    /// v2 辞書（旧フォーマット）では `default_japanese()` をベースに
+    /// `unk_buckets` の `invoke` フラグだけ復元する。
+    pub fn build_classifier(&self) -> crate::char_class::CharClassifier {
+        use crate::char_class::{CharClass, CharClassifier};
+        use std::collections::HashMap;
+
+        let categories = self.char_categories_slice();
+        let ranges = self.char_ranges_slice();
+
+        // v3: char.def 完全情報がある場合
+        if !categories.is_empty() {
+            let mut classes: HashMap<String, CharClass> = HashMap::new();
+            for cat in categories {
+                let name = self.str_at(cat.name_id).to_string();
+                classes.insert(
+                    name.clone(),
+                    CharClass {
+                        name,
+                        invoke: cat.invoke != 0,
+                        group: cat.group != 0,
+                        length: cat.length,
+                    },
+                );
+            }
+            let ranges_vec: Vec<(u32, u32, String)> = ranges
+                .iter()
+                .map(|r| (r.start, r.end, self.str_at(r.category_name_id).to_string()))
+                .collect();
+            return CharClassifier::from_definitions(classes, ranges_vec);
+        }
+
+        // v2: 旧フォーマット - default_japanese + invoke フラグ復元
+        let mut classifier = CharClassifier::default_japanese();
+        self.export_char_classifier(&mut classifier);
+        classifier
     }
 
     /// CharClassifier をエクスポート（マージ用）

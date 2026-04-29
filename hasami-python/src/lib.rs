@@ -73,35 +73,57 @@ impl Analyzer {
         Ok(Analyzer { inner: analyzer })
     }
 
-    /// テキストを形態素解析
-    fn tokenize(&mut self, text: &str) -> Vec<Token> {
-        self.inner
-            .tokenize(text)
+    /// 辞書を共有しつつ、新しいワークスペースを持つアナライザーを複製
+    ///
+    /// 複数スレッドで並行に解析する場合、各スレッドがそれぞれ自分の Analyzer
+    /// インスタンス（クローン）を持つことで、辞書（mmap）はゼロコピー共有しつつ
+    /// ラティスワークスペースだけ独立に持てる。
+    fn clone_for_worker(&self) -> Self {
+        Analyzer {
+            inner: self.inner.clone(),
+        }
+    }
+
+    /// 辞書の Arc<str> キャッシュを事前構築
+    ///
+    /// 並行解析する前に呼び出すと、初回並列リクエストのレイテンシスパイクを回避できる。
+    fn prewarm(&self, py: Python<'_>) {
+        py.detach(|| self.inner.prewarm());
+    }
+
+    /// テキストを形態素解析（GIL を解放して実行）
+    fn tokenize(&mut self, py: Python<'_>, text: &str) -> Vec<Token> {
+        py.detach(|| self.inner.tokenize(text))
             .into_iter()
             .map(Token::from)
             .collect()
     }
 
-    /// 複数テキストをバッチ処理
-    fn tokenize_batch(&mut self, texts: Vec<String>) -> Vec<Vec<Token>> {
-        let refs: Vec<&str> = texts.iter().map(|s| s.as_str()).collect();
-        self.inner
-            .tokenize_batch(&refs)
-            .into_iter()
-            .map(|tokens| tokens.into_iter().map(Token::from).collect())
-            .collect()
+    /// 複数テキストをバッチ処理（GIL を解放して実行）
+    fn tokenize_batch(&mut self, py: Python<'_>, texts: Vec<String>) -> Vec<Vec<Token>> {
+        py.detach(|| {
+            let refs: Vec<&str> = texts.iter().map(|s| s.as_str()).collect();
+            self.inner.tokenize_batch(&refs)
+        })
+        .into_iter()
+        .map(|tokens| tokens.into_iter().map(Token::from).collect())
+        .collect()
     }
 
     /// MeCab互換形式で出力
-    fn to_mecab(&mut self, text: &str) -> String {
-        let tokens = self.inner.tokenize(text);
-        format_mecab(&tokens)
+    fn to_mecab(&mut self, py: Python<'_>, text: &str) -> String {
+        py.detach(|| {
+            let tokens = self.inner.tokenize(text);
+            format_mecab(&tokens)
+        })
     }
 
     /// 分かち書き
-    fn wakachi(&mut self, text: &str) -> String {
-        let tokens = self.inner.tokenize(text);
-        format_wakachi(&tokens)
+    fn wakachi(&mut self, py: Python<'_>, text: &str) -> String {
+        py.detach(|| {
+            let tokens = self.inner.tokenize(text);
+            format_wakachi(&tokens)
+        })
     }
 }
 

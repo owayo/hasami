@@ -155,6 +155,31 @@ for token in &tokens {
 let results = analyzer.tokenize_batch(&["文1", "文2", "文3"]);
 ```
 
+#### 並行解析（Rust マルチスレッド）
+
+`Analyzer` は `Clone` を実装しており、辞書（mmap）を `Arc` で共有しつつ各クローンが独自のラティスワークスペースを持ちます。複数スレッドで並列解析する際、辞書はゼロコピー共有・ワークスペースのみ独立になります。
+
+```rust
+use hasami::Analyzer;
+
+let analyzer = Analyzer::load("dict/ipadic-neologd.hsd")?;
+analyzer.prewarm(); // 並列前にArc<str>キャッシュを温めると初回スパイク回避
+
+let inputs: Vec<&str> = vec!["文1", "文2", "文3", "文4"];
+let results: Vec<Vec<_>> = std::thread::scope(|s| {
+    inputs
+        .iter()
+        .map(|input| {
+            let mut worker = analyzer.clone(); // 辞書共有・ワークスペース新規
+            s.spawn(move || worker.tokenize(input))
+        })
+        .collect::<Vec<_>>()
+        .into_iter()
+        .map(|h| h.join().unwrap())
+        .collect()
+});
+```
+
 ### Python API
 
 #### インストール
@@ -193,6 +218,29 @@ builder.build("merged.hsd")           # 新しい辞書を保存
 ```python
 print(analyzer.wakachi("東京都に住んでいる"))
 # => 東京都 に 住ん で いる
+```
+
+#### 並行解析（Python マルチスレッド）
+
+`tokenize` 系メソッドは内部で GIL を解放するため、複数スレッドで真の並列処理が可能です。`clone_for_worker()` で辞書を共有しつつ、スレッドごとにワークスペースを独立化します。
+
+```python
+import hasami
+from concurrent.futures import ThreadPoolExecutor
+
+analyzer = hasami.Analyzer("dict/ipadic-neologd.hsd")
+analyzer.prewarm()  # 初回並列スパイク回避（推奨）
+
+def tokenize_one(args):
+    worker, text = args
+    return [t.surface for t in worker.tokenize(text)]
+
+# ワーカーごとにクローン（辞書はゼロコピー共有）
+texts = ["文1", "文2", "文3", "文4"]
+workers = [analyzer.clone_for_worker() for _ in texts]
+
+with ThreadPoolExecutor(max_workers=4) as ex:
+    results = list(ex.map(tokenize_one, zip(workers, texts)))
 ```
 
 #### Token オブジェクトの属性
@@ -289,7 +337,7 @@ make dict
 
 ### 同梱辞書のライセンス
 
-本リポジトリの `dict/` ディレクトリに同梱されている辞書は、以下のソースから構築されています。各辞書の著作権・ライセンスに従ってご利用ください。
+本リポジトリの `dict/` ディレクトリに同梱されている辞書は、以下のソースから構築されています。各辞書の著作権・ライセンスにしたがってご利用ください。
 
 #### IPAdic (`dict/ipadic.hsd`, `dict/ipadic-neologd.hsd`)
 
