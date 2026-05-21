@@ -344,11 +344,7 @@ mod tests {
         // Verify token positions cover the entire input without gaps
         let mut pos = 0;
         for t in &tokens {
-            assert_eq!(
-                t.start, pos,
-                "Gap in token positions at byte {}",
-                pos
-            );
+            assert_eq!(t.start, pos, "Gap in token positions at byte {}", pos);
             assert!(t.end > t.start);
             // Verify surface matches the input slice
             assert_eq!(&*t.surface, &input[t.start..t.end]);

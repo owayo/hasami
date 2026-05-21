@@ -101,7 +101,6 @@ enum Commands {
         #[arg(short, long)]
         output: Option<PathBuf>,
     },
-
 }
 
 fn main() -> io::Result<()> {
