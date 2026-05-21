@@ -20,7 +20,14 @@ where
     raw.parse().map_err(|e| {
         io::Error::new(
             io::ErrorKind::InvalidData,
-            format!("{}:{}: invalid {} `{}`: {}", path.display(), line_no, field, raw, e),
+            format!(
+                "{}:{}: invalid {} `{}`: {}",
+                path.display(),
+                line_no,
+                field,
+                raw,
+                e
+            ),
         )
     })
 }

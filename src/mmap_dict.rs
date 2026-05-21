@@ -1046,7 +1046,7 @@ impl MmapDictionary {
 
     /// CharClassifier をエクスポート（マージ用）
     pub fn export_char_classifier(&self, target: &mut crate::char_class::CharClassifier) {
-        use crate::char_class::{CharClass, ALL_CHAR_TYPES};
+        use crate::char_class::{ALL_CHAR_TYPES, CharClass};
         let buckets = self.unk_buckets();
 
         for (i, &ct) in ALL_CHAR_TYPES.iter().enumerate() {
@@ -1080,7 +1080,14 @@ mod tests {
         let words = vec![
             ("東京", 1, 1, 3000, "名詞,固有名詞,地域,一般", "トウキョウ"),
             ("都", 2, 2, 5000, "名詞,接尾,地域,*", "ト"),
-            ("東京都", 3, 3, 2000, "名詞,固有名詞,地域,一般", "トウキョウト"),
+            (
+                "東京都",
+                3,
+                3,
+                2000,
+                "名詞,固有名詞,地域,一般",
+                "トウキョウト",
+            ),
         ];
         for (surface, lid, rid, cost, pos, reading) in words {
             builder.add_entry(DictEntry {
@@ -1172,7 +1179,11 @@ mod tests {
         dict.common_prefix_search_cb("東京都庁".as_bytes(), |len, ids| {
             results.push((len, ids.to_vec()));
         });
-        assert!(results.len() >= 2, "Expected >=2 results, got {:?}", results);
+        assert!(
+            results.len() >= 2,
+            "Expected >=2 results, got {:?}",
+            results
+        );
         let _ = std::fs::remove_file(&tmp);
     }
 
@@ -1274,7 +1285,9 @@ mod tests {
         let (tmp, dict) = roundtrip_dict();
         let mut classifier = crate::char_class::CharClassifier::default_japanese();
         dict.export_char_classifier(&mut classifier);
-        assert!(classifier.get_class("HIRAGANA").is_some() || classifier.get_class("DEFAULT").is_some());
+        assert!(
+            classifier.get_class("HIRAGANA").is_some() || classifier.get_class("DEFAULT").is_some()
+        );
         let _ = std::fs::remove_file(&tmp);
     }
 

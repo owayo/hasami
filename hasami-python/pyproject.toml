@@ -10,3 +10,4 @@ requires-python = ">=3.8"
 
 [tool.maturin]
 features = ["pyo3/extension-module"]
+module-name = "hasami"
