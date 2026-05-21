@@ -525,10 +525,10 @@ mod tests {
     #[test]
     fn test_classify_space_variants() {
         let cc = CharClassifier::default_japanese();
-        assert_eq!(cc.classify_char(' '), CharType::Space);     // ASCII space
+        assert_eq!(cc.classify_char(' '), CharType::Space); // ASCII space
         assert_eq!(cc.classify_char('\u{3000}'), CharType::Space); // ideographic space
-        assert_eq!(cc.classify_char('\t'), CharType::Space);     // tab
-        assert_eq!(cc.classify_char('\n'), CharType::Space);     // newline
+        assert_eq!(cc.classify_char('\t'), CharType::Space); // tab
+        assert_eq!(cc.classify_char('\n'), CharType::Space); // newline
     }
 
     #[test]
@@ -657,11 +657,7 @@ mod tests {
             "DEFAULT", "SPACE", "KANJI", "HIRAGANA", "KATAKANA", "ALPHA", "NUMERIC", "SYMBOL",
         ];
         for name in expected {
-            assert!(
-                cc.get_class(name).is_some(),
-                "Missing class: {}",
-                name
-            );
+            assert!(cc.get_class(name).is_some(), "Missing class: {}", name);
         }
     }
 }

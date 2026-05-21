@@ -1,6 +1,6 @@
 //! ラティス構築 + Viterbi デコーディング（最適化版）
 
-use crate::char_class::{CharType, ALL_CHAR_TYPES, type_index};
+use crate::char_class::{ALL_CHAR_TYPES, CharType, type_index};
 use crate::dict::Dictionary;
 use std::sync::{Arc, LazyLock};
 
@@ -943,12 +943,7 @@ mod tests {
     fn test_token_surface_reconstruction() {
         let dict = make_test_dict();
         let mut ws = LatticeWorkspace::new();
-        let inputs = [
-            "東京都",
-            "東京都に住んでいる",
-            "に",
-            "いる",
-        ];
+        let inputs = ["東京都", "東京都に住んでいる", "に", "いる"];
         for input in inputs {
             let tokens = ws.tokenize(input, &dict);
             let reconstructed: String = tokens.iter().map(|t| &*t.surface).collect();

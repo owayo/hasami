@@ -583,7 +583,7 @@ fn test_concurrent_tokenize_across_threads() {
     let analyzer = Analyzer::load(&tmp).unwrap();
     analyzer.prewarm(); // 並列前にArcキャッシュ温める
 
-    let inputs = vec![
+    let inputs = [
         "私は猫です",
         "東京都に住んでいる",
         "人が多い",
