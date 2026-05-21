@@ -111,6 +111,7 @@ impl Analyzer {
     }
 
     /// MeCab互換形式で出力
+    #[allow(clippy::wrong_self_convention)]
     fn to_mecab(&mut self, py: Python<'_>, text: &str) -> String {
         py.detach(|| {
             let tokens = self.inner.tokenize(text);
