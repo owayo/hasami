@@ -1,5 +1,5 @@
-.PHONY: build release install clean test fmt check help \
-       dict dict-ipadic dict-neologd dict-unidic-cwj dict-unidic-csj dict-clean \
+.PHONY: build release install clean test fmt check help setup-hooks \
+       dict dict-ipadic dict-neologd dict-repair dict-unidic-cwj dict-unidic-csj dict-clean \
        dict-download-ipadic dict-download-neologd dict-download-unidic-cwj dict-download-unidic-csj
 
 # Default target
@@ -45,15 +45,21 @@ install: release ## Build release and install to /usr/local/bin
 
 ## Development
 
+# hasami-python は pyo3/extension-module のため macOS/Linux ではテストバイナリの
+# リンクに失敗する。コンパイル検証は check (clippy --workspace) でカバーする。
 test: ## Run tests
-	cargo test
+	cargo test --workspace --exclude hasami-python
 
 fmt: ## Format code
-	cargo fmt
+	cargo fmt --all
 
 check: ## Run clippy and check
-	cargo clippy -- -D warnings
-	cargo check
+	cargo clippy --workspace --all-targets -- -D warnings
+	cargo check --workspace
+
+setup-hooks: ## Enable repository hooks and Git LFS for this clone
+	git config core.hooksPath .githooks
+	git lfs install --local
 
 clean: ## Clean build artifacts
 	cargo clean
@@ -89,6 +95,14 @@ dict-neologd: dict-ipadic dict-download-neologd ## Build IPAdic + NEologd dictio
 		echo "Merging user dictionary entries..."; \
 		$(HASAMI) merge --dict $(DICT_OUT)/ipadic-neologd.hsd --input $(DICT_OUT)/user; \
 	fi
+	$(MAKE) dict-repair DICT=$(DICT_OUT)/ipadic-neologd.hsd
+
+dict-repair: release ## Repair a dictionary in place (DICT=path/to/dict.hsd)
+	@test -n "$(DICT)" || { echo "usage: make dict-repair DICT=dict/xxx.hsd"; exit 1; }
+	$(HASAMI) repair --dict $(DICT) \
+		--drop-ortho-variants \
+		--drop-numeral-misreadings \
+		$(foreach f,$(wildcard $(DICT_OUT)/user-remove/*.csv),--remove $(f))
 
 dict-unidic-cwj: release dict-download-unidic-cwj ## Build UniDic CWJ (書き言葉) dictionary
 	@mkdir -p $(DICT_SRC)/unidic-cwj-converted $(DICT_OUT)
