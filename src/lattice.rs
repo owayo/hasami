@@ -71,8 +71,11 @@ fn alpha_to_kana(c: char) -> Option<&'static str> {
 }
 
 /// 数字の後に来る単一アルファベットの単位読みを返す
+///
+/// 単位記号は大文字・小文字で別の量を表す（T=テスラ / t=トン, M=メガ / m=メートル）ため、
+/// 大文字小文字を区別して引く。
 fn unit_reading_char(c: char) -> Option<&'static str> {
-    match c.to_ascii_uppercase() {
+    match c {
         'W' => Some("ワット"),
         'A' => Some("アンペア"),
         'V' => Some("ボルト"),
@@ -81,6 +84,11 @@ fn unit_reading_char(c: char) -> Option<&'static str> {
         'T' => Some("テスラ"),
         'F' => Some("ファラド"),
         'H' => Some("ヘンリー"),
+        'K' => Some("ケルビン"),
+        'm' => Some("メートル"),
+        'g' => Some("グラム"),
+        't' => Some("トン"),
+        'L' | 'l' => Some("リットル"),
         _ => None,
     }
 }
@@ -137,26 +145,84 @@ fn unit_reading(surface: &str) -> Option<&'static str> {
     unit_reading_multi(surface)
 }
 
-/// トークンが数字的かどうかを判定する
+/// トークンが数字的かどうかを判定する。
+///
+/// `.` と `,` を許すのは「1,000」「2.5」を 1 トークンで受けるためだが、区切り記号
+/// だけのトークンまで数字と見なしてはいけない。Style-Bert-VITS2 は読点を `,`、句点を
+/// `.` に正規化して渡すので、それを数字と判定すると直後の英字に単位読みが付き、
+/// 「,Aさん」が「アンペアさん」、「.Lが」が「リットルが」になる。
 fn is_number_like(token: &Token) -> bool {
     if token.pos.starts_with("名詞,数") {
         return true;
     }
-    !token.surface.is_empty()
+    let is_digit = |c: char| c.is_ascii_digit() || ('０'..='９').contains(&c);
+    token.surface.chars().any(is_digit)
         && token
             .surface
             .chars()
-            .all(|c| c.is_ascii_digit() || c == '.' || c == ',' || ('０'..='９').contains(&c))
+            .all(|c| is_digit(c) || c == '.' || c == ',')
 }
 
-/// アルファベットトークンの読みを文脈に応じて補完する。
-/// - 数字トークンの直後 → 単位読み（該当する場合）、なければアルファベット読み
-/// - それ以外 → アルファベット読み
+/// 英字トークンについて、辞書の読みをそのまま使ってよいか判定する。
+///
+/// 辞書には NASA→ナサ, GIF→ジフ のように綴り読みでは表せない語があるため、原則として
+/// 辞書の読みを尊重する。ただし次の場合は辞書を信用せず、呼び出し側の文脈ルール
+/// （数字直後の単位読み / スペルアウト）に委ねる。
+///
+/// - 表層形が 1〜2 文字: 単独の英字に付いた単位読み・略称読み（A→アンペア, G→ギガ,
+///   cs→クレディスイス 等）は、日本語文中ではほぼ確実に誤読になる。日本語文に現れる
+///   1〜2 文字の英字は略語（AI, PC, VP 等）が大半で、綴り読みの方が当たる。
+/// - 読み・発音がカタカナでない: 表層形がそのまま入っている辞書エントリ
+///   （Siemens→siemens 等）で、そのままでは音素化できず読みが消える。
+fn should_trust_dict_reading(token: &Token) -> bool {
+    if !token.is_known {
+        return false;
+    }
+    if token.surface.chars().count() <= 2 {
+        return false;
+    }
+    if !token.reading.is_empty() && !is_katakana_str(&token.reading) {
+        return false;
+    }
+    if !token.pronunciation.is_empty() && !is_katakana_str(&token.pronunciation) {
+        return false;
+    }
+    !token.reading.is_empty() || !token.pronunciation.is_empty()
+}
+
+/// 文字列が全てカタカナ（長音記号を含む U+30A0〜U+30FF）かどうか判定する
+fn is_katakana_str(s: &str) -> bool {
+    !s.is_empty() && s.chars().all(|c| ('\u{30A0}'..='\u{30FF}').contains(&c))
+}
+
+/// 読みが欠けているトークンを補完する。
+/// - アルファベット: 数字トークンの直後 → 単位読み（該当する場合）、なければアルファベット読み
+/// - 繰り返し記号「々」: 直前のトークンの読み（そこだけ無音になるのを防ぐ）
+/// - 仮名のみの語: 表層形をカタカナ化した読み（未知語で読みが空になるケースの救済）
 fn apply_contextual_readings(tokens: &mut [Token]) {
     for i in 0..tokens.len() {
-        if tokens[i].surface.is_empty()
-            || !tokens[i].surface.chars().all(|c| c.is_ascii_alphabetic())
-        {
+        if tokens[i].surface.is_empty() {
+            continue;
+        }
+        if !tokens[i].surface.chars().all(|c| c.is_ascii_alphabetic()) {
+            // 「々」は記号として辞書に入っていて読みを持たない。「日々」「人々」のように
+            // 辞書にある語なら 1 トークンになるが、「前々項」のような語は
+            // 「前」「々」「項」に割れ、「々」がそこだけ無音になる。
+            // 繰り返し記号なので直前の読みを繰り返す（連濁までは再現できない）
+            if &*tokens[i].surface == "々" && tokens[i].pronunciation.is_empty() && i > 0 {
+                let reading = Arc::clone(&tokens[i - 1].reading);
+                let pronunciation = Arc::clone(&tokens[i - 1].pronunciation);
+                if !pronunciation.is_empty() {
+                    tokens[i].reading = reading;
+                    tokens[i].pronunciation = pronunciation;
+                    continue;
+                }
+            }
+            fill_kana_reading(&mut tokens[i]);
+            continue;
+        }
+
+        if should_trust_dict_reading(&tokens[i]) {
             continue;
         }
 
@@ -182,6 +248,46 @@ fn apply_contextual_readings(tokens: &mut [Token]) {
             tokens[i].reading = Arc::clone(&kana);
             tokens[i].pronunciation = kana;
         }
+    }
+}
+
+/// 仮名のみからなる表層形をカタカナの読みに変換する。
+/// ひらがなはカタカナへ写像し、カタカナと長音記号はそのまま使う。
+/// 仮名以外の文字が含まれる場合は None を返す。
+fn kana_reading(surface: &str) -> Option<Arc<str>> {
+    if surface.is_empty() {
+        return None;
+    }
+    let mut reading = String::with_capacity(surface.len());
+    for c in surface.chars() {
+        let kana = match c {
+            // ひらがな (U+3041〜U+3096) → カタカナ (U+30A1〜U+30F6)
+            'ぁ'..='ゖ' => char::from_u32(c as u32 + 0x60)?,
+            // カタカナ (U+30A1〜U+30F6) と長音記号はそのまま
+            'ァ'..='ヶ' | 'ー' => c,
+            _ => return None,
+        };
+        reading.push(kana);
+    }
+    Some(Arc::from(reading.as_str()))
+}
+
+/// 読み・発音が空のトークンに、表層形から作ったカタカナ読みを補う。
+///
+/// 未知語（辞書に無いカタカナ語など）は読みが空のまま返されるため、そのままでは
+/// 後段の音声合成で発音が欠落する。表層形が仮名のみなら読みは自明なので補完する。
+fn fill_kana_reading(token: &mut Token) {
+    if !token.reading.is_empty() && !token.pronunciation.is_empty() {
+        return;
+    }
+    let Some(kana) = kana_reading(&token.surface) else {
+        return;
+    };
+    if token.reading.is_empty() {
+        token.reading = Arc::clone(&kana);
+    }
+    if token.pronunciation.is_empty() {
+        token.pronunciation = kana;
     }
 }
 

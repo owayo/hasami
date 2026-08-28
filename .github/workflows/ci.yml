@@ -30,14 +30,17 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
 
+      # hasami-python は pyo3/extension-module のため Linux ではテストバイナリの
+      # リンクに失敗する（未解決の libpython シンボル）。コンパイル検証は clippy
+      # --workspace --all-targets 側でカバーする。
       - name: Run tests
-        run: cargo test --verbose
+        run: cargo test --workspace --exclude hasami-python --verbose
 
       - name: Run clippy
-        run: cargo clippy -- -D warnings
+        run: cargo clippy --workspace --all-targets -- -D warnings
 
       - name: Check formatting
-        run: cargo fmt -- --check
+        run: cargo fmt --all -- --check
 
   build:
     name: Build

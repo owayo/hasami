@@ -492,6 +492,29 @@ fn test_unknown_alpha_token_has_kana_reading() {
 }
 
 #[test]
+fn test_unknown_kana_token_has_kana_reading() {
+    let dict = build_test_dictionary();
+    let mut analyzer = Analyzer::from_dict(dict);
+    // 辞書に無い仮名語でも、表層形から読みを補完できる
+    let tokens = analyzer.tokenize("ングゖー");
+
+    for t in &tokens {
+        assert!(
+            !t.reading.is_empty(),
+            "Kana word '{}' should have kana reading",
+            &*t.surface
+        );
+        assert!(
+            !t.pronunciation.is_empty(),
+            "Kana word '{}' should have kana pronunciation",
+            &*t.surface
+        );
+    }
+    let joined: String = tokens.iter().map(|t| t.reading.to_string()).collect();
+    assert_eq!(joined, "ングヶー", "ひらがなはカタカナに写像される");
+}
+
+#[test]
 fn test_unit_reading_after_number() {
     let dict = build_test_dictionary();
     let mut analyzer = Analyzer::from_dict(dict);
@@ -511,6 +534,45 @@ fn test_unit_reading_after_number() {
     let v_token = tokens.iter().find(|t| &*t.surface == "V");
     assert!(v_token.is_some(), "Should have a V token");
     assert_eq!(&*v_token.unwrap().reading, "ボルト");
+}
+
+#[test]
+fn test_unit_reading_not_after_punctuation() {
+    let dict = build_test_dictionary();
+    let mut analyzer = Analyzer::from_dict(dict);
+
+    // 読点・句点は桁区切りの「1,000」と同じ文字だが数字ではない。
+    // 数字扱いすると直後の英字に単位読みが付き、「,Aさん」が「アンペアさん」になる
+    for text in [",A", ".A"] {
+        let tokens = analyzer.tokenize(text);
+        let a_token = tokens.iter().find(|t| &*t.surface == "A");
+        assert!(a_token.is_some(), "Should have an A token in {text}");
+        assert_eq!(&*a_token.unwrap().reading, "エー", "in {text}");
+    }
+
+    // 桁区切りを含む数字の直後は従来どおり単位読みになる
+    let tokens = analyzer.tokenize("1,000W");
+    let w_token = tokens.iter().find(|t| &*t.surface == "W");
+    assert!(w_token.is_some(), "Should have a W token");
+    assert_eq!(&*w_token.unwrap().reading, "ワット");
+}
+
+#[test]
+fn test_iteration_mark_repeats_previous_reading() {
+    let mut builder = DictBuilder::new();
+    // 「々」は記号として辞書に入っていて読みを持たない。辞書に「前々項」のような
+    // 語が無いと 1 文字ずつに割れ、補完しないと「々」だけ無音になる
+    builder.add_entry(entry("前", "名詞,一般,*,*", "前", "ゼン", "ゼン"));
+    builder.add_entry(entry("々", "記号,一般,*,*", "々", "", ""));
+    builder.add_entry(entry("項", "名詞,一般,*,*", "項", "コウ", "コー"));
+    let mut analyzer = Analyzer::from_dict(builder.build());
+
+    let tokens = analyzer.tokenize("前々項");
+    let mark = tokens
+        .iter()
+        .find(|t| &*t.surface == "々")
+        .expect("々 token");
+    assert_eq!(&*mark.pronunciation, "ゼン");
 }
 
 #[test]
@@ -739,4 +801,351 @@ fn test_char_def_roundtrip_v3() {
     assert_eq!(restored.classify_char('ア'), CharType::Katakana);
 
     let _ = std::fs::remove_file(&tmp);
+}
+
+// ==========================================================================
+// 辞書修復（壊れた発音・誤読エントリの除去）
+// ==========================================================================
+
+fn entry(
+    surface: &str,
+    pos: &str,
+    base_form: &str,
+    reading: &str,
+    pronunciation: &str,
+) -> DictEntry {
+    DictEntry {
+        surface: surface.into(),
+        left_id: 1,
+        right_id: 1,
+        cost: 3000,
+        pos: pos.into(),
+        base_form: base_form.into(),
+        reading: reading.into(),
+        pronunciation: pronunciation.into(),
+    }
+}
+
+#[test]
+fn test_repair_pronunciation_borrows_long_vowel_form() {
+    let mut builder = DictBuilder::new();
+    // IPAdic 由来の健全なエントリと、SudachiDict 由来の壊れたエントリが共存する状況
+    builder.add_entry(entry("方法", "名詞,一般,*,*", "方法", "ホウホウ", "ホーホー"));
+    builder.add_entry(entry("方法", "名詞,一般,*,*", "方法", "ホウホウ", "方法"));
+
+    assert_eq!(builder.repair_pronunciation(), 1);
+
+    let entries = builder.entries();
+    // 壊れていた方は、同じ読みを持つ健全なエントリの長音表記を借用する
+    assert_eq!(&*entries[1].pronunciation, "ホーホー");
+    assert_eq!(&*entries[0].pronunciation, "ホーホー");
+}
+
+#[test]
+fn test_repair_pronunciation_falls_back_to_reading() {
+    let mut builder = DictBuilder::new();
+    // 借用元がない場合は読みをそのまま発音にする
+    builder.add_entry(entry("案件", "名詞,一般,*,*", "案件", "アンケン", "案件"));
+
+    assert_eq!(builder.repair_pronunciation(), 1);
+    assert_eq!(&*builder.entries()[0].pronunciation, "アンケン");
+}
+
+#[test]
+fn test_repair_pronunciation_composes_from_parts() {
+    let mut builder = DictBuilder::new();
+    // 借用元が無い複合語でも、部品の発音が辞書にあれば組み立てられる
+    builder.add_entry(entry("商", "名詞,一般,*,*", "商", "ショウ", "ショー"));
+    builder.add_entry(entry("材", "名詞,一般,*,*", "材", "ザイ", "ザイ"));
+    builder.add_entry(entry("商材", "名詞,一般,*,*", "商材", "ショウザイ", "ショウザイ"));
+
+    builder.repair_pronunciation();
+
+    let composed = builder
+        .entries()
+        .iter()
+        .find(|e| &*e.surface == "商材")
+        .expect("商材 entry");
+    assert_eq!(&*composed.pronunciation, "ショーザイ");
+}
+
+#[test]
+fn test_repair_pronunciation_keeps_morpheme_boundary() {
+    let mut builder = DictBuilder::new();
+    // 「小売」の「コウ」は「小(コ)」と「売(ウリ)」の境界なので長音にしてはいけない。
+    // かな列だけを見て「オ段 + ウ」を長音化すると「コーリ」になってしまう
+    builder.add_entry(entry("小", "名詞,一般,*,*", "小", "コ", "コ"));
+    builder.add_entry(entry("小", "名詞,一般,*,*", "小", "ショウ", "ショー"));
+    builder.add_entry(entry("売", "名詞,一般,*,*", "売", "ウリ", "ウリ"));
+    builder.add_entry(entry("小売", "名詞,一般,*,*", "小売", "コウリ", "コウリ"));
+
+    builder.repair_pronunciation();
+
+    let kept = builder
+        .entries()
+        .iter()
+        .find(|e| &*e.surface == "小売")
+        .expect("小売 entry");
+    assert_eq!(&*kept.pronunciation, "コウリ");
+}
+
+#[test]
+fn test_repair_pronunciation_ignores_hiragana_parts() {
+    let mut builder = DictBuilder::new();
+    // 助詞を含む「の上(ノーエ)」を部品に使うと「雲の上」が「クモノーエ」になる。
+    // ひらがなを含む語は部品にしない
+    builder.add_entry(entry("雲", "名詞,一般,*,*", "雲", "クモ", "クモ"));
+    builder.add_entry(entry("の上", "名詞,一般,*,*", "の上", "ノウエ", "ノーエ"));
+    builder.add_entry(entry(
+        "雲の上",
+        "名詞,一般,*,*",
+        "雲の上",
+        "クモノウエ",
+        "クモノウエ",
+    ));
+
+    builder.repair_pronunciation();
+
+    let kept = builder
+        .entries()
+        .iter()
+        .find(|e| &*e.surface == "雲の上")
+        .expect("雲の上 entry");
+    assert_eq!(&*kept.pronunciation, "クモノウエ");
+}
+
+#[test]
+fn test_repair_pronunciation_composes_general_proper_noun() {
+    let mut builder = DictBuilder::new();
+    // NEologd は「高品質」のような普通名詞も「固有名詞,一般」で登録している
+    builder.add_entry(entry("高", "名詞,一般,*,*", "高", "コウ", "コー"));
+    builder.add_entry(entry("品質", "名詞,一般,*,*", "品質", "ヒンシツ", "ヒンシツ"));
+    builder.add_entry(entry(
+        "高品質",
+        "名詞,固有名詞,一般,*",
+        "高品質",
+        "コウヒンシツ",
+        "コウヒンシツ",
+    ));
+
+    builder.repair_pronunciation();
+
+    let composed = builder
+        .entries()
+        .iter()
+        .find(|e| &*e.surface == "高品質")
+        .expect("高品質 entry");
+    assert_eq!(&*composed.pronunciation, "コーヒンシツ");
+}
+
+#[test]
+fn test_repair_pronunciation_recomposes_partially_repaired() {
+    let mut builder = DictBuilder::new();
+    // 借用元の発音が末尾しか直っていないことがある（「機密情報」が
+    // 「キミツジョウホオ」で止まる）。長音化されていない部分が残っていれば
+    // 分割して組み立て直す
+    builder.add_entry(entry("機密", "名詞,一般,*,*", "機密", "キミツ", "キミツ"));
+    builder.add_entry(entry("情報", "名詞,一般,*,*", "情報", "ジョウホウ", "ジョーホー"));
+    builder.add_entry(entry(
+        "機密情報",
+        "名詞,一般,*,*",
+        "機密情報",
+        "キミツジョウホウ",
+        "キミツジョウホオ",
+    ));
+
+    builder.repair_pronunciation();
+
+    let composed = builder
+        .entries()
+        .iter()
+        .find(|e| &*e.surface == "機密情報")
+        .expect("機密情報 entry");
+    assert_eq!(&*composed.pronunciation, "キミツジョーホー");
+}
+
+#[test]
+fn test_repair_pronunciation_skips_composition_for_proper_nouns() {
+    let mut builder = DictBuilder::new();
+    // 人名・地名の読みは部品から組み立てられないので合成しない
+    builder.add_entry(entry("幸", "名詞,一般,*,*", "幸", "コウ", "コー"));
+    builder.add_entry(entry("太", "名詞,一般,*,*", "太", "タ", "タ"));
+    builder.add_entry(entry(
+        "幸太",
+        "名詞,固有名詞,人名,名",
+        "幸太",
+        "コウタ",
+        "コウタ",
+    ));
+
+    builder.repair_pronunciation();
+
+    let kept = builder
+        .entries()
+        .iter()
+        .find(|e| &*e.surface == "幸太")
+        .expect("幸太 entry");
+    assert_eq!(&*kept.pronunciation, "コウタ");
+}
+
+#[test]
+fn test_repair_pronunciation_clears_non_kana_reading() {
+    let mut builder = DictBuilder::new();
+    // 読みもラテン文字のままなら空にして、解析時の読み補完に委ねる
+    builder.add_entry(entry(
+        "Siemens",
+        "名詞,固有名詞,人名,一般",
+        "Siemens",
+        "siemens",
+        "Siemens",
+    ));
+
+    assert_eq!(builder.repair_pronunciation(), 1);
+    assert_eq!(&*builder.entries()[0].reading, "");
+    assert_eq!(&*builder.entries()[0].pronunciation, "");
+}
+
+#[test]
+fn test_drop_conflicting_ortho_variants() {
+    let mut builder = DictBuilder::new();
+    // 形容詞「高い(タカイ)」と、表記ゆれ由来の名詞「高い→高位(コウイ)」
+    builder.add_entry(entry("高い", "形容詞,自立,*,*", "高い", "タカイ", "タカイ"));
+    builder.add_entry(entry("高い", "名詞,一般,*,*", "高位", "コウイ", "コウイ"));
+    // 読みが一致する異表記は誤読にならないので残す
+    builder.add_entry(entry("くらい", "助詞,副助詞,*,*", "くらい", "クライ", "クライ"));
+    builder.add_entry(entry("くらい", "名詞,一般,*,*", "位", "クライ", "クライ"));
+    // 衝突する活用語がない名詞はそのまま
+    builder.add_entry(entry("高位", "名詞,一般,*,*", "高位", "コウイ", "コウイ"));
+
+    assert_eq!(builder.drop_conflicting_ortho_variants(), 1);
+
+    let surfaces: Vec<(&str, &str)> = builder
+        .entries()
+        .iter()
+        .map(|e| (&*e.surface, &*e.reading))
+        .collect();
+    assert!(!surfaces.contains(&("高い", "コウイ")));
+    assert!(surfaces.contains(&("高い", "タカイ")));
+    assert!(surfaces.contains(&("くらい", "クライ")));
+    assert!(surfaces.contains(&("高位", "コウイ")));
+}
+
+#[test]
+fn test_short_alpha_ignores_dict_reading() {
+    let mut builder = DictBuilder::new();
+    // 単独英字に単位読み・略称読みが登録されていても、綴り読みを優先する
+    builder.add_entry(entry("A", "名詞,一般,*,*", "A", "アンペア", "アンペア"));
+    builder.add_entry(entry("cs", "名詞,固有名詞,一般,*", "CS", "クレディスイス", "クレディスイス"));
+    // 3 文字以上の語は辞書の読みを尊重する
+    builder.add_entry(entry("NASA", "名詞,固有名詞,組織,*", "NASA", "ナサ", "ナサ"));
+
+    let mut analyzer = Analyzer::from_dict(builder.build());
+
+    let tokens = analyzer.tokenize("A");
+    assert_eq!(&*tokens[0].reading, "エー");
+
+    let tokens = analyzer.tokenize("cs");
+    assert_eq!(&*tokens[0].reading, "シーエス");
+
+    let tokens = analyzer.tokenize("NASA");
+    assert_eq!(&*tokens[0].reading, "ナサ");
+}
+
+#[test]
+fn test_broken_dict_reading_falls_back_to_spellout() {
+    let mut builder = DictBuilder::new();
+    // 読みがラテン文字のままのエントリは信用せず綴り読みにする
+    builder.add_entry(entry(
+        "backend",
+        "名詞,一般,*,*",
+        "backend",
+        "backend",
+        "backend",
+    ));
+
+    let mut analyzer = Analyzer::from_dict(builder.build());
+    let tokens = analyzer.tokenize("backend");
+    assert_eq!(&*tokens[0].reading, "ビーエーシーケーイーエヌディー");
+}
+
+#[test]
+fn test_drop_numeral_misreadings() {
+    let mut builder = DictBuilder::new();
+    // 漢数字だけで綴られた人名エントリは数詞に勝ってしまうので落とす
+    builder.add_entry(entry("十五", "名詞,数,*,*", "十五", "ジュウゴ", "ジューゴ"));
+    builder.add_entry(entry(
+        "十五",
+        "名詞,固有名詞,人名,名",
+        "十五",
+        "トウゴ",
+        "トーゴ",
+    ));
+    // 1 文字の漢数字は対象外（人名「一(はじめ)」等との共存が必要）
+    builder.add_entry(entry("一", "名詞,固有名詞,人名,名", "一", "ハジメ", "ハジメ"));
+    // 漢数字以外を含む語は対象外
+    builder.add_entry(entry(
+        "十五夜",
+        "名詞,固有名詞,一般,*",
+        "十五夜",
+        "ジュウゴヤ",
+        "ジューゴヤ",
+    ));
+
+    assert_eq!(builder.drop_numeral_misreadings(), 1);
+
+    let readings: Vec<&str> = builder.entries().iter().map(|e| &*e.reading).collect();
+    assert!(!readings.contains(&"トウゴ"));
+    assert!(readings.contains(&"ジュウゴ"));
+    assert!(readings.contains(&"ハジメ"));
+    assert!(readings.contains(&"ジュウゴヤ"));
+}
+
+#[test]
+fn test_keep_numeral_words_that_are_not_proper_nouns() {
+    let mut builder = DictBuilder::new();
+    // 漢数字で綴る一般語・副詞は数詞でなくても残す
+    builder.add_entry(entry("万一", "副詞,助詞類接続,*,*", "万一", "マンイチ", "マンイチ"));
+    builder.add_entry(entry("二三", "名詞,副詞可能,*,*", "二三", "ニサン", "ニサン"));
+    builder.add_entry(entry("八百万", "名詞,一般,*,*", "八百万", "ヤオヨロズ", "ヤオヨロズ"));
+
+    assert_eq!(builder.drop_numeral_misreadings(), 0);
+    assert_eq!(builder.entries().len(), 3);
+}
+
+#[test]
+fn test_drop_person_name_conflicting_with_pronoun() {
+    let mut builder = DictBuilder::new();
+    // 代名詞と衝突する 1 文字の人名は落とす（「何なのか」が「ガナノカ」になるのを防ぐ）
+    builder.add_entry(entry("何", "名詞,代名詞,一般,*", "何", "ナニ", "ナニ"));
+    builder.add_entry(entry("何", "名詞,固有名詞,人名,姓", "何", "ガ", "ガ"));
+    // 代名詞と衝突しない人名はそのまま
+    builder.add_entry(entry("湊", "名詞,固有名詞,人名,名", "湊", "ミナト", "ミナト"));
+    // 2 文字以上の人名は対象外
+    builder.add_entry(entry("何々", "名詞,固有名詞,人名,姓", "何々", "ガガ", "ガガ"));
+
+    assert_eq!(builder.drop_conflicting_ortho_variants(), 1);
+
+    let readings: Vec<&str> = builder.entries().iter().map(|e| &*e.reading).collect();
+    assert!(!readings.contains(&"ガ"));
+    assert!(readings.contains(&"ナニ"));
+    assert!(readings.contains(&"ミナト"));
+    assert!(readings.contains(&"ガガ"));
+}
+
+#[test]
+fn test_repair_prefers_long_vowel_form_over_reading() {
+    let mut builder = DictBuilder::new();
+    // SudachiDict 由来のエントリは発音が読みと同じで長音表記を持たない。
+    // IPAdic 由来の「リョー」を借りて長音を復元する
+    builder.add_entry(entry("量", "名詞,一般,*,*", "量", "リョウ", "リョー"));
+    builder.add_entry(entry("量", "名詞,接尾,一般,*", "量", "リョウ", "リョウ"));
+    // 発音と読みが同じでも、他に候補がなければそのまま（「思う」を「オモー」にしない）
+    builder.add_entry(entry("思う", "動詞,自立,*,*", "思う", "オモウ", "オモウ"));
+
+    assert_eq!(builder.repair_pronunciation(), 1);
+
+    let entries = builder.entries();
+    assert_eq!(&*entries[0].pronunciation, "リョー");
+    assert_eq!(&*entries[1].pronunciation, "リョー");
+    assert_eq!(&*entries[2].pronunciation, "オモウ");
 }

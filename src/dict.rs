@@ -2,7 +2,7 @@
 
 use crate::char_class::{CharClass, CharClassifier};
 use crate::trie::DoubleArrayTrie;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io;
 use std::path::Path;
 use std::sync::Arc;
@@ -35,6 +35,199 @@ where
 /// 文字列が全てカタカナ（U+30A0〜U+30FF）かどうか判定する
 fn is_katakana_str(s: &str) -> bool {
     !s.is_empty() && s.chars().all(|c| ('\u{30A0}'..='\u{30FF}').contains(&c))
+}
+
+/// 発音の合成に使う部品の最大文字数
+///
+/// 熟語の構成要素はほぼ 1〜2 字で、4 字あれば「アメリカ国防総省」のような
+/// 長い複合語も分けられる。これより長い部品を許すと分割の候補が増えるだけで当たらない。
+const MAX_PART_CHARS: usize = 4;
+
+/// 仮名の母音を返す（拗音の小書き仮名は直前の仮名に従うので None）
+fn kana_vowel(c: char) -> Option<char> {
+    Some(match c {
+        'ア' | 'カ' | 'サ' | 'タ' | 'ナ' | 'ハ' | 'マ' | 'ヤ' | 'ラ' | 'ワ' | 'ガ' | 'ザ'
+        | 'ダ' | 'バ' | 'パ' | 'ャ' | 'ァ' => 'ア',
+        'イ' | 'キ' | 'シ' | 'チ' | 'ニ' | 'ヒ' | 'ミ' | 'リ' | 'ヰ' | 'ギ' | 'ジ' | 'ヂ'
+        | 'ビ' | 'ピ' | 'ィ' => 'イ',
+        'ウ' | 'ク' | 'ス' | 'ツ' | 'ヌ' | 'フ' | 'ム' | 'ユ' | 'ル' | 'グ' | 'ズ' | 'ヅ'
+        | 'ブ' | 'プ' | 'ュ' | 'ゥ' | 'ヴ' => 'ウ',
+        'エ' | 'ケ' | 'セ' | 'テ' | 'ネ' | 'ヘ' | 'メ' | 'レ' | 'ヱ' | 'ゲ' | 'ゼ' | 'デ'
+        | 'ベ' | 'ペ' | 'ェ' => 'エ',
+        'オ' | 'コ' | 'ソ' | 'ト' | 'ノ' | 'ホ' | 'モ' | 'ヨ' | 'ロ' | 'ヲ' | 'ゴ' | 'ゾ'
+        | 'ド' | 'ボ' | 'ポ' | 'ョ' | 'ォ' => 'オ',
+        _ => return None,
+    })
+}
+
+/// 読みに歴史的仮名遣いの長音（オ段・ウ段 + ウ）が含まれるかどうか
+///
+/// 「ホウホウ」「ジュウヨウ」のようにここに当たる語だけが、発音の長音表記
+/// （ホーホー / ジューヨー）を持つべき語になる。
+fn has_unmarked_long_vowel(reading: &str) -> bool {
+    let mut prev: Option<char> = None;
+    for c in reading.chars() {
+        if c == 'ウ' && matches!(prev, Some('オ') | Some('ウ')) {
+            return true;
+        }
+        prev = kana_vowel(c);
+    }
+    false
+}
+
+/// 表層形を辞書内の短い既知語に分けて、部品の発音を連結した発音を組み立てる。
+///
+/// 借用元（同じ表層形・読みを持つ健全なエントリ）が無い語の受け皿。「商材(ショウザイ)」は
+/// 「商(ショウ→ショー)」と「材(ザイ)」に分かれるので「ショーザイ」になる。
+///
+/// 部品の境界をまたぐ「オ段 + ウ」は連結しても長音にならないので、
+/// 「小売(コウリ)」は「小(コ)」+「売(ウリ)」となり「コーリ」にはならない。
+/// かな列だけを見て機械的に長音化すると、この区別が付かない。
+///
+/// 分割は長い部品を優先して探し、最初に見つかった分割を採る。
+fn compose_pronunciation(
+    surface: &str,
+    reading: &str,
+    parts: &HashMap<&str, Vec<(&str, Arc<str>)>>,
+) -> Option<String> {
+    let s: Vec<char> = surface.chars().collect();
+    let r: Vec<char> = reading.chars().collect();
+    if s.len() < 2 {
+        return None;
+    }
+    let mut memo: HashMap<(usize, usize), Option<String>> = HashMap::new();
+    // 語全体を 1 部品にすると自分自身の（直したい）発音がそのまま返るので、
+    // 先頭の部品は語より短いものに限る
+    for len in (1..=MAX_PART_CHARS.min(s.len() - 1)).rev() {
+        let head: String = s[..len].iter().collect();
+        let Some(candidates) = parts.get(head.as_str()) else {
+            continue;
+        };
+        for (part_reading, part_pron) in candidates {
+            let n = part_reading.chars().count();
+            if n > r.len() || !part_reading.chars().eq(r[..n].iter().copied()) {
+                continue;
+            }
+            if let Some(rest) = compose_at(&s, &r, len, n, parts, &mut memo) {
+                let composed = format!("{part_pron}{rest}");
+                // 分割できても発音が読みと同じなら直すものが無い
+                return (composed != reading).then_some(composed);
+            }
+        }
+    }
+    None
+}
+
+/// `compose_pronunciation` の本体。表層形 i 文字目・読み j 文字目から先を組み立てる。
+fn compose_at(
+    s: &[char],
+    r: &[char],
+    i: usize,
+    j: usize,
+    parts: &HashMap<&str, Vec<(&str, Arc<str>)>>,
+    memo: &mut HashMap<(usize, usize), Option<String>>,
+) -> Option<String> {
+    if i == s.len() {
+        return (j == r.len()).then(String::new);
+    }
+    if j >= r.len() {
+        return None;
+    }
+    if let Some(cached) = memo.get(&(i, j)) {
+        return cached.clone();
+    }
+    let mut found = None;
+    'outer: for len in (1..=MAX_PART_CHARS.min(s.len() - i)).rev() {
+        let sub: String = s[i..i + len].iter().collect();
+        let Some(candidates) = parts.get(sub.as_str()) else {
+            continue;
+        };
+        for (part_reading, part_pron) in candidates {
+            let n = part_reading.chars().count();
+            if j + n > r.len() || !part_reading.chars().eq(r[j..j + n].iter().copied()) {
+                continue;
+            }
+            if let Some(rest) = compose_at(s, r, i + len, j + n, parts, memo) {
+                found = Some(format!("{part_pron}{rest}"));
+                break 'outer;
+            }
+        }
+    }
+    memo.insert((i, j), found.clone());
+    found
+}
+
+/// 発音の合成を試すエントリかどうか
+///
+/// 分割で組み立てた発音が元より確かなのは、漢字表記の名詞に限られる。活用語は語尾が
+/// 辞書の部品と合わない。人名・地名は特殊な読みを部品から組み立てられないので避けるが、
+/// NEologd は「高品質」のような普通名詞も「固有名詞,一般」で登録しているので、
+/// そちらは対象に含める。
+fn is_composable(entry: &DictEntry) -> bool {
+    entry.pos.starts_with("名詞")
+        && !is_name_like_proper_noun(&entry.pos)
+        && !entry.pos.starts_with("名詞,数")
+        && is_katakana_str(&entry.reading)
+        && has_unmarked_long_vowel(&entry.reading)
+        && entry.surface.chars().any(is_kanji)
+}
+
+/// 人名・組織・地域の固有名詞かどうか（「固有名詞,一般」は普通名詞が多いので含めない）
+fn is_name_like_proper_noun(pos: &str) -> bool {
+    pos.starts_with("名詞,固有名詞") && !pos.starts_with("名詞,固有名詞,一般")
+}
+
+/// 漢字（CJK統合漢字と拡張A、繰り返し記号）かどうか判定する
+fn is_kanji(c: char) -> bool {
+    ('\u{4E00}'..='\u{9FFF}').contains(&c) || ('\u{3400}'..='\u{4DBF}').contains(&c) || c == '々'
+}
+
+/// カタカナ（長音記号を含む）かどうか判定する
+fn is_katakana(c: char) -> bool {
+    ('\u{30A0}'..='\u{30FF}').contains(&c)
+}
+
+/// 漢数字（位取りを含む）かどうか判定する
+fn is_kansuji(c: char) -> bool {
+    matches!(
+        c,
+        '〇' | '零'
+            | '一'
+            | '二'
+            | '三'
+            | '四'
+            | '五'
+            | '六'
+            | '七'
+            | '八'
+            | '九'
+            | '十'
+            | '百'
+            | '千'
+            | '万'
+            | '億'
+            | '兆'
+    )
+}
+
+/// 異表記エントリ削除時にログへ出すサンプル件数
+const ORTHO_VARIANT_SAMPLE: usize = 20;
+
+/// 品詞が「本来の語」（表記ゆれ正規化エントリではありえない語）かどうか判定する
+///
+/// 活用語と機能語、および代名詞を対象とする。これらの表層形と衝突する名詞エントリは
+/// 表記ゆれ由来の可能性が高い。
+fn is_canonical_word(pos: &str) -> bool {
+    pos.starts_with("動詞")
+        || pos.starts_with("形容詞")
+        || pos.starts_with("副詞")
+        || pos.starts_with("助詞")
+        || pos.starts_with("助動詞")
+        || pos.starts_with("連体詞")
+        || pos.starts_with("接続詞")
+        || pos.starts_with("感動詞")
+        || pos.starts_with("名詞,代名詞")
+        || pos.starts_with("名詞,非自立")
 }
 
 /// 辞書エントリ（1形態素に対応）
@@ -221,24 +414,264 @@ impl DictBuilder {
         self.entries.len()
     }
 
-    /// pronunciation が カタカナでないエントリを reading で置き換える
+    /// 現在のエントリ一覧
+    pub fn entries(&self) -> &[DictEntry] {
+        &self.entries
+    }
+
+    /// pronunciation が壊れている（カタカナでない）エントリを修復する
     ///
-    /// SudachiDict 由来のエントリで pronunciation に表層形（漢字・ひらがな等）が
-    /// 入っているケースを修復する。
+    /// SudachiDict 由来のエントリは pronunciation に表層形（漢字・ひらがな・ラテン文字）が
+    /// 入っているため、そのままでは音声合成で長音が失われたり読みが消えたりする。
+    ///
+    /// 修復は以下の優先順で行う:
+    /// 1. 同じ (表層形, 読み) を持つ健全なエントリの発音形を借用する。
+    ///    IPAdic 由来のエントリは人手で作られた発音形（ホウホウ→ホーホー）を持つため、
+    ///    マージ辞書の中で最も信頼できる長音表記の供給源になる。
+    /// 2. 借用元が無い語は、辞書内の短い既知語に分けて部品の発音を連結する。
+    ///    「商材(ショウザイ)」は借用元が無いが「商(ショー)」+「材(ザイ)」に分かれる。
+    ///    部品の境界をまたぐ「オ段 + ウ」は長音にならないので、「小売」は「コウリ」のまま残る。
+    /// 3. どちらもできない場合は読みをそのまま発音とする（長音化はされないが読みは保たれる）。
+    /// 4. 読みも壊れている（ラテン文字のまま等）場合は発音・読みを空にする。
+    ///    空にしておくと解析時の読み補完（スペルアウト等）が働く。
     ///
     /// Returns: 修復されたエントリ数
     pub fn repair_pronunciation(&mut self) -> usize {
-        let mut fixed = 0;
-        for entry in &mut self.entries {
-            if !entry.pronunciation.is_empty()
-                && !is_katakana_str(&entry.pronunciation)
-                && is_katakana_str(&entry.reading)
-            {
-                entry.pronunciation = entry.reading.clone();
-                fixed += 1;
+        // 健全なエントリから (表層形, 読み) → 発音 の対応表を作る。
+        // 読みと違う発音（「リョウ」に対する「リョー」のように長音表記を持つ形）を優先する。
+        let mut trusted: HashMap<(&str, &str), &Arc<str>> = HashMap::new();
+        for entry in &self.entries {
+            if !is_katakana_str(&entry.pronunciation) || !is_katakana_str(&entry.reading) {
+                continue;
+            }
+            let best = trusted.entry((&entry.surface, &entry.reading)).or_insert(&entry.pronunciation);
+            if ***best == *entry.reading && entry.pronunciation != entry.reading {
+                *best = &entry.pronunciation;
             }
         }
+        // 合成に使う部品の索引。健全な発音を持つ短い語だけを集める。
+        // ひらがなを含む語を部品にすると、助詞や活用語尾の短い読みが噛み合って
+        // 「雲の上(クモノウエ)」が「雲」+「の上(ノーエ)」に分かれるような誤分割を招く
+        let mut parts: HashMap<&str, Vec<(&str, Arc<str>)>> = HashMap::new();
+        for ((surface, reading), pron) in &trusted {
+            if surface.chars().count() <= MAX_PART_CHARS
+                && surface.chars().all(|c| is_kanji(c) || is_katakana(c))
+            {
+                parts
+                    .entry(surface)
+                    .or_default()
+                    .push((reading, Arc::clone(pron)));
+            }
+        }
+
+        // 借用する発音を先に決める（trusted が entries を借用しているため参照を分離する）
+        let borrowed: Vec<Option<Arc<str>>> = self
+            .entries
+            .iter()
+            .map(|entry| {
+                // 発音がカタカナで、かつ読みと違う形なら辞書の値をそのまま信じる。
+                // 発音が読みと同じ場合は、長音表記を持つ形が他にあるかもしれないので探す。
+                let dict_pron_is_sound =
+                    is_katakana_str(&entry.pronunciation) && entry.pronunciation != entry.reading;
+                let mut result = if dict_pron_is_sound {
+                    None
+                } else {
+                    trusted
+                        .get(&(&*entry.surface, &*entry.reading))
+                        .map(|p| Arc::clone(p))
+                        .filter(|p| *p != entry.pronunciation)
+                };
+                // 借りた発音（借りられなければ今の発音）にまだ長音化されていない
+                // 「オ段・ウ段 + ウ」が残っているなら、分割して組み立て直す。
+                // 「機密情報」は借用で末尾が「ジョウホオ」まで直るが前半が残る
+                let current = result.as_deref().unwrap_or(&entry.pronunciation);
+                if has_unmarked_long_vowel(current) && is_composable(entry) {
+                    if let Some(composed) =
+                        compose_pronunciation(&entry.surface, &entry.reading, &parts)
+                    {
+                        result = Some(Arc::from(composed));
+                    }
+                }
+                result
+            })
+            .collect();
+        drop(parts);
+        drop(trusted);
+
+        let empty: Arc<str> = Arc::from("");
+        let mut fixed = 0;
+        for (entry, borrowed) in self.entries.iter_mut().zip(borrowed) {
+            if is_katakana_str(&entry.pronunciation) && borrowed.is_none() {
+                continue;
+            }
+            if let Some(pron) = borrowed {
+                entry.pronunciation = pron;
+            } else if is_katakana_str(&entry.reading) {
+                entry.pronunciation = Arc::clone(&entry.reading);
+            } else if entry.pronunciation.is_empty() && entry.reading.is_empty() {
+                continue;
+            } else {
+                // 読みも発音もカタカナでない（ラテン文字の辞書エントリ等）。
+                // 空にして解析時の読み補完に委ねる。
+                entry.pronunciation = Arc::clone(&empty);
+                entry.reading = Arc::clone(&empty);
+            }
+            fixed += 1;
+        }
         fixed
+    }
+
+    /// 活用語・機能語と衝突する名詞エントリを取り除く
+    ///
+    /// NEologd / SudachiDict には表記ゆれを正規化するためのエントリが含まれており、
+    /// 活用語の語形をそのまま名詞として登録しているものがある（「高い」→「高位(コウイ)」、
+    /// 「学ぶ」→「学部(ガクブ)」等）。これらは Viterbi のコスト次第で本来の形容詞・動詞に
+    /// 勝ってしまい、「質の高い」が「シツノコウイ」のように誤読される。
+    ///
+    /// そこで、同じ表層形に本来の語（動詞・形容詞・副詞・助詞・代名詞など）が存在し、
+    /// かつ読みが食い違う名詞エントリを異表記由来とみなして落とす。読みが一致する
+    /// エントリ（名詞「位(クライ)」と助詞「くらい」等）は誤読にならないため残す。
+    ///
+    /// 表層形と原形が同じエントリは表記ゆれではないので原則として残すが、代名詞と
+    /// 衝突する 1 文字の人名だけは例外として落とす（「何」を姓の「ガ」「カ」と読ませる
+    /// エントリが「何なのか」を「ガナノカ」に変えてしまうため）。
+    ///
+    /// Returns: 削除されたエントリ数
+    pub fn drop_conflicting_ortho_variants(&mut self) -> usize {
+        // 表層形ごとに「本来の語」の読みを集める
+        let mut canonical: HashMap<&str, Vec<&str>> = HashMap::new();
+        let mut pronouns: HashMap<&str, Vec<&str>> = HashMap::new();
+        for entry in &self.entries {
+            if is_canonical_word(&entry.pos) {
+                canonical
+                    .entry(&entry.surface)
+                    .or_default()
+                    .push(&entry.reading);
+            }
+            if entry.pos.starts_with("名詞,代名詞") {
+                pronouns
+                    .entry(&entry.surface)
+                    .or_default()
+                    .push(&entry.reading);
+            }
+        }
+        let doomed: Vec<bool> = self
+            .entries
+            .iter()
+            .map(|entry| {
+                if !entry.pos.starts_with("名詞") {
+                    return false;
+                }
+                if entry.surface == entry.base_form {
+                    return entry.pos.starts_with("名詞,固有名詞,人名")
+                        && entry.surface.chars().count() == 1
+                        && pronouns
+                            .get(&*entry.surface)
+                            .is_some_and(|readings| !readings.contains(&&*entry.reading));
+                }
+                canonical
+                    .get(&*entry.surface)
+                    .is_some_and(|readings| !readings.contains(&&*entry.reading))
+            })
+            .collect();
+        drop(canonical);
+        drop(pronouns);
+
+        let removed = doomed.iter().filter(|d| **d).count();
+        if removed > 0 {
+            for (entry, _) in self
+                .entries
+                .iter()
+                .zip(&doomed)
+                .filter(|(_, d)| **d)
+                .take(ORTHO_VARIANT_SAMPLE)
+            {
+                eprintln!(
+                    "  drop: {} ({}) -> {} [{}]",
+                    entry.surface, entry.reading, entry.base_form, entry.pos
+                );
+            }
+            let mut doomed = doomed.into_iter();
+            self.entries.retain(|_| !doomed.next().unwrap_or(false));
+        }
+        removed
+    }
+
+    /// 漢数字を数以外に読ませる固有名詞エントリを取り除く
+    ///
+    /// NEologd / SudachiDict には漢数字だけで綴られた人名・地名が登録されており
+    /// （「十五(トウゴ)」「二十八(ツチヤ)」「五百(イホ)」等）、Viterbi のコスト次第で
+    /// 数詞に勝ってしまう。読み上げでは数として読むのが安全なため、漢数字のみからなる
+    /// 2 文字以上の表層形について固有名詞エントリを落とす。
+    ///
+    /// 対象を固有名詞に限るのは、「万一(マンイチ)」「二三(ニサン)」「八百万(ヤオヨロズ)」
+    /// のように漢数字で綴る一般語・副詞が存在するため。1 文字の漢数字（「一」を「はじめ」と
+    /// 読む人名等）も数詞との共存が必要な場面があるため対象にしない。
+    ///
+    /// Returns: 削除されたエントリ数
+    pub fn drop_numeral_misreadings(&mut self) -> usize {
+        let doomed: Vec<bool> = self
+            .entries
+            .iter()
+            .map(|entry| {
+                entry.surface.chars().count() >= 2
+                    && entry.surface.chars().all(is_kansuji)
+                    && entry.pos.starts_with("名詞,固有名詞")
+            })
+            .collect();
+
+        let removed = doomed.iter().filter(|d| **d).count();
+        if removed > 0 {
+            for (entry, _) in self
+                .entries
+                .iter()
+                .zip(&doomed)
+                .filter(|(_, d)| **d)
+                .take(ORTHO_VARIANT_SAMPLE)
+            {
+                eprintln!(
+                    "  drop: {} ({}) [{}]",
+                    entry.surface, entry.reading, entry.pos
+                );
+            }
+            let mut doomed = doomed.into_iter();
+            self.entries.retain(|_| !doomed.next().unwrap_or(false));
+        }
+        removed
+    }
+
+    /// CSV で指定されたエントリを辞書から削除する
+    ///
+    /// 汎用の異表記フィルタ（[`Self::drop_conflicting_ortho_variants`]）では拾えない
+    /// 個別の誤読エントリを落とすために使う。CSV は `表層形,読み` の 2 列で、
+    /// 3 列目以降があっても無視する。`#` で始まる行と空行はコメントとして読み飛ばす。
+    ///
+    /// Returns: 削除されたエントリ数
+    pub fn drop_entries_from_csv<P: AsRef<Path>>(&mut self, path: P) -> io::Result<usize> {
+        let path = path.as_ref();
+        let raw_bytes = std::fs::read(path)?;
+        let content = Self::decode_to_utf8(&raw_bytes);
+
+        let mut targets: HashSet<(String, String)> = HashSet::new();
+        for line in content.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let mut fields = line.splitn(3, ',');
+            let (Some(surface), Some(reading)) = (fields.next(), fields.next()) else {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("{}: expected `surface,reading`: {}", path.display(), line),
+                ));
+            };
+            targets.insert((surface.trim().to_string(), reading.trim().to_string()));
+        }
+
+        let before = self.entries.len();
+        self.entries
+            .retain(|e| !targets.contains(&(e.surface.to_string(), e.reading.to_string())));
+        Ok(before - self.entries.len())
     }
 
     /// 接続行列を直接設定
@@ -318,10 +751,13 @@ impl DictBuilder {
     /// CSV ディレクトリ内の全CSVファイルを読み込み
     pub fn add_csv_dir<P: AsRef<Path>>(&mut self, dir: P) -> io::Result<()> {
         let pattern = format!("{}/*.csv", dir.as_ref().display());
-        let paths: Vec<_> = glob::glob(&pattern)
+        let mut paths: Vec<_> = glob::glob(&pattern)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?
             .filter_map(|r| r.ok())
             .collect();
+        // 同じ表層形のエントリはコストが同じなら先勝ちになるため、
+        // 辞書が読み込み順に依存しないようパスを固定順にする
+        paths.sort();
 
         if paths.is_empty() {
             return Err(io::Error::new(

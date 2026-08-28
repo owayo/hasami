@@ -27,9 +27,11 @@ hasami/
 │   └── ffi.rs          # C ABI インターフェース
 ├── dict/               # ビルド済み辞書（Git LFS管理）
 │   ├── ipadic.hsd      # IPAdic 単体
-│   ├── ipadic-neologd.hsd  # IPAdic + NEologd（推奨）
-│   ├── unidic-cwj.hsd  # UniDic CWJ（書き言葉）
-│   └── unidic-csj.hsd  # UniDic CSJ（話し言葉）
+│   ├── ipadic-neologd.hsd  # IPAdic + NEologd
+│   ├── ipadic-neologd-sudachi.hsd  # IPAdic + NEologd + SudachiDict（推奨・最大語彙）
+│   ├── sudachi.hsd     # SudachiDict Core 単体
+│   └── user/           # ユーザー辞書CSV（make dict-neologd でマージ）
+│       ※ unidic-cwj.hsd / unidic-csj.hsd は同梱されず make dict-unidic-cwj/csj でビルド
 ├── scripts/
 │   └── convert-unidic-csv.py  # UniDic CSV → IPAdic互換フォーマット変換
 ├── hasami-python/      # Python バインディング (PyO3)
@@ -64,7 +66,49 @@ hasami/
 ```bash
 cargo build --release     # リリースビルド
 cargo build --workspace   # Python バインディングを含むワークスペース全体をビルド
-cargo test --workspace    # ワークスペース全体のテスト実行
+cargo test --workspace --exclude hasami-python  # テスト実行（hasami-python は extension-module のため
+                                                # macOS/Linux でリンク不可。clippy --workspace で検証）
+cargo clippy --workspace --all-targets -- -D warnings  # lint（hasami-python のコンパイル検証を含む）
 make dict                 # 全辞書ビルド（IPAdic, NEologd, UniDic）
 make dict-clean           # ダウンロードした辞書ソースを削除
 ```
+
+## 辞書ソースの既知の欠陥
+
+複数の辞書ソースをマージしているため、ソース側の欠陥がそのまま解析結果に出る。
+`hasami repair` で修復・除去する（詳細は README の「辞書の修復」）。
+
+| ソース | 欠陥 | 影響 | 対処 |
+| --- | --- | --- | --- |
+| SudachiDict | `.dict-src/sudachi/sudachi.csv` の発音フィールド（13列目）が表層形のまま。92% が非カタカナ | 「方法」の発音が「ホーホー」でなく「ホウホウ」になり長音が失われる。読みがラテン文字の語（Siemens 等）は読みが消える | `repair`（常時） |
+| NEologd | 表記ゆれ正規化エントリが活用語の語形を名詞として登録している | 「質の高い」→「シツノコウイ」、「概念を学ぶ」→「ガイネンヲガクブ」 | `repair --drop-ortho-variants` |
+| NEologd / SudachiDict | 漢数字だけで綴られた人名・地名 | 「十五」→「トウゴ」、「二十八」→「ツチヤ」 | `repair --drop-numeral-misreadings` |
+| SudachiDict | 代名詞と同じ表層の 1 文字の人名 | 「何なのか」→「ガナノカ」 | `repair --drop-ortho-variants` |
+| NEologd `mecab-user-dict-seed` | 読みが別語のものに差し替わっているエントリが散在する | 「最終面接」→「イチジメンセツ」、「目標数値」→「スウチモクヒョウ」、「情報収集」→「ジョホウシュウシュウ」 | `dict/user-remove/misreading-entries.csv` に列挙して `repair --remove` |
+
+`convert_sudachi_to_mecab.py` は現在 `pronunciation = reading` で出力するが、
+`.dict-src/sudachi/sudachi.csv` は旧版スクリプトの出力が残っているため上記の欠陥を持つ。
+CSV から辞書を作り直す場合は変換をやり直すこと。
+
+### 英字の読み
+
+日本語文中の 1〜2 文字の英字は略語（AI, PC, VP 等）が大半で、辞書に登録された
+単位読み・略称読み（A→アンペア, G→ギガ, cs→クレディスイス）はほぼ誤読になる。
+`lattice.rs` の `should_trust_dict_reading()` は 1〜2 文字の英字と、読みが
+カタカナでないエントリについて辞書を信用せず、綴り読み（数字直後なら単位読み）を付与する。
+3 文字以上でカタカナの読みを持つ語（NASA→ナサ）は辞書を尊重する。
+
+### 半角記号は IPAdic では未知語になる
+
+IPAdic の `unk.def` は SYMBOL クラスの未知語を「名詞,サ変接続」として扱う。
+半角カンマ `,` とアポストロフィ `'` は辞書にエントリが無いためこの規則が適用され、
+読点として扱われない。その結果、直後の分割が乱れる。
+
+```
+ときなど、日々確実に前進する   → とき / など / 、 / 日々 / 確実 / に / 前進 / する
+ときなど,日々確実に前進する   → とき / など / , / 日 / 々 / 確実 / に / 前進 / する
+```
+
+Style-Bert-VITS2 は読点を `,` に正規化してから解析に渡すため、この差が直接効く。
+`dict/user/ascii-punctuation.csv` で `,` を「記号,読点」、`'` を「記号,一般」として
+登録している。`.` `!` `?` `…` `-` は辞書にエントリがあるので対処は要らない。

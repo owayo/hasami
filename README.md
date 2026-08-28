@@ -46,6 +46,14 @@
 
 ### ソースからビルド
 
+辞書は Git LFS で管理している。clone したら最初に一度フックを入れておく
+（`git lfs install` 済みの環境かどうかに関わらず、LFS を通らない大きなファイルを
+コミットしようとしたときに pre-commit が止める）。
+
+```bash
+make setup-hooks
+```
+
 ```bash
 make install
 
@@ -85,8 +93,13 @@ cargo build --workspace
 | `dict/ipadic-neologd.hsd` | IPAdic + NEologd | 新語・固有名詞対応 |
 | `dict/ipadic-neologd-sudachi.hsd` | IPAdic + NEologd + SudachiDict | **推奨**（最大語彙） |
 | `dict/sudachi.hsd` | SudachiDict Core 単体 | Sudachi互換解析 |
-| `dict/unidic-cwj.hsd` | UniDic CWJ（書き言葉） | 言語研究・高精度品詞体系 |
-| `dict/unidic-csj.hsd` | UniDic CSJ（話し言葉） | 音声認識・会話分析 |
+
+以下の辞書はリポジトリには同梱されていませんが、ローカルでビルドできます。
+
+| ファイル | 内容 | ビルドコマンド |
+|---------|------|--------------|
+| `dict/unidic-cwj.hsd` | UniDic CWJ（書き言葉） | `make dict-unidic-cwj` |
+| `dict/unidic-csj.hsd` | UniDic CSJ（話し言葉） | `make dict-unidic-csj` |
 
 ### 辞書のローカルビルド
 
@@ -120,6 +133,31 @@ hasami build --input ./ipadic/ --output dict.hsd
 hasami merge --dict dict.hsd --input custom_words.csv
 hasami merge --dict dict.hsd --input ./extra_dict/ --output merged.hsd
 ```
+
+### 辞書の修復
+
+複数の辞書ソースをマージすると、ソース側の欠陥がそのまま残ることがある。
+`hasami repair` は読み上げ用途で問題になる次のエントリを修復・除去する。
+
+```bash
+hasami repair --dict dict/ipadic-neologd-sudachi.hsd \
+    --output dict/repaired.hsd \
+    --drop-ortho-variants \
+    --drop-numeral-misreadings \
+    --remove dict/user-remove/misreading-entries.csv \
+    --merge dict/user/english-reading-fixes.csv
+```
+
+| 対象 | 内容 |
+| --- | --- |
+| 壊れた発音（常時） | 発音フィールドに表層形が入っているエントリ（SudachiDict 由来）を、同じ (表層形, 読み) を持つ健全なエントリの発音形で置き換える。借用できなければ読みを使い、読みもラテン文字のままなら空にして解析時の読み補完に委ねる |
+| `--drop-ortho-variants` | 活用語・機能語と衝突する名詞エントリを削除する。「高い」→「高位(コウイ)」、「学ぶ」→「学部(ガクブ)」等が形容詞・動詞に勝って誤読になるのを防ぐ。代名詞と衝突する 1 文字の人名（「何」→姓の「ガ」）も落とす |
+| `--drop-numeral-misreadings` | 漢数字だけで綴られた固有名詞を削除する。「十五(トウゴ)」「二十八(ツチヤ)」等が数詞に勝つのを防ぐ。「万一」「八百万」のような一般語・副詞は残す |
+| `--remove <CSV>` | `表層形,読み` の CSV に列挙したエントリを削除する。汎用フィルタで拾えない個別の誤読用 |
+| `--merge <PATH>` | 修復後に MeCab 形式 CSV を追加マージする。trie の再構築が 1 回で済むので、`repair` と `merge` を続けて実行するより速い |
+
+`dict/user-remove/` に削除リスト、`dict/user/` に追加エントリを置いてある。
+`make dict-neologd` は最後にこの修復を実行する（`make dict-repair DICT=...` で個別実行も可）。
 
 ## 使い方
 
@@ -318,8 +356,8 @@ cargo build --workspace
 # ビルド
 make build
 
-# テスト実行
-cargo test --workspace
+# テスト実行（hasami-python は extension-module のためリンク不可、clippy で検証）
+cargo test --workspace --exclude hasami-python
 
 # clippy と フォーマットチェック
 make check
@@ -385,9 +423,9 @@ NEologd は Apache License 2.0 に加え、IPAdic のライセンス条件も適
 
 SudachiDict には UniDic（BSD 3-Clause）および NEologd（Apache 2.0）由来のデータが含まれます。詳細は [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) を参照してください。
 
-#### UniDic (`dict/unidic-cwj.hsd`, `dict/unidic-csj.hsd`)
+#### UniDic (`dict/unidic-cwj.hsd`, `dict/unidic-csj.hsd` — ローカルビルド時)
 
-[UniDic](https://clrd.ninjal.ac.jp/unidic/) を基に構築。CWJ（現代書き言葉 202512）および CSJ（現代話し言葉 202512）。
+[UniDic](https://clrd.ninjal.ac.jp/unidic/) を基に構築。CWJ（現代書き言葉 202512）および CSJ（現代話し言葉 202512）。リポジトリには同梱されず、`make dict-unidic-cwj` / `make dict-unidic-csj` でビルドした場合に適用されます。
 
 > Copyright (c) 2011-2021, The UniDic Consortium
 >

@@ -91,7 +91,7 @@ enum Commands {
         dict: PathBuf,
     },
 
-    /// 辞書のpronunciationフィールドを修復（非カタカナをreadingで置換）
+    /// 辞書の壊れた読み・誤読エントリを修復
     Repair {
         /// 辞書ファイルのパス (.hsd)
         #[arg(short, long)]
@@ -100,6 +100,24 @@ enum Commands {
         /// 出力辞書ファイル (.hsd)。省略時は既存辞書を上書き
         #[arg(short, long)]
         output: Option<PathBuf>,
+
+        /// 活用語・機能語と衝突する異表記エントリを削除する
+        /// (「高い」→「高位(コウイ)」等の表記ゆれ正規化エントリ)
+        #[arg(long)]
+        drop_ortho_variants: bool,
+
+        /// 漢数字を数以外に読ませるエントリを削除する
+        /// (「十五(トウゴ)」「二十八(ツチヤ)」等の人名・地名エントリ)
+        #[arg(long)]
+        drop_numeral_misreadings: bool,
+
+        /// 削除するエントリを列挙した CSV (`表層形,読み`)。複数指定可
+        #[arg(long, value_name = "CSV")]
+        remove: Vec<PathBuf>,
+
+        /// 修復後に追加マージする MeCab 形式 CSV またはそのディレクトリ。複数指定可
+        #[arg(long, value_name = "PATH")]
+        merge: Vec<PathBuf>,
     },
 }
 
@@ -120,7 +138,21 @@ fn main() -> io::Result<()> {
             iterations,
         } => cmd_bench(&dict, &text, iterations.get()),
         Commands::Info { dict } => cmd_info(&dict),
-        Commands::Repair { dict, output } => cmd_repair(&dict, output.as_deref()),
+        Commands::Repair {
+            dict,
+            output,
+            drop_ortho_variants,
+            drop_numeral_misreadings,
+            remove,
+            merge,
+        } => cmd_repair(
+            &dict,
+            output.as_deref(),
+            drop_ortho_variants,
+            drop_numeral_misreadings,
+            &remove,
+            &merge,
+        ),
     }
 }
 
@@ -342,7 +374,14 @@ fn cmd_bench(dict_path: &Path, text: &str, iterations: usize) -> io::Result<()> 
     Ok(())
 }
 
-fn cmd_repair(dict_path: &Path, output: Option<&Path>) -> io::Result<()> {
+fn cmd_repair(
+    dict_path: &Path,
+    output: Option<&Path>,
+    drop_ortho_variants: bool,
+    drop_numeral_misreadings: bool,
+    remove: &[PathBuf],
+    merge: &[PathBuf],
+) -> io::Result<()> {
     eprintln!("Loading dictionary: {}", dict_path.display());
     let start = Instant::now();
 
@@ -352,7 +391,37 @@ fn cmd_repair(dict_path: &Path, output: Option<&Path>) -> io::Result<()> {
     let fixed = builder.repair_pronunciation();
     eprintln!("Fixed {} entries with non-katakana pronunciation", fixed);
 
-    if fixed == 0 {
+    let mut dropped = 0;
+    if drop_ortho_variants {
+        let n = builder.drop_conflicting_ortho_variants();
+        eprintln!("Dropped {} conflicting ortho-variant entries", n);
+        dropped += n;
+    }
+    if drop_numeral_misreadings {
+        let n = builder.drop_numeral_misreadings();
+        eprintln!("Dropped {} numeral misreading entries", n);
+        dropped += n;
+    }
+    for path in remove {
+        let n = builder.drop_entries_from_csv(path)?;
+        eprintln!("Dropped {} entries listed in {}", n, path.display());
+        dropped += n;
+    }
+
+    let mut added = 0;
+    for path in merge {
+        let before = builder.entry_count();
+        if path.is_dir() {
+            builder.add_csv_dir(path)?;
+        } else {
+            builder.add_csv(path)?;
+        }
+        let n = builder.entry_count() - before;
+        eprintln!("Merged {} entries from {}", n, path.display());
+        added += n;
+    }
+
+    if fixed == 0 && dropped == 0 && added == 0 {
         eprintln!("No entries to fix. Skipping rebuild.");
         return Ok(());
     }

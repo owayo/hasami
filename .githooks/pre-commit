@@ -1,0 +1,32 @@
+#!/bin/sh
+# Git LFS を通らずに大きなファイルがコミットされるのを止める。
+#
+# .gitattributes で LFS 対象にしていても、`git lfs install` していない環境では
+# フィルタが走らず実体が入る。そのまま積み上げると GitHub の 100MB 制限で push が
+# 通らなくなり、履歴を書き換えるしかなくなる（実際に 2 コミット分やり直した）。
+#
+# 有効にする: make setup-hooks
+
+limit=52428800 # 50MB
+
+fail=0
+for path in $(git diff --cached --name-only --diff-filter=AM); do
+	blob=$(git ls-files -s -- "$path" | awk '{print $2}')
+	[ -n "$blob" ] || continue
+	size=$(git cat-file -s "$blob" 2>/dev/null) || continue
+	[ "$size" -gt "$limit" ] || continue
+
+	# LFS ポインタなら実体は LFS 側にあるので問題ない
+	if git cat-file -p "$blob" 2>/dev/null | head -c 45 | grep -q '^version https://git-lfs'; then
+		continue
+	fi
+
+	printf 'error: %s (%d MB) staged without Git LFS\n' "$path" "$((size / 1048576))" >&2
+	fail=1
+done
+
+if [ "$fail" -ne 0 ]; then
+	printf '\n`git lfs install` を実行し、`git add` し直してください。\n' >&2
+	printf '意図的に大きなファイルを入れる場合は --no-verify で回避できます。\n' >&2
+	exit 1
+fi
