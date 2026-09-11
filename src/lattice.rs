@@ -195,13 +195,42 @@ fn is_katakana_str(s: &str) -> bool {
     !s.is_empty() && s.chars().all(|c| ('\u{30A0}'..='\u{30FF}').contains(&c))
 }
 
-/// 読みが欠けているトークンを補完する。
+/// Viterbi が選んだ品詞を根拠に補正できる辞書の読み。
+/// (表層形, 品詞の接頭, 誤った読み, 正しい読み)
+///
+/// 「他」は名詞なら「ホカ」（他ならぬ、他で、他は、他より）、接頭詞なら「タ」
+/// （他部門、他部署、他業種）。IPAdic の名詞エントリは「タ」なので名詞のときだけ直す。
+/// 複合語「他人」「他社」「他者」は 1 トークンなので影響しない。
+/// 助詞との組み合わせを列挙する方式では「他ならぬ」や文末の「他」を取りこぼす
+const POS_READING_OVERRIDES: &[(&str, &str, &str, &str)] = &[("他", "名詞,", "タ", "ホカ")];
+
+/// 品詞を根拠に辞書の読みを補正する。補正したら true を返す。
+fn apply_pos_reading_override(token: &mut Token) -> bool {
+    for &(surface, pos_prefix, incorrect, corrected) in POS_READING_OVERRIDES {
+        if &*token.surface == surface
+            && token.pos.starts_with(pos_prefix)
+            && (&*token.reading == incorrect || &*token.pronunciation == incorrect)
+        {
+            let corrected: Arc<str> = Arc::from(corrected);
+            token.reading = Arc::clone(&corrected);
+            token.pronunciation = corrected;
+            return true;
+        }
+    }
+    false
+}
+
+/// 辞書の読みを文脈で補正し、読みが欠けているトークンを補完する。
+/// - 品詞で読みが決まる語: `POS_READING_OVERRIDES`（「他」の名詞/接頭詞）
 /// - アルファベット: 数字トークンの直後 → 単位読み（該当する場合）、なければアルファベット読み
 /// - 繰り返し記号「々」: 直前のトークンの読み（そこだけ無音になるのを防ぐ）
 /// - 仮名のみの語: 表層形をカタカナ化した読み（未知語で読みが空になるケースの救済）
 fn apply_contextual_readings(tokens: &mut [Token]) {
     for i in 0..tokens.len() {
         if tokens[i].surface.is_empty() {
+            continue;
+        }
+        if apply_pos_reading_override(&mut tokens[i]) {
             continue;
         }
         if !tokens[i].surface.chars().all(|c| c.is_ascii_alphabetic()) {
@@ -1150,5 +1179,39 @@ mod tests {
         let tokens = ws.tokenize("東京ABCに", &dict);
         let reconstructed: String = tokens.iter().map(|t| &*t.surface).collect();
         assert_eq!(reconstructed, "東京ABCに");
+    }
+
+    fn reading_token(surface: &str, pos: &str, reading: &str) -> Token {
+        Token {
+            surface: surface.into(),
+            start: 0,
+            end: surface.len(),
+            pos: pos.into(),
+            base_form: surface.into(),
+            reading: reading.into(),
+            pronunciation: reading.into(),
+            word_cost: 0,
+            is_known: true,
+        }
+    }
+
+    #[test]
+    fn test_hoka_reading_depends_on_selected_pos() {
+        let mut tokens = vec![
+            // 「他ならぬ」「他で」「他は」の名詞。辞書の読みは「タ」だが「ホカ」が正しい
+            reading_token("他", "名詞,一般,*,*", "タ"),
+            // 「他部門」「他部署」の接頭詞。こちらは「タ」が正しい
+            reading_token("他", "接頭詞,名詞接続,*,*", "タ"),
+            // 既に正しい読みを持つ名詞は触らない
+            reading_token("他", "名詞,非自立,副詞可能,*", "ホカ"),
+        ];
+
+        apply_contextual_readings(&mut tokens);
+
+        assert_eq!(&*tokens[0].reading, "ホカ");
+        assert_eq!(&*tokens[0].pronunciation, "ホカ");
+        assert_eq!(&*tokens[1].reading, "タ");
+        assert_eq!(&*tokens[1].pronunciation, "タ");
+        assert_eq!(&*tokens[2].reading, "ホカ");
     }
 }
