@@ -249,6 +249,36 @@ fn is_number_pos(pos: &str) -> bool {
     pos.starts_with("名詞,数") || pos.starts_with("名詞,接尾,助数詞")
 }
 
+/// 小数点の直後では促音化しない語。(表層形, 正しい読み)
+///
+/// 節番号「4.1節」は「四点一節」に正規化されるが、「一節(イッセツ)」が 1 語として
+/// 辞書にあるため「ヨンテンイッセツ」と読まれる。小数点以下の「一」と助数詞の「節」は
+/// 別の語なので促音化しない。
+/// 「4.1章」「4.1項」は「一」+「章」に分かれるのでこの問題は起きず、
+/// 「4.1部」の「一部(イチブ)」は促音化しないのでそのままでよい。
+const DECIMAL_COUNTER_OVERRIDES: &[(&str, &str)] = &[("一節", "イチセツ")];
+
+/// 小数点の直後かどうか。「四」「点」「一節」のような並びを見分ける。
+fn is_after_decimal_point(tokens: &[Token], i: usize) -> bool {
+    i >= 2 && &*tokens[i - 1].surface == "点" && is_number_pos(&tokens[i - 2].pos)
+}
+
+/// 小数点の直後の促音化を戻す。補正したら true を返す。
+fn apply_decimal_counter_override(token: &mut Token, after_decimal_point: bool) -> bool {
+    if !after_decimal_point {
+        return false;
+    }
+    for &(surface, corrected) in DECIMAL_COUNTER_OVERRIDES {
+        if &*token.surface == surface {
+            let corrected: Arc<str> = Arc::from(corrected);
+            token.reading = Arc::clone(&corrected);
+            token.pronunciation = corrected;
+            return true;
+        }
+    }
+    false
+}
+
 /// 辞書の読みを文脈で補正し、読みが欠けているトークンを補完する。
 /// - 品詞で読みが決まる語: `POS_READING_OVERRIDES`（「他」の名詞/接頭詞）
 /// - 後続で読みが決まる語: 「数」（数詞が続けば「スウ」、続かなければ「カズ」）
@@ -265,6 +295,10 @@ fn apply_contextual_readings(tokens: &mut [Token]) {
         }
         let next_is_number = tokens.get(i + 1).is_some_and(|t| is_number_pos(&t.pos));
         if apply_kazu_reading_override(&mut tokens[i], next_is_number) {
+            continue;
+        }
+        let after_decimal_point = is_after_decimal_point(tokens, i);
+        if apply_decimal_counter_override(&mut tokens[i], after_decimal_point) {
             continue;
         }
         if !tokens[i].surface.chars().all(|c| c.is_ascii_alphabetic()) {
@@ -1286,5 +1320,37 @@ mod tests {
         ];
         apply_contextual_readings(&mut tokens);
         assert_eq!(&*tokens[0].reading, "スウ");
+    }
+
+    #[test]
+    fn test_decimal_counter_is_not_geminated() {
+        // 「4.1節」は「四点一節」に正規化される。小数点以下の「一」と「節」は
+        // 別の語なので「イッセツ」ではなく「イチセツ」
+        let mut tokens = vec![
+            reading_token("四", "名詞,数,*,*", "ヨン"),
+            reading_token("点", "名詞,一般,*,*", "テン"),
+            reading_token("一節", "名詞,一般,*,*", "イッセツ"),
+        ];
+        apply_contextual_readings(&mut tokens);
+        assert_eq!(&*tokens[2].reading, "イチセツ");
+        assert_eq!(&*tokens[2].pronunciation, "イチセツ");
+
+        // 小数点の直後でない「一節」は促音化したまま（詩の一節、第一節）
+        let mut tokens = vec![
+            reading_token("詩", "名詞,一般,*,*", "シ"),
+            reading_token("の", "助詞,連体化,*,*", "ノ"),
+            reading_token("一節", "名詞,一般,*,*", "イッセツ"),
+        ];
+        apply_contextual_readings(&mut tokens);
+        assert_eq!(&*tokens[2].reading, "イッセツ");
+
+        // 「点」の前が数詞でなければ小数点ではない（「要点」「一節」が並ぶ文）
+        let mut tokens = vec![
+            reading_token("要", "名詞,一般,*,*", "ヨウ"),
+            reading_token("点", "名詞,一般,*,*", "テン"),
+            reading_token("一節", "名詞,一般,*,*", "イッセツ"),
+        ];
+        apply_contextual_readings(&mut tokens);
+        assert_eq!(&*tokens[2].reading, "イッセツ");
     }
 }
