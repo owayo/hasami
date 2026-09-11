@@ -220,8 +220,38 @@ fn apply_pos_reading_override(token: &mut Token) -> bool {
     false
 }
 
+/// 「数」の読みを後続のトークンで切り替える。補正したら true を返す。
+///
+/// 「数」は品詞が同じでも読みが 2 通りある。「数十人」「数百」のように数詞が続けば
+/// 接頭辞の「スウ」、「目玉の数」「数が多い」「数を数える」のように続かなければ
+/// 独立した名詞の「カズ」。IPAdic の 名詞,一般 エントリは「スウ」なので、
+/// 後続を見て「カズ」に倒す。
+///
+/// 「数分」「数万」のように助数詞・数詞と結び付く「数」は 名詞,数 に割り当てられる
+/// ので、ここには来ない。それでも後続の判定に助数詞を含めるのは、「数十人」の
+/// 「数」が 名詞,一般 になるように、品詞の割り当てが揺れるため。
+fn apply_kazu_reading_override(token: &mut Token, next_is_number: bool) -> bool {
+    if next_is_number
+        || &*token.surface != "数"
+        || !token.pos.starts_with("名詞,一般,")
+        || &*token.reading != "スウ"
+    {
+        return false;
+    }
+    let corrected: Arc<str> = Arc::from("カズ");
+    token.reading = Arc::clone(&corrected);
+    token.pronunciation = corrected;
+    true
+}
+
+/// 数詞または助数詞か。「数」の読みの切り替えに使う。
+fn is_number_pos(pos: &str) -> bool {
+    pos.starts_with("名詞,数") || pos.starts_with("名詞,接尾,助数詞")
+}
+
 /// 辞書の読みを文脈で補正し、読みが欠けているトークンを補完する。
 /// - 品詞で読みが決まる語: `POS_READING_OVERRIDES`（「他」の名詞/接頭詞）
+/// - 後続で読みが決まる語: 「数」（数詞が続けば「スウ」、続かなければ「カズ」）
 /// - アルファベット: 数字トークンの直後 → 単位読み（該当する場合）、なければアルファベット読み
 /// - 繰り返し記号「々」: 直前のトークンの読み（そこだけ無音になるのを防ぐ）
 /// - 仮名のみの語: 表層形をカタカナ化した読み（未知語で読みが空になるケースの救済）
@@ -231,6 +261,10 @@ fn apply_contextual_readings(tokens: &mut [Token]) {
             continue;
         }
         if apply_pos_reading_override(&mut tokens[i]) {
+            continue;
+        }
+        let next_is_number = tokens.get(i + 1).is_some_and(|t| is_number_pos(&t.pos));
+        if apply_kazu_reading_override(&mut tokens[i], next_is_number) {
             continue;
         }
         if !tokens[i].surface.chars().all(|c| c.is_ascii_alphabetic()) {
@@ -1213,5 +1247,44 @@ mod tests {
         assert_eq!(&*tokens[1].reading, "タ");
         assert_eq!(&*tokens[1].pronunciation, "タ");
         assert_eq!(&*tokens[2].reading, "ホカ");
+    }
+
+    #[test]
+    fn test_kazu_reading_depends_on_following_token() {
+        // 「目玉の数が」「数を数える」のように数詞が続かなければ独立した名詞の「カズ」
+        for next in [
+            reading_token("が", "助詞,格助詞,一般,*", "ガ"),
+            reading_token("を", "助詞,格助詞,一般,*", "ヲ"),
+        ] {
+            let surface = next.surface.to_string();
+            let mut tokens = vec![reading_token("数", "名詞,一般,*,*", "スウ"), next];
+            apply_contextual_readings(&mut tokens);
+            assert_eq!(&*tokens[0].reading, "カズ", "数{surface}");
+            assert_eq!(&*tokens[0].pronunciation, "カズ", "数{surface}");
+        }
+
+        // 「数十人」「数百」のように数詞・助数詞が続けば接頭辞の「スウ」
+        for next in [
+            reading_token("十", "名詞,数,*,*", "ジュウ"),
+            reading_token("分", "名詞,接尾,助数詞,*", "フン"),
+        ] {
+            let surface = next.surface.to_string();
+            let mut tokens = vec![reading_token("数", "名詞,一般,*,*", "スウ"), next];
+            apply_contextual_readings(&mut tokens);
+            assert_eq!(&*tokens[0].reading, "スウ", "数{surface}");
+        }
+
+        // 文末の「数」は後続が無いので「カズ」
+        let mut tokens = vec![reading_token("数", "名詞,一般,*,*", "スウ")];
+        apply_contextual_readings(&mut tokens);
+        assert_eq!(&*tokens[0].reading, "カズ");
+
+        // 「数分」のように 名詞,数 が選ばれた「数」は触らない
+        let mut tokens = vec![
+            reading_token("数", "名詞,数,*,*", "スウ"),
+            reading_token("分", "名詞,接尾,助数詞,*", "フン"),
+        ];
+        apply_contextual_readings(&mut tokens);
+        assert_eq!(&*tokens[0].reading, "スウ");
     }
 }
