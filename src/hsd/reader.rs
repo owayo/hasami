@@ -17,7 +17,7 @@ use super::records::{
 };
 use super::trie::{self, Node, Trie};
 use super::{DictError, strtab};
-use crate::char_class::{ALL_CHAR_TYPES, CharClass, CharClassifier, ClassProps, type_index};
+use crate::char_class::{ALL_CHAR_TYPES, CharClass, CharClassifier, UnkGrouping, type_index};
 use crate::dict::{ConnectionMatrix, DictEntry, UnkEntry};
 use memmap2::Mmap;
 use std::collections::HashMap;
@@ -57,8 +57,8 @@ pub(crate) struct UnkInfo {
     pub right_id: u16,
     pub cost: i16,
     pub pos: Arc<str>,
-    /// 同じ文字種の並びのまとめ方（char.def の group・length）
-    pub grouping: ClassProps,
+    /// 同じ文字種の並びから作る候補（char.def の group・length）
+    pub grouping: UnkGrouping,
 }
 
 /// 解析の最内側で使う型付きスライス（解析 1 回ごとに作る）
@@ -337,7 +337,7 @@ impl Dictionary {
                 right_id: t.right_id,
                 cost: t.cost,
                 pos: Arc::clone(&pos[t.pos_id as usize]),
-                grouping: classifier.props_for(char_type),
+                grouping: classifier.unk_grouping(char_type),
             });
         }
         let bmp_char_types = classifier.bmp_type_table();

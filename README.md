@@ -35,7 +35,7 @@
 - **MeCab辞書互換**: IPAdic / UniDic 等のMeCab形式辞書をそのまま利用可能
 - **辞書マージ**: 既存辞書にMeCab形式CSVを追加可能
 - **高速辞書ロード**: mmap-native バイナリ形式（.hsd v4）。ロード時はヘッダと小さな表だけを検査し、本体は解析で触れたページだけを読む
-- **未知語処理**: 文字分類ベースの未知語推定（unk.def対応）
+- **未知語処理**: 文字分類ベースの未知語推定（char.def・unk.def を MeCab と同じ意味で読む）
 
 ## 動作環境
 
@@ -130,12 +130,17 @@ make dict-clean
 | `ipadic-neologd.hsd` | IPAdic に NEologd の seed を merge し、repair 一式（範囲外 ID・表記ゆれ・漢数字の人名・`dict/user-remove/*.csv`・一般語の固有名詞の降格）を掛けてから `dict/user/*.csv` を足す |
 | `ipadic-neologd-sudachi.hsd` | IPAdic + NEologd に SudachiDict の raw 辞書を `scripts/convert_sudachi_raw.py` で変換して merge し、同じ repair 一式を掛ける |
 
-`scripts/prepare_ipadic.py` は上流の IPAdic を書き換えずに、次の 2 点を変えたソースを作る（何を変えたかは
+`scripts/prepare_ipadic.py` は上流の IPAdic を書き換えずに、次の 3 点を変えたソースを作る（何を変えたかは
 辞書のメタデータ `ipadic_patch` に残る）。
 
 - **記号の未知語**: IPAdic の char.def は `— 。 、 「 ♪ ⇒` などを SYMBOL（まとめて 1 語）にし、unk.def はその未知語を
   「名詞,サ変接続」にする。このままだと辞書に無い記号の並びが句点ごと 1 つの名詞になる（「楽しみたい——。」の「——。」）。
   SYMBOL を「既知語がある位置では未知語を作らず、作るときも 1 文字ずつ」「記号,一般」に変える
+- **未知語の候補**: hasami は char.def の group・length を MeCab と同じ意味で読む（同じ文字種の並び全体と、1〜length 字の
+  接頭辞を未知語の候補にする）。辞書に無いカタカナ語は 1 語になる（「ブログ」「モチベーション」。以前は 2 文字ずつに
+  割れていた）。IPAdic の値のままだとひらがなの並びまで 1 つの名詞になるので、HIRAGANA を 0 0 2、ALPHA・NUMERIC を
+  1 1 1（英数字を 1 文字にも分けられる）にし、中黒 `・` と `×` `÷` を SYMBOL にする（「ジョン・カーター」「microSD×C」を
+  つなげない）。ニュース 3.3 万行で MeCab と分かち書きが一致する行は 64.7% から 88.5% になった（IPAdic）
 - **EUC-JP の変換差**: IPAdic の CSV は EUC-JP で、ダッシュ・波ダッシュ・マイナスなど 7 字は変換表によって
   写し先が分かれる。hasami は JIS の対応表どおり（MeCab と同じ）「—」「〜」「−」に写し、Windows 由来の文章が使う
   「―」「～」「－」の別表記を表層形に足す（33 語。「あ〜」と「あ～」のどちらでも感動詞「アー」になる）
