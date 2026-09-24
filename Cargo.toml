@@ -4,7 +4,7 @@ resolver = "2"
 
 [package]
 name = "hasami"
-version = "26.9.102"
+version = "26.9.103"
 edition = "2024"
 description = "High-performance Japanese morphological analyzer"
 # コードは MIT。埋め込む文分割の例外表（src/sentence/builtin_exceptions.txt）は辞書のデータに由来する
