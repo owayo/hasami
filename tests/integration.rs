@@ -2012,12 +2012,387 @@ fn test_cli_repair_demote_common_proper_nouns() {
 }
 
 // ==========================================================================
+// 文や句を 1 語にした名詞の削除（repair --drop-sentence-like-nouns）
+// ==========================================================================
+
+/// 活用型・活用形付きのエントリ（活用しない語は `*`）
+fn conj_entry(
+    surface: &str,
+    pos: &str,
+    conj: (&str, &str),
+    base_form: &str,
+    reading: &str,
+    cost: i16,
+) -> DictEntry {
+    DictEntry {
+        cost,
+        conj_type: conj.0.into(),
+        conj_form: conj.1.into(),
+        ..entry(surface, pos, base_form, reading, reading)
+    }
+}
+
+/// 削除の判定に使う参照辞書（IPAdic 単体の代わり）。接続行列は無く、語のコストの和で分割が決まる
+fn sentence_reference_builder() -> DictBuilder {
+    const NONE: (&str, &str) = ("*", "*");
+    let mut builder = DictBuilder::new();
+    let words = [
+        conj_entry(
+            "し",
+            "動詞,自立,*,*",
+            ("サ変・スル", "連用形"),
+            "する",
+            "シ",
+            100,
+        ),
+        conj_entry(
+            "ませ",
+            "助動詞,*,*,*",
+            ("特殊・マス", "未然形"),
+            "ます",
+            "マセ",
+            100,
+        ),
+        conj_entry(
+            "ん",
+            "助動詞,*,*,*",
+            ("不変化型", "基本形"),
+            "ん",
+            "ン",
+            100,
+        ),
+        conj_entry("い", "動詞,自立,*,*", ("一段", "未然形"), "いる", "イ", 100),
+        conj_entry(
+            "ない",
+            "助動詞,*,*,*",
+            ("特殊・ナイ", "基本形"),
+            "ない",
+            "ナイ",
+            100,
+        ),
+        conj_entry("どう", "副詞,助詞類接続,*,*", NONE, "どう", "ドウ", 100),
+        conj_entry(
+            "でしょ",
+            "助動詞,*,*,*",
+            ("特殊・デス", "未然形"),
+            "です",
+            "デショ",
+            100,
+        ),
+        conj_entry(
+            "う",
+            "助動詞,*,*,*",
+            ("不変化型", "基本形"),
+            "う",
+            "ウ",
+            100,
+        ),
+        conj_entry("好き", "名詞,形容動詞語幹,*,*", NONE, "好き", "スキ", 100),
+        conj_entry("君", "名詞,代名詞,一般,*", NONE, "君", "キミ", 100),
+        conj_entry("が", "助詞,格助詞,一般,*", NONE, "が", "ガ", 100),
+        conj_entry(
+            "だ",
+            "助動詞,*,*,*",
+            ("特殊・ダ", "基本形"),
+            "だ",
+            "ダ",
+            100,
+        ),
+        conj_entry("。", "記号,句点,*,*", NONE, "。", "。", 100),
+        conj_entry("…", "記号,一般,*,*", NONE, "…", "…", 100),
+        conj_entry(
+            "モーニング",
+            "名詞,一般,*,*",
+            NONE,
+            "モーニング",
+            "モーニング",
+            100,
+        ),
+        conj_entry("娘", "名詞,一般,*,*", NONE, "娘", "ムスメ", 100),
+        conj_entry("ひな", "名詞,一般,*,*", NONE, "ひな", "ヒナ", 100),
+        conj_entry(
+            "た",
+            "助動詞,*,*,*",
+            ("特殊・タ", "基本形"),
+            "た",
+            "タ",
+            100,
+        ),
+        conj_entry("一緒", "名詞,サ変接続,*,*", NONE, "一緒", "イッショ", 100),
+        conj_entry("に", "助詞,格助詞,一般,*", NONE, "に", "ニ", 100),
+        conj_entry("も", "助詞,係助詞,*,*", NONE, "も", "モ", 100),
+        // 参照辞書自身の名詞。単独でも い/ない の方が安いが、参照辞書の語は削除しない
+        conj_entry("いない", "名詞,一般,*,*", NONE, "いない", "イナイ", 5000),
+        // 参照辞書の小数点（文末記号だけの名詞。読みは比べない）
+        conj_entry("．", "名詞,数,*,*", NONE, "．", "．", 100),
+    ];
+    for w in words {
+        builder.add_entry(w);
+    }
+    builder
+}
+
+/// 削除の対象になりうる名詞と、残すべき名詞を持つビルダー
+fn sentence_target_builder() -> DictBuilder {
+    let mut builder = DictBuilder::new();
+    let words = [
+        // 述語で終わる文
+        (
+            "どうでしょう",
+            "名詞,固有名詞,一般,*",
+            "どうでしょう",
+            "ドウデショウ",
+        ),
+        ("いない", "名詞,固有名詞,組織,*", "いない", "イナイ"),
+        ("好きだ。", "名詞,固有名詞,一般,*", "好きだ。", "スキダ"),
+        // 表記ゆれ（原形が漢字語）
+        ("しません", "名詞,固有名詞,一般,*", "志摩線", "シマセン"),
+        // 助詞で終わる句・機能語だけの並び（人名でも削除する）
+        ("一緒に", "名詞,固有名詞,一般,*", "一緒に", "イッショニ"),
+        ("にも", "名詞,固有名詞,人名,一般", "にも", "ニモ"),
+        // 記号 + 文末記号
+        ("…。", "名詞,固有名詞,人名,一般", "…。", "サイレンス"),
+        // 残す: 文末記号が名前の一部、内容語が 2 つ以上の文 + 文末記号（作品名）、名詞 + た（名前のでたらめな分割）、
+        // 参照辞書自身の語
+        (
+            "モーニング娘。",
+            "名詞,固有名詞,一般,*",
+            "モーニング娘。",
+            "モーニングムスメ",
+        ),
+        (
+            "君が好きだ。",
+            "名詞,固有名詞,一般,*",
+            "君が好きだ。",
+            "キミガスキダ",
+        ),
+        ("ひなた", "名詞,固有名詞,一般,*", "ひなた", "ヒナタ"),
+        ("いない", "名詞,一般,*,*", "いない", "イナイ"),
+        // 参照辞書の語は、発音の修復で読みが空になっていても残す
+        ("．", "名詞,数,*,*", "．", ""),
+        // 名詞以外は判定しない
+        ("しません", "感動詞,*,*,*", "しません", "シマセン"),
+    ];
+    for (surface, pos, base, reading) in words {
+        builder.add_entry(entry(surface, pos, base, reading, reading));
+    }
+    builder
+}
+
+#[test]
+fn test_drop_sentence_like_nouns_by_reference_analysis() {
+    use hasami::dict::SentenceLikeReason;
+    let reference = std::sync::Arc::new(sentence_reference_builder().build().unwrap());
+    let mut builder = sentence_target_builder();
+
+    let stats = builder.drop_sentence_like_nouns(&reference).unwrap();
+
+    let mut kept: Vec<(String, String)> = builder
+        .entries()
+        .iter()
+        .map(|e| (e.surface.to_string(), e.pos.to_string()))
+        .collect();
+    kept.sort();
+    let mut expected: Vec<(String, String)> = [
+        ("．", "名詞,数,*,*"),
+        ("いない", "名詞,一般,*,*"),
+        ("しません", "感動詞,*,*,*"),
+        ("ひなた", "名詞,固有名詞,一般,*"),
+        ("モーニング娘。", "名詞,固有名詞,一般,*"),
+        ("君が好きだ。", "名詞,固有名詞,一般,*"),
+    ]
+    .iter()
+    .map(|(s, p)| (s.to_string(), p.to_string()))
+    .collect();
+    expected.sort();
+    assert_eq!(kept, expected, "{stats:?}");
+
+    // 名詞で、表層形にひらがなか文末記号を含むもの
+    assert_eq!(stats.examined, 12);
+    assert_eq!(stats.dropped, 7);
+    let count = |reason: SentenceLikeReason| {
+        stats
+            .by_reason
+            .iter()
+            .find(|(r, _)| *r == reason)
+            .map_or(0, |(_, n)| *n)
+    };
+    assert_eq!(count(SentenceLikeReason::Predicate), 4, "{stats:?}");
+    assert_eq!(count(SentenceLikeReason::NounParticle), 1, "{stats:?}");
+    assert_eq!(count(SentenceLikeReason::FunctionWords), 1, "{stats:?}");
+    assert_eq!(count(SentenceLikeReason::SymbolsWithEnder), 1, "{stats:?}");
+    assert_eq!(stats.by_reason.len(), SentenceLikeReason::ALL.len());
+    // 例は理由ごとに 3 件まで（述語で終わる文は 4 件中 3 件）
+    assert_eq!(stats.samples.len(), 6);
+}
+
+/// `hasami repair --drop-sentence-like-nouns` は削除してメタデータの repairs に操作を残す。
+/// 参照辞書を `--demote-common-proper-nouns` と共有しても動く
+#[test]
+fn test_cli_repair_drop_sentence_like_nouns() {
+    let dir = std::env::temp_dir();
+    let pid = std::process::id();
+    let input = dir.join(format!("hasami_{pid}_sentence_in.hsd"));
+    let reference = dir.join(format!("hasami_{pid}_sentence_ref.hsd"));
+    let output = dir.join(format!("hasami_{pid}_sentence_out.hsd"));
+    write_hsd(&sentence_target_builder(), &input);
+    write_hsd(&sentence_reference_builder(), &reference);
+
+    let result = std::process::Command::new(env!("CARGO_BIN_EXE_hasami"))
+        .arg("repair")
+        .arg("--dict")
+        .arg(&input)
+        .arg("--output")
+        .arg(&output)
+        .arg("--no-pronunciation-repair")
+        .arg("--drop-sentence-like-nouns")
+        .arg(&reference)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&result.stderr);
+    assert!(result.status.success(), "hasami repair failed: {stderr}");
+    assert!(stderr.contains("Dropped 7 of 12 noun entries"), "{stderr}");
+    assert!(stderr.contains("predicate:4"), "{stderr}");
+
+    let repaired = Dictionary::load(&output).unwrap();
+    assert!(
+        repaired
+            .meta()
+            .get(hasami::hsd::meta::KEY_REPAIRS)
+            .is_some_and(|ops| ops.split(',').any(|op| op == "drop-sentence-like-nouns")),
+        "{:?}",
+        repaired.meta().get(hasami::hsd::meta::KEY_REPAIRS)
+    );
+    assert_eq!(repaired.entry_count(), 6);
+    for path in [&input, &reference, &output] {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
+/// 数と単位の組の判定に使う参照辞書（数は既知語で持つ）
+fn quantity_reference_builder() -> DictBuilder {
+    const NONE: (&str, &str) = ("*", "*");
+    let mut builder = DictBuilder::new();
+    for (surface, pos, reading) in [
+        ("50", "名詞,数,*,*", "ゴジュウ"),
+        ("30", "名詞,数,*,*", "サンジュウ"),
+        ("0", "名詞,数,*,*", "ゼロ"),
+        ("1", "名詞,数,*,*", "イチ"),
+        (".", "名詞,数,*,*", "テン"),
+        ("%", "名詞,接尾,助数詞,*", "パーセント"),
+        ("℃", "名詞,接尾,助数詞,*", "ド"),
+        ("‰", "記号,一般,*,*", "‰"),
+    ] {
+        builder.add_entry(conj_entry(surface, pos, NONE, surface, reading, 100));
+    }
+    builder
+}
+
+/// 数と単位の組の固有名詞と、残すべき語を持つビルダー
+fn quantity_target_builder() -> DictBuilder {
+    let mut builder = DictBuilder::new();
+    for (surface, pos, base, reading) in [
+        ("50%", "名詞,固有名詞,一般,*", "50%", "ゴジュウパーセント"),
+        ("0.1℃", "名詞,固有名詞,一般,*", "0.1℃", "レイテンイチドシー"),
+        ("30℃", "名詞,固有名詞,一般,*", "30度", "サンジュウドシー"),
+        // 残す: 組織の名前、参照辞書が単位を接尾辞にしない字、単位で終わらない語、固有名詞でない語
+        ("30℃", "名詞,固有名詞,組織,*", "30℃", "サンジュウドシー"),
+        ("50‰", "名詞,固有名詞,一般,*", "50‰", "ゴジュウパーミル"),
+        (
+            "50%ORANGE",
+            "名詞,固有名詞,一般,*",
+            "50%ORANGE",
+            "ゴジュウパーセントオレンジ",
+        ),
+        ("50%", "名詞,一般,*,*", "50%", "ゴジュウパーセント"),
+    ] {
+        builder.add_entry(entry(surface, pos, base, reading, reading));
+    }
+    builder
+}
+
+#[test]
+fn test_drop_quantity_nouns_by_reference_analysis() {
+    let reference = std::sync::Arc::new(quantity_reference_builder().build().unwrap());
+    let mut builder = quantity_target_builder();
+
+    let stats = builder.drop_quantity_nouns(&reference).unwrap();
+
+    let kept: Vec<(String, String)> = builder
+        .entries()
+        .iter()
+        .map(|e| (e.surface.to_string(), e.pos.to_string()))
+        .collect();
+    assert_eq!(
+        kept,
+        vec![
+            ("30℃".to_string(), "名詞,固有名詞,組織,*".to_string()),
+            ("50‰".to_string(), "名詞,固有名詞,一般,*".to_string()),
+            ("50%ORANGE".to_string(), "名詞,固有名詞,一般,*".to_string()),
+            ("50%".to_string(), "名詞,一般,*,*".to_string()),
+        ],
+        "{stats:?}"
+    );
+    // 「名詞,固有名詞,一般」で表層形が数と単位の記号だけの語（50% 0.1℃ 30℃ 50‰）
+    assert_eq!(stats.examined, 4);
+    assert_eq!(stats.dropped, 3);
+    assert_eq!(stats.samples.len(), 3);
+}
+
+/// `hasami repair --drop-quantity-nouns` は削除してメタデータの repairs に操作を残す
+#[test]
+fn test_cli_repair_drop_quantity_nouns() {
+    let dir = std::env::temp_dir();
+    let pid = std::process::id();
+    let input = dir.join(format!("hasami_{pid}_quantity_in.hsd"));
+    let reference = dir.join(format!("hasami_{pid}_quantity_ref.hsd"));
+    let output = dir.join(format!("hasami_{pid}_quantity_out.hsd"));
+    write_hsd(&quantity_target_builder(), &input);
+    write_hsd(&quantity_reference_builder(), &reference);
+
+    let result = std::process::Command::new(env!("CARGO_BIN_EXE_hasami"))
+        .arg("repair")
+        .arg("--dict")
+        .arg(&input)
+        .arg("--output")
+        .arg(&output)
+        .arg("--no-pronunciation-repair")
+        .arg("--drop-quantity-nouns")
+        .arg(&reference)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&result.stderr);
+    assert!(result.status.success(), "hasami repair failed: {stderr}");
+    assert!(
+        stderr.contains("Dropped 3 of 4 number-and-unit"),
+        "{stderr}"
+    );
+
+    let repaired = Dictionary::load(&output).unwrap();
+    assert!(
+        repaired
+            .meta()
+            .get(hasami::hsd::meta::KEY_REPAIRS)
+            .is_some_and(|ops| ops.split(',').any(|op| op == "drop-quantity-nouns")),
+        "{:?}",
+        repaired.meta().get(hasami::hsd::meta::KEY_REPAIRS)
+    );
+    assert_eq!(repaired.entry_count(), 4);
+    for path in [&input, &reference, &output] {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
+// ==========================================================================
 // 配布辞書の受け入れ（noslop からの要望 H7・H8）
 // ==========================================================================
 
-/// 配布辞書を読み込む。`dict/` は Git LFS で管理している
+/// 配布辞書を読み込む。`dict/` は Git LFS で管理している。環境変数 `HASAMI_TEST_DICT_DIR` を
+/// 付けると、そのディレクトリの辞書を使う（`scripts/build-dict.sh --out DIR` で作り直した辞書を試す）
 fn load_distributed_dict(name: &str) -> Analyzer {
-    let path = format!("{}/dict/{name}.hsd", env!("CARGO_MANIFEST_DIR"));
+    let dir = std::env::var("HASAMI_TEST_DICT_DIR")
+        .unwrap_or_else(|_| format!("{}/dict", env!("CARGO_MANIFEST_DIR")));
+    let path = format!("{dir}/{name}.hsd");
     Analyzer::load(&path)
         .unwrap_or_else(|e| panic!("{path}: {e}（Git LFS の辞書を取得したか確認）"))
 }
@@ -2113,6 +2488,64 @@ fn test_distributed_dicts_verb_base_forms() {
                 tokens
                     .iter()
                     .any(|t| t.0 == surface && t.1.starts_with("動詞") && t.2 == base),
+                "{name}: {text}: {tokens:?}"
+            );
+        }
+    }
+}
+
+/// NEologd を含む辞書でも、文や句・句点付きの語・かな書きの表記ゆれ（Issue #1〜#3）が 1 語にならず、
+/// IPAdic 単体と同じ語の切り方になる。数と単位の記号も分かれる
+#[test]
+#[ignore = "配布辞書（dict/*.hsd）を使う。cargo test -- --ignored で実行"]
+fn test_distributed_dicts_split_sentence_like_nouns_like_ipadic() {
+    const INPUTS: [&str; 16] = [
+        "どうでしょう。",
+        "新しい道具を作りました。",
+        "今後ともよろしくお願いします。",
+        "これは個人の感想です。",
+        "一人でできるかな。",
+        "ノイズならスルーする。",
+        "そんなことはしません",
+        "まだ誰もいない",
+        "話の辻褄を合わせる",
+        "「そんな必要はありません」",
+        "私はこの歌が好きだ。",
+        "こんにちは。",
+        "考えたり……。",
+        "転校生が学園にやってきた。",
+        "「それはどうかしら?」",
+        "「今度は自分が回ろう」",
+    ];
+    let surfaces = |analyzer: &mut Analyzer, text: &str| -> Vec<String> {
+        surface_pos_base(analyzer, text)
+            .into_iter()
+            .map(|t| t.0)
+            .collect()
+    };
+    let mut ipadic = load_distributed_dict("ipadic");
+    let expected: Vec<Vec<String>> = INPUTS.iter().map(|t| surfaces(&mut ipadic, t)).collect();
+    for name in ["ipadic-neologd", "ipadic-neologd-sudachi"] {
+        let mut analyzer = load_distributed_dict(name);
+        for (text, want) in INPUTS.iter().zip(&expected) {
+            assert_eq!(&surfaces(&mut analyzer, text), want, "{name}: {text}");
+        }
+        // 文末記号・区切りの記号が名前の一部の語と、内容語が 2 つ以上の文 + 文末記号の作品名は 1 語のまま
+        for word in [
+            "モーニング娘。",
+            "Yahoo!ニュース",
+            "やはり俺の青春ラブコメはまちがっている。",
+        ] {
+            let tokens = surfaces(&mut analyzer, &format!("{word}が好きだ"));
+            assert_eq!(tokens[0], word, "{name}: {tokens:?}");
+        }
+        // 数と単位の記号は分かれ、単位は 名詞,接尾,助数詞 になる
+        for (text, unit) in [("50%増えた", "%"), ("30℃の日", "℃"), ("5㎞走る", "㎞")] {
+            let tokens = analyzer.tokenize(text);
+            assert!(
+                tokens
+                    .iter()
+                    .any(|t| &*t.surface == unit && t.pos.starts_with("名詞,接尾,助数詞")),
                 "{name}: {text}: {tokens:?}"
             );
         }
