@@ -247,7 +247,11 @@ build_sudachi() {
 }
 
 for t in "${TARGETS[@]}"; do
-  "build_$t"
+  case "$t" in
+    ipadic) build_ipadic ;;
+    neologd) build_neologd ;;
+    sudachi) build_sudachi ;;
+  esac
 done
 
 if [ "$KEEP_INTERMEDIATE" = 1 ]; then
