@@ -3,8 +3,9 @@
 //! 文字単位 Double-Array Trie + ラティス + Viterbi による高精度・高速な形態素解析
 //!
 //! 辞書の要らない文分割（[`sentence`]）は feature なしで使える。形態素解析（`Analyzer`・`Dictionary`・
-//! `Token`・品詞の正規化・C FFI）は `analyzer` feature、辞書の構築・修復・書き出し（`DictBuilder`）は
-//! `build` feature（`analyzer` を含む）で入る。既定の `cli` はどちらも含む。
+//! `Token`・品詞の正規化・C FFI）は `analyzer` feature、リリースに添付した配布辞書の取得（`download`）は
+//! `download` feature（`analyzer` を含む）、辞書の構築・修復・書き出し（`DictBuilder`）は `build` feature
+//! （`analyzer` を含む）で入る。既定の `cli` はすべて含む。
 
 #[cfg(feature = "analyzer")]
 pub mod analyzer;
@@ -12,6 +13,8 @@ pub mod analyzer;
 pub mod char_class;
 #[cfg(feature = "analyzer")]
 pub mod dict;
+#[cfg(feature = "download")]
+pub mod download;
 #[cfg(feature = "analyzer")]
 pub mod ffi;
 #[cfg(feature = "analyzer")]
