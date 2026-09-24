@@ -54,6 +54,14 @@
 make setup-hooks
 ```
 
+辞書を作り直すたびに、古い版の実体が `.git/lfs` に溜まる（配布辞書 3 つで 1 版あたり約 450MB）。
+いまのコミットが使う版だけを残すには次を実行する。古い版が要るときは `git lfs fetch <ref>` で取り直せる。
+
+```bash
+make clean-lfs            # 消す実体はリモートにあることを確かめてから消す（DRY_RUN=1 で対象の表示だけ）
+make clean                # cargo clean もあわせて行う
+```
+
 ```bash
 make install
 
