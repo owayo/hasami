@@ -444,7 +444,9 @@ impl DictBuilder {
             if !is_katakana_str(&entry.pronunciation) || !is_katakana_str(&entry.reading) {
                 continue;
             }
-            let best = trusted.entry((&entry.surface, &entry.reading)).or_insert(&entry.pronunciation);
+            let best = trusted
+                .entry((&entry.surface, &entry.reading))
+                .or_insert(&entry.pronunciation);
             if ***best == *entry.reading && entry.pronunciation != entry.reading {
                 *best = &entry.pronunciation;
             }

@@ -830,7 +830,13 @@ fn entry(
 fn test_repair_pronunciation_borrows_long_vowel_form() {
     let mut builder = DictBuilder::new();
     // IPAdic 由来の健全なエントリと、SudachiDict 由来の壊れたエントリが共存する状況
-    builder.add_entry(entry("方法", "名詞,一般,*,*", "方法", "ホウホウ", "ホーホー"));
+    builder.add_entry(entry(
+        "方法",
+        "名詞,一般,*,*",
+        "方法",
+        "ホウホウ",
+        "ホーホー",
+    ));
     builder.add_entry(entry("方法", "名詞,一般,*,*", "方法", "ホウホウ", "方法"));
 
     assert_eq!(builder.repair_pronunciation(), 1);
@@ -857,7 +863,13 @@ fn test_repair_pronunciation_composes_from_parts() {
     // 借用元が無い複合語でも、部品の発音が辞書にあれば組み立てられる
     builder.add_entry(entry("商", "名詞,一般,*,*", "商", "ショウ", "ショー"));
     builder.add_entry(entry("材", "名詞,一般,*,*", "材", "ザイ", "ザイ"));
-    builder.add_entry(entry("商材", "名詞,一般,*,*", "商材", "ショウザイ", "ショウザイ"));
+    builder.add_entry(entry(
+        "商材",
+        "名詞,一般,*,*",
+        "商材",
+        "ショウザイ",
+        "ショウザイ",
+    ));
 
     builder.repair_pronunciation();
 
@@ -919,7 +931,13 @@ fn test_repair_pronunciation_composes_general_proper_noun() {
     let mut builder = DictBuilder::new();
     // NEologd は「高品質」のような普通名詞も「固有名詞,一般」で登録している
     builder.add_entry(entry("高", "名詞,一般,*,*", "高", "コウ", "コー"));
-    builder.add_entry(entry("品質", "名詞,一般,*,*", "品質", "ヒンシツ", "ヒンシツ"));
+    builder.add_entry(entry(
+        "品質",
+        "名詞,一般,*,*",
+        "品質",
+        "ヒンシツ",
+        "ヒンシツ",
+    ));
     builder.add_entry(entry(
         "高品質",
         "名詞,固有名詞,一般,*",
@@ -945,7 +963,13 @@ fn test_repair_pronunciation_recomposes_partially_repaired() {
     // 「キミツジョウホオ」で止まる）。長音化されていない部分が残っていれば
     // 分割して組み立て直す
     builder.add_entry(entry("機密", "名詞,一般,*,*", "機密", "キミツ", "キミツ"));
-    builder.add_entry(entry("情報", "名詞,一般,*,*", "情報", "ジョウホウ", "ジョーホー"));
+    builder.add_entry(entry(
+        "情報",
+        "名詞,一般,*,*",
+        "情報",
+        "ジョウホウ",
+        "ジョーホー",
+    ));
     builder.add_entry(entry(
         "機密情報",
         "名詞,一般,*,*",
@@ -1012,7 +1036,13 @@ fn test_drop_conflicting_ortho_variants() {
     builder.add_entry(entry("高い", "形容詞,自立,*,*", "高い", "タカイ", "タカイ"));
     builder.add_entry(entry("高い", "名詞,一般,*,*", "高位", "コウイ", "コウイ"));
     // 読みが一致する異表記は誤読にならないので残す
-    builder.add_entry(entry("くらい", "助詞,副助詞,*,*", "くらい", "クライ", "クライ"));
+    builder.add_entry(entry(
+        "くらい",
+        "助詞,副助詞,*,*",
+        "くらい",
+        "クライ",
+        "クライ",
+    ));
     builder.add_entry(entry("くらい", "名詞,一般,*,*", "位", "クライ", "クライ"));
     // 衝突する活用語がない名詞はそのまま
     builder.add_entry(entry("高位", "名詞,一般,*,*", "高位", "コウイ", "コウイ"));
@@ -1035,9 +1065,21 @@ fn test_short_alpha_ignores_dict_reading() {
     let mut builder = DictBuilder::new();
     // 単独英字に単位読み・略称読みが登録されていても、綴り読みを優先する
     builder.add_entry(entry("A", "名詞,一般,*,*", "A", "アンペア", "アンペア"));
-    builder.add_entry(entry("cs", "名詞,固有名詞,一般,*", "CS", "クレディスイス", "クレディスイス"));
+    builder.add_entry(entry(
+        "cs",
+        "名詞,固有名詞,一般,*",
+        "CS",
+        "クレディスイス",
+        "クレディスイス",
+    ));
     // 3 文字以上の語は辞書の読みを尊重する
-    builder.add_entry(entry("NASA", "名詞,固有名詞,組織,*", "NASA", "ナサ", "ナサ"));
+    builder.add_entry(entry(
+        "NASA",
+        "名詞,固有名詞,組織,*",
+        "NASA",
+        "ナサ",
+        "ナサ",
+    ));
 
     let mut analyzer = Analyzer::from_dict(builder.build());
 
@@ -1081,7 +1123,13 @@ fn test_drop_numeral_misreadings() {
         "トーゴ",
     ));
     // 1 文字の漢数字は対象外（人名「一(はじめ)」等との共存が必要）
-    builder.add_entry(entry("一", "名詞,固有名詞,人名,名", "一", "ハジメ", "ハジメ"));
+    builder.add_entry(entry(
+        "一",
+        "名詞,固有名詞,人名,名",
+        "一",
+        "ハジメ",
+        "ハジメ",
+    ));
     // 漢数字以外を含む語は対象外
     builder.add_entry(entry(
         "十五夜",
@@ -1104,9 +1152,27 @@ fn test_drop_numeral_misreadings() {
 fn test_keep_numeral_words_that_are_not_proper_nouns() {
     let mut builder = DictBuilder::new();
     // 漢数字で綴る一般語・副詞は数詞でなくても残す
-    builder.add_entry(entry("万一", "副詞,助詞類接続,*,*", "万一", "マンイチ", "マンイチ"));
-    builder.add_entry(entry("二三", "名詞,副詞可能,*,*", "二三", "ニサン", "ニサン"));
-    builder.add_entry(entry("八百万", "名詞,一般,*,*", "八百万", "ヤオヨロズ", "ヤオヨロズ"));
+    builder.add_entry(entry(
+        "万一",
+        "副詞,助詞類接続,*,*",
+        "万一",
+        "マンイチ",
+        "マンイチ",
+    ));
+    builder.add_entry(entry(
+        "二三",
+        "名詞,副詞可能,*,*",
+        "二三",
+        "ニサン",
+        "ニサン",
+    ));
+    builder.add_entry(entry(
+        "八百万",
+        "名詞,一般,*,*",
+        "八百万",
+        "ヤオヨロズ",
+        "ヤオヨロズ",
+    ));
 
     assert_eq!(builder.drop_numeral_misreadings(), 0);
     assert_eq!(builder.entries().len(), 3);
@@ -1119,9 +1185,21 @@ fn test_drop_person_name_conflicting_with_pronoun() {
     builder.add_entry(entry("何", "名詞,代名詞,一般,*", "何", "ナニ", "ナニ"));
     builder.add_entry(entry("何", "名詞,固有名詞,人名,姓", "何", "ガ", "ガ"));
     // 代名詞と衝突しない人名はそのまま
-    builder.add_entry(entry("湊", "名詞,固有名詞,人名,名", "湊", "ミナト", "ミナト"));
+    builder.add_entry(entry(
+        "湊",
+        "名詞,固有名詞,人名,名",
+        "湊",
+        "ミナト",
+        "ミナト",
+    ));
     // 2 文字以上の人名は対象外
-    builder.add_entry(entry("何々", "名詞,固有名詞,人名,姓", "何々", "ガガ", "ガガ"));
+    builder.add_entry(entry(
+        "何々",
+        "名詞,固有名詞,人名,姓",
+        "何々",
+        "ガガ",
+        "ガガ",
+    ));
 
     assert_eq!(builder.drop_conflicting_ortho_variants(), 1);
 
