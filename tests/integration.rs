@@ -1685,3 +1685,387 @@ fn test_add_csv_reports_physical_line_number() {
     assert!(err.contains(":4: too few columns"), "{err}");
     let _ = std::fs::remove_file(&csv);
 }
+
+// ==========================================================================
+// 一般語の固有名詞の降格（repair --demote-common-proper-nouns）
+// ==========================================================================
+
+/// 降格の判定に使う参照辞書（IPAdic 単体の代わり）。語基と接尾辞を持つ。
+/// 降格先の品詞の文脈 ID は、その品詞のエントリが最も多く使う組になる
+/// （名詞,一般 は (10, 10) が 5 語、(13, 13) が 1 語）
+fn demotion_reference_builder() -> DictBuilder {
+    let mut builder = DictBuilder::new();
+    let words: [(&str, u16, i16, &str, &str); 16] = [
+        ("成果", 10, 3000, "名詞,一般,*,*", "セイカ"),
+        ("可視", 10, 3000, "名詞,一般,*,*", "カシ"),
+        ("多角", 10, 3000, "名詞,一般,*,*", "タカク"),
+        ("中央", 10, 3000, "名詞,一般,*,*", "チュウオウ"),
+        ("こだま", 10, 3000, "名詞,一般,*,*", "コダマ"),
+        ("心理", 13, 3000, "名詞,一般,*,*", "シンリ"),
+        ("担当", 11, 3000, "名詞,サ変接続,*,*", "タントウ"),
+        ("安全", 12, 3000, "名詞,形容動詞語幹,*,*", "アンゼン"),
+        ("物", 20, 4000, "名詞,接尾,一般,*", "ブツ"),
+        ("者", 20, 4000, "名詞,接尾,一般,*", "シャ"),
+        ("性", 20, 4000, "名詞,接尾,一般,*", "セイ"),
+        ("線", 20, 4000, "名詞,接尾,一般,*", "セン"),
+        ("学", 20, 4000, "名詞,接尾,一般,*", "ガク"),
+        // 人名の読みは接尾辞の読みに数えない（コストが高いので解析では選ばれない）
+        ("学", 30, 9000, "名詞,固有名詞,人名,名", "マナブ"),
+        ("化", 21, 4000, "名詞,接尾,サ変接続,*", "カ"),
+        ("的", 22, 4000, "名詞,接尾,形容動詞語幹,*", "テキ"),
+    ];
+    for (surface, id, cost, pos, reading) in words {
+        builder.add_entry(DictEntry {
+            left_id: id,
+            right_id: id,
+            cost,
+            ..entry(surface, pos, surface, reading, reading)
+        });
+    }
+    builder
+}
+
+/// 降格の対象になりうる「名詞,固有名詞,一般」の語と、対象外の品詞の語を持つビルダー
+fn demotion_target_builder() -> DictBuilder {
+    let mut builder = DictBuilder::new();
+    let words = [
+        ("成果物", "セイカブツ"),
+        ("可視化", "カシカ"),
+        ("多角的", "タカクテキ"),
+        ("担当者", "タントウシャ"),
+        ("心理的安全性", "シンリテキアンゼンセイ"),
+        // 「〜線」は路線名を作る接尾辞なので許可リストに無い
+        ("中央線", "チュウオウセン"),
+        // 接尾辞を字どおりに読まない（人名）
+        ("こだま学", "コダママナブ"),
+        // 途中の「的」の後に語基が無い
+        ("安全的性", "アンゼンテキセイ"),
+        // 参照辞書で未知語を含む
+        ("ABC化", "エービーシーカ"),
+    ];
+    for (surface, reading) in words {
+        builder.add_entry(DictEntry {
+            left_id: 40,
+            right_id: 40,
+            cost: 2500,
+            ..entry(surface, "名詞,固有名詞,一般,*", surface, reading, reading)
+        });
+    }
+    // 人名・地域・組織は対象外
+    builder.add_entry(DictEntry {
+        left_id: 41,
+        right_id: 41,
+        ..entry(
+            "成果物",
+            "名詞,固有名詞,人名,一般",
+            "成果物",
+            "セイカブツ",
+            "セイカブツ",
+        )
+    });
+    builder
+}
+
+/// 表層形 → (品詞, 左文脈 ID, 右文脈 ID, コスト, 読み)
+fn entries_by_surface(builder: &DictBuilder) -> Vec<(String, String, u16, u16, i16, String)> {
+    builder
+        .entries()
+        .iter()
+        .map(|e| {
+            (
+                e.surface.to_string(),
+                e.pos.to_string(),
+                e.left_id,
+                e.right_id,
+                e.cost,
+                e.reading.to_string(),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn test_demote_common_proper_nouns_by_reference_analysis() {
+    let reference = std::sync::Arc::new(demotion_reference_builder().build().unwrap());
+    let mut builder = demotion_target_builder();
+
+    let stats = builder.demote_common_proper_nouns(&reference).unwrap();
+
+    let entries = entries_by_surface(&builder);
+    let find = |surface: &str, pos_prefix: &str| {
+        entries
+            .iter()
+            .find(|e| e.0 == surface && e.1.starts_with(pos_prefix))
+            .unwrap_or_else(|| panic!("{surface} [{pos_prefix}] not found: {entries:?}"))
+            .clone()
+    };
+    // 語末の接尾辞で降格先が決まり、文脈 ID はその品詞で最も多い組になる。コストと読みは変えない
+    let expected = [
+        ("成果物", "名詞,一般,*,*", 10, "セイカブツ"),
+        ("担当者", "名詞,一般,*,*", 10, "タントウシャ"),
+        (
+            "心理的安全性",
+            "名詞,一般,*,*",
+            10,
+            "シンリテキアンゼンセイ",
+        ),
+        ("可視化", "名詞,サ変接続,*,*", 11, "カシカ"),
+        ("多角的", "名詞,形容動詞語幹,*,*", 12, "タカクテキ"),
+    ];
+    for (surface, pos, id, reading) in expected {
+        assert_eq!(
+            find(surface, pos),
+            (
+                surface.to_string(),
+                pos.to_string(),
+                id,
+                id,
+                2500,
+                reading.to_string()
+            )
+        );
+    }
+    for surface in ["中央線", "こだま学", "安全的性", "ABC化"] {
+        assert_eq!(find(surface, "名詞,固有名詞,一般").2, 40, "{surface}");
+    }
+    assert_eq!(find("成果物", "名詞,固有名詞,人名").2, 41);
+
+    assert_eq!(stats.examined, 9);
+    assert_eq!(stats.demoted, 5);
+    let by_pos: Vec<(&str, u16, u16, usize)> = stats
+        .by_pos
+        .iter()
+        .map(|p| (p.pos.as_str(), p.left_id, p.right_id, p.entries))
+        .collect();
+    assert_eq!(
+        by_pos,
+        vec![
+            ("名詞,一般,*,*", 10, 10, 3),
+            ("名詞,サ変接続,*,*", 11, 11, 1),
+            ("名詞,形容動詞語幹,*,*", 12, 12, 1),
+        ]
+    );
+    assert_eq!(
+        stats.by_suffix,
+        vec![
+            ("化".to_string(), 1),
+            ("性".to_string(), 1),
+            ("物".to_string(), 1),
+            ("的".to_string(), 1),
+            ("者".to_string(), 1),
+        ]
+    );
+    assert_eq!(stats.samples.len(), 5);
+}
+
+/// 参照辞書の文脈 ID を持ち込むので、接続行列が違う参照辞書はエラーにする
+#[test]
+fn test_demote_common_proper_nouns_requires_same_matrix() {
+    let matrix = hasami::dict::ConnectionMatrix::zeros(50, 50);
+    let mut reference = demotion_reference_builder();
+    reference.set_matrix(matrix.clone());
+    let reference = std::sync::Arc::new(reference.build().unwrap());
+
+    let mut same = demotion_target_builder();
+    same.set_matrix(matrix.clone());
+    assert_eq!(
+        same.demote_common_proper_nouns(&reference).unwrap().demoted,
+        5
+    );
+
+    let mut other = matrix;
+    other.costs[0] = 1;
+    let mut different = demotion_target_builder();
+    different.set_matrix(other);
+    let err = different
+        .demote_common_proper_nouns(&reference)
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("different connection matrix"), "{err}");
+    // エラーのときは何も変えない
+    assert!(
+        different
+            .entries()
+            .iter()
+            .all(|e| e.pos.starts_with("名詞,固有名詞"))
+    );
+}
+
+/// 参照辞書に降格先の品詞のエントリが無ければ、文脈 ID を決められないのでエラーにする
+#[test]
+fn test_demote_common_proper_nouns_requires_target_pos_in_reference() {
+    let mut reference = DictBuilder::new();
+    reference.add_entry(entry("成果", "名詞,一般,*,*", "成果", "セイカ", "セイカ"));
+    reference.add_entry(entry("物", "名詞,接尾,一般,*", "物", "ブツ", "ブツ"));
+    let reference = std::sync::Arc::new(reference.build().unwrap());
+    let mut builder = demotion_target_builder();
+
+    let err = builder
+        .demote_common_proper_nouns(&reference)
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("名詞,サ変接続"), "{err}");
+}
+
+/// `hasami repair --demote-common-proper-nouns` は降格してメタデータの repairs に操作を残す
+#[test]
+fn test_cli_repair_demote_common_proper_nouns() {
+    let dir = std::env::temp_dir();
+    let pid = std::process::id();
+    let input = dir.join(format!("hasami_{pid}_demote_in.hsd"));
+    let reference = dir.join(format!("hasami_{pid}_demote_ref.hsd"));
+    let output = dir.join(format!("hasami_{pid}_demote_out.hsd"));
+    write_hsd(&demotion_target_builder(), &input);
+    write_hsd(&demotion_reference_builder(), &reference);
+
+    let result = std::process::Command::new(env!("CARGO_BIN_EXE_hasami"))
+        .arg("repair")
+        .arg("--dict")
+        .arg(&input)
+        .arg("--output")
+        .arg(&output)
+        .arg("--no-pronunciation-repair")
+        .arg("--demote-common-proper-nouns")
+        .arg(&reference)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&result.stderr);
+    assert!(result.status.success(), "hasami repair failed: {stderr}");
+    assert!(stderr.contains("Demoted 5 of 9"), "{stderr}");
+
+    let repaired = Dictionary::load(&output).unwrap();
+    assert!(
+        repaired
+            .meta()
+            .get(hasami::hsd::meta::KEY_REPAIRS)
+            .is_some_and(|ops| ops.split(',').any(|op| op == "demote-common-proper-nouns")),
+        "{:?}",
+        repaired.meta().get(hasami::hsd::meta::KEY_REPAIRS)
+    );
+    let mut pos_of = Vec::new();
+    repaired
+        .for_each_entry(|e| {
+            pos_of.push((e.surface.to_string(), e.pos.to_string()));
+            Ok(())
+        })
+        .unwrap();
+    assert!(
+        pos_of.contains(&("可視化".into(), "名詞,サ変接続,*,*".into())),
+        "{pos_of:?}"
+    );
+    assert!(
+        pos_of.contains(&("中央線".into(), "名詞,固有名詞,一般,*".into())),
+        "{pos_of:?}"
+    );
+    for path in [&input, &reference, &output] {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
+// ==========================================================================
+// 配布辞書の受け入れ（noslop からの要望 H7・H8）
+// ==========================================================================
+
+/// 配布辞書を読み込む。`dict/` は Git LFS で管理している
+fn load_distributed_dict(name: &str) -> Analyzer {
+    let path = format!("{}/dict/{name}.hsd", env!("CARGO_MANIFEST_DIR"));
+    Analyzer::load(&path)
+        .unwrap_or_else(|e| panic!("{path}: {e}（Git LFS の辞書を取得したか確認）"))
+}
+
+/// (表層形, 品詞の先頭 2 要素, 原形) の列
+fn surface_pos_base(analyzer: &mut Analyzer, text: &str) -> Vec<(String, String, String)> {
+    analyzer
+        .tokenize(text)
+        .iter()
+        .map(|t| {
+            let pos: Vec<&str> = t.pos.split(',').take(2).collect();
+            (
+                t.surface.to_string(),
+                pos.join(","),
+                t.base_form.to_string(),
+            )
+        })
+        .collect()
+}
+
+#[test]
+#[ignore = "配布辞書（dict/*.hsd）を使う。cargo test -- --ignored で実行"]
+fn test_distributed_dicts_common_words_are_not_proper_nouns() {
+    for name in ["ipadic-neologd", "ipadic-neologd-sudachi"] {
+        let mut analyzer = load_distributed_dict(name);
+        // 1 語で、固有名詞でない品詞になる
+        let words = [
+            ("成果物", "名詞,一般"),
+            ("担当者", "名詞,一般"),
+            ("安全性", "名詞,一般"),
+            ("多角的", "名詞,形容動詞語幹"),
+            ("包括的", "名詞,形容動詞語幹"),
+            ("心理的", "名詞,形容動詞語幹"),
+            ("可視化", "名詞,サ変接続"),
+            ("言語化", "名詞,サ変接続"),
+            ("ステークホルダー", "名詞,一般"),
+            ("エンゲージメント", "名詞,一般"),
+            ("ユースケース", "名詞,一般"),
+            ("爆速", "名詞,形容動詞語幹"),
+            ("深掘り", "名詞,サ変接続"),
+            ("腹落ち", "名詞,サ変接続"),
+        ];
+        for (word, pos) in words {
+            let tokens = surface_pos_base(&mut analyzer, &format!("{word}を"));
+            assert_eq!(
+                tokens[0],
+                (word.to_string(), pos.to_string(), word.to_string()),
+                "{name}: {tokens:?}"
+            );
+        }
+        // 表記ゆれの「深堀り」は原形を「深掘り」にそろえる
+        let tokens = surface_pos_base(&mut analyzer, "深堀りしていきます");
+        assert_eq!(
+            tokens[0],
+            (
+                "深堀り".to_string(),
+                "名詞,サ変接続".to_string(),
+                "深掘り".to_string()
+            ),
+            "{name}: {tokens:?}"
+        );
+        // 「心理的安全性」は 2 語とも一般名詞
+        let tokens = surface_pos_base(&mut analyzer, "心理的安全性を高める");
+        assert!(
+            tokens[..2].iter().all(|t| !t.1.contains("固有名詞")),
+            "{name}: {tokens:?}"
+        );
+        // 否定の「ない」を 1 語の形容詞「できない」に埋もれさせない
+        let surfaces: Vec<String> = surface_pos_base(&mut analyzer, "できないわけではない")
+            .into_iter()
+            .map(|t| t.0)
+            .collect();
+        assert_eq!(
+            surfaces,
+            vec!["でき", "ない", "わけ", "で", "は", "ない"],
+            "{name}"
+        );
+    }
+}
+
+#[test]
+#[ignore = "配布辞書（dict/*.hsd）を使う。cargo test -- --ignored で実行"]
+fn test_distributed_dicts_verb_base_forms() {
+    for name in ["ipadic", "ipadic-neologd", "ipadic-neologd-sudachi"] {
+        let mut analyzer = load_distributed_dict(name);
+        for (text, surface, base) in [
+            ("前提が誤っていた", "誤っ", "誤る"),
+            ("ことを示している", "示し", "示す"),
+            ("設定を読み込み、", "読み込み", "読み込む"),
+        ] {
+            let tokens = surface_pos_base(&mut analyzer, text);
+            assert!(
+                tokens
+                    .iter()
+                    .any(|t| t.0 == surface && t.1.starts_with("動詞") && t.2 == base),
+                "{name}: {text}: {tokens:?}"
+            );
+        }
+    }
+}
