@@ -23,7 +23,8 @@ hasami/
 │   ├── main.rs         # CLI (build, merge, repair, export, tokenize, bench, info)
 │   ├── dict/
 │   │   ├── mod.rs      # DictEntry, UnkEntry, ConnectionMatrix（解析側でも使う型）
-│   │   └── builder.rs  # DictBuilder（CSV 読み込み・repair・書き出し）。`build` feature
+│   │   ├── builder.rs  # DictBuilder（CSV 読み込み・repair・書き出し）。`build` feature
+│   │   └── sentence_like.rs  # repair --drop-sentence-like-nouns の判定（IPAdic の語の列が文や句になるか）
 │   ├── hsd/            # 辞書形式 v4 (.hsd)
 │   │   ├── mod.rs      # DictError
 │   │   ├── container.rs  # 64B ヘッダとセクション表（id で引く、64B 境界）
@@ -132,7 +133,7 @@ hasami/
 - `hasami tokenize` - 形態素解析。標準入力の行は `-j`（既定は CPU の数）で並列に解析し、入力の順に出す
 - `hasami bench` - ベンチマーク（`--text` の繰り返し、または `--file` でファイルの全行を 1 回として測る）
 - `hasami info` - 辞書情報表示（メタデータ・セクションのサイズ。`--verify` で全件検証）
-- `hasami repair` - 誤読エントリの修復・除去（範囲外の文脈 ID、壊れた発音、表記ゆれ、漢数字の人名、削除リスト、一般語の固有名詞の降格 `--demote-common-proper-nouns <IPAdic.hsd>`、追加マージ）
+- `hasami repair` - 誤読エントリの修復・除去（範囲外の文脈 ID、壊れた発音、表記ゆれ、漢数字の人名、削除リスト、文や句を 1 語にした名詞の削除 `--drop-sentence-like-nouns <IPAdic.hsd>`、数と単位の組の固有名詞の削除 `--drop-quantity-nouns <IPAdic.hsd>`、一般語の固有名詞の降格 `--demote-common-proper-nouns <IPAdic.hsd>`、追加マージ）
 - `hasami export-sentence-exceptions` - 文分割の例外表（文末記号を含む語）を辞書から抽出する（`src/sentence/builtin_exceptions.txt` の生成）
 - `hasami export` - 辞書のエントリを MeCab 形式 CSV に書き出す（活用型・活用形も出る）
 - build / merge / repair 共通: `--meta key=value`（メタデータ）、`--prune-dominated`（支配エントリを除いた最終辞書）
@@ -179,6 +180,10 @@ target/release/hasami bench --dict dict/ipadic.hsd --file corpus.txt  # 1 行 1 
 | IPAdic / NEologd / SudachiDict | 中国・朝鮮系の姓・名（1 文字姓の音読み、朝鮮語・普通話の字音で読む名、カタカナの外国人名） | 「金がない」→「キムガナイ」（朝鮮の姓の「金(キム)」）。「何なのか」→「ガナノカ」 | `dict/user-remove/foreign-names.csv` を `repair --remove`。生成は `scripts/find_foreign_names.py`（README の「外国人名の除去」） |
 | NEologd | 一般語を「名詞,固有名詞,一般」で登録している（成果物・多角的・包括的・可視化・言語化・心理的・安全性・担当者 など） | 固有名詞を具体性の手掛かりに数える処理（noslop）で抽象的な文が具体的に見える。品詞が固有名詞なので接続も固有名詞のもの（「言語化と」が「言語 / 化 / と」に割れる） | `repair --demote-common-proper-nouns <IPAdic の中間辞書>`。IPAdic で「一般名詞 + 一般名詞を作る接尾辞」に分かれる語を `名詞,一般`（〜化はサ変接続、〜的は形容動詞語幹）にし、文脈 ID も付け替える（README の「一般語の固有名詞の降格」） |
 | NEologd | 規則で拾えない一般語が固有名詞・人名になっている（ステークホルダー、原形が「ANGAGEMENT」「Youth case」の人名もあるエンゲージメント・ユースケース、爆速） | 同上 | `dict/user-remove/common-words-as-proper-nouns.csv` で固有名詞のエントリを落とし、`dict/user/common-word-fixes.csv` で一般名詞を足す |
+| NEologd `mecab-user-dict-seed` | 曲名・作品名・キャッチフレーズとして、文や句そのもの（どうでしょう、作りました、個人の感想です、辻褄を合わせる、一緒に、なのか（人名））や句点付きの語（好きだ。、こんにちは。、…。（人名、読みはサイレンス））を固有名詞 1 語で登録している | 文末の表現が固有名詞 1 語になり、文末の「。」を取り込む。否定・意志の助動詞や終助詞が消え、文末の型・否定の判定が誤る（Issue #1・#2） | `repair --drop-sentence-like-nouns <IPAdic の中間辞書>`。IPAdic で文法に合う文や句（述語・助詞で終わる並び、機能語だけの並び、感動詞、記号 + 文末記号）に分かれるエントリを落とす（README の「文や句の名詞の削除」）。文末記号で終わる文は内容語 1 つ以下だけを落とし、長い作品名（やはり俺の青春ラブコメはまちがっている。）は文分割の例外表のために残す。名詞で終わる決まり文句（個人の感想）は `dict/user-remove/common-words-as-proper-nouns.csv` |
+| NEologd `*-ortho-variant-dict-seed` | 漢字語をかなで書いた表記ゆれを機械的に作り、機能語・活用形と同じ形になる（ありません=有馬線、しません=志摩線、回ろう=回廊、いって=一手、しながら=品柄、および=お呼び、では=出端、きっと=キット） | 「ありません」が固有名詞、「および」「では」が名詞になり、活用形と助動詞の並びが崩れる（Issue #1・#3） | 同上（表記ゆれは名詞を含まない並びと、1 語の副詞・接続詞・連体詞・用言に限る）。削除した語の位置で助詞に勝つようになった表記ゆれ（とはい=徒輩、かじゃ=冠者、にそう=尼僧）は `dict/user-remove/misreading-entries.csv` |
+| NEologd `mecab-user-dict-seed` | 数と単位の記号だけの語（50%、0.1℃、30℃（原形「30度」、読み「サンジュウドシー」））を「名詞,固有名詞,一般」で登録している（2,549 語） | 単位が数から分かれず、単位を 名詞,接尾,助数詞 にする処理（Issue #7）が効かない | `repair --drop-quantity-nouns <IPAdic の中間辞書>`。人名・組織（100%ORANGE、4℃）は残す（README の「数と単位の組の削除」） |
+| `dict/user/vocab-from-training.csv`（音声合成の学習語彙） | 活用の途中で切れた動詞（やって、出さ、合わ、頑張ろう、守れない など 29 語）を文脈 ID 619（一段動詞の基本形）・コスト -5000 で入れていた。「どうか」も -5000 | 「やってきた」が やって/きた(名詞)、「どうかしら」が どうか/しら(名詞)（IPAdic の名詞「きた」「しら」と組む。Issue #3）。「出さ/ない」の「ない」が形容詞になり、意志の「う」・否定の「ない」が 1 語に埋もれる | 活用の途中の動詞を除き、「どうか」のコストを 4500 にした（「どうかお願いします」は どうか のまま）。IPAdic の 助詞,格助詞,連語「という」に勝っていた接続詞「という」（原形「というより」）も除いた |
 | IPAdic / NEologd | 「深掘り」「深堀り」「腹落ち」が 1 語にならない | 「深(形容詞) / 掘り(動詞)」「深堀(人名) / り」「腹 / 落ち(接尾)」 | `dict/user/common-word-fixes.csv`（名詞,サ変接続。「深堀り」の原形は「深掘り」） |
 | NEologd `neologd-adjective-std-dict-seed` | 形容詞・イ段の 143 語で、ガル接続のエントリの表層形が基本形のまま（「うそ寂しい」がガル接続） | 原形は正しい。このエントリが選ばれると活用形がガル接続になる（「くどくどしい説明」の「くどくどしい」） | 対処なし（原形の修復は不要。活用語で「活用形が基本形でも `*` でもなく原形 = 表層形」の 173 件は、この 143 件と IPAdic の「乞う(連用タ接続)」「あり(ラ変連用形)」など原形と同形の活用形だけ） |
 | IPAdic | char.def が SPACE に `0x00D0`（Ð）を入れている（復帰 `0x000D` の書き間違い） | 空白は読み飛ばすので「Ð」が解析結果から消える | `scripts/prepare_ipadic.py` が `0x000D` に直す |

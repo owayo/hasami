@@ -365,7 +365,8 @@ fn symbol_by_surface(surface: &str) -> CoarsePos {
 /// カタカナの組文字（U+3300..U+3357）のうち建物・ギリシャ文字の名前でないものと、ラテン文字の組文字の単位
 /// （午前・午後・株式会社・対数など単位でない字と、読みの分かれる ㏏ ㏿ ㍲ を除く）。字の集合は
 /// `prepare_ipadic.py` の `UNIT_SYMBOLS`・`KATAKANA_SQUARES`・`LATIN_UNIT_SQUARES` と同じ（全角の `％` は IPAdic にもとからある）。
-fn is_unit_symbol(c: char) -> bool {
+/// 辞書の修復（`hasami repair --drop-quantity-nouns`）も、数と単位の記号だけの表層形を見分けるのに使う。
+pub(crate) fn is_unit_symbol(c: char) -> bool {
     match c {
         '%' | '％' | '‰' | '℃' | '℉' | '°' => true,
         '\u{3300}'..='\u{3357}' => !matches!(
