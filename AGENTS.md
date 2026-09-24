@@ -7,7 +7,9 @@ Rust製の日本語形態素解析エンジン。外部エンジン（MeCab等�
 - **言語**: Rust (2024 edition, MSRV 1.85)
 - **辞書**: mmap-native バイナリ形式 (.hsd v4) + bytemuck Pod 構造体。ロード時はヘッダと小さな表だけ検査
 - **Trie**: 文字単位 Double-Array Trie（文字を出現頻度順に符号化、単独の末尾は TAIL に圧縮、ゼロコピー mmap 参照）
-- **解析アルゴリズム**: ラティス構築 + Viterbi（コスト最小化、文分割最適化、転置した接続行列）
+- **解析アルゴリズム**: ラティス構築 + Viterbi（コスト最小化、文分割最適化、転置した接続行列）。
+  文字ごとの前計算（trie の符号・文字種・同じ文字種の長さ）のあと、構築と Viterbi を 1 回の走査で行う
+  （ノードを作るときに最良の前ノードを決め、終了位置ごとの列に入れる）。経緯と数値は `docs/performance.md`
 - **文字列管理**: 素性レコード（品詞・活用型・活用形の番号と読み・発音・原形）を重複排除して格納。
   読み・発音のカタカナは 1 字 1 バイトに詰める。最良パスのトークンを作るときだけ復号する
 - **Python バインディング**: PyO3 + maturin
@@ -33,7 +35,7 @@ hasami/
 │   │   ├── writer.rs   # DictBuilder の中身 → セクション（一時ファイル + rename で書き出し）
 │   │   ├── reader.rs   # Dictionary（mmap / 所有バッファ）、ロード時検査、verify、export 用の列挙
 │   │   └── tests.rs    # 往復・再現性・支配エントリの除去・壊れたファイルの拒否
-│   ├── char_class.rs   # 文字分類（未知語処理）
+│   ├── char_class.rs   # 文字分類（未知語処理）。辞書は BMP の文字種表を持ち、解析では表を引く
 │   ├── sentence/       # 辞書不要の文分割
 │   │   ├── mod.rs      # 規則 1〜9、Splitter（split / split_with_breaks / chunk_ends）、判定関数
 │   │   ├── exceptions.rs  # 例外表の照合（左の境界、続きの語・文頭の語、字幅の畳み込み）と抽出規則
@@ -42,7 +44,7 @@ hasami/
 │   │   ├── builtin_exceptions.txt     # 組み込みの例外表（hasami export-sentence-exceptions が生成）
 │   │   └── builtin_exceptions.NOTICE  # 例外表を含むものを配布するときに添える表示
 │   ├── pos.rs          # 品詞の正規化（CoarsePos、IPAdic 系・UniDic 系）、否定の判定、モーラ数
-│   ├── lattice.rs      # ラティス構築 + Viterbi、Token
+│   ├── lattice.rs      # ラティス構築 + Viterbi、Token、トークンの組み立て（既知語キャッシュ、品詞などの Arc は解析器ごと）
 │   ├── analyzer.rs     # 高レベルAPI（Analyzer: Arc<Dictionary> + ワークスペース）
 │   └── ffi.rs          # C ABI インターフェース
 ├── dict/               # ビルド済み辞書（Git LFS管理）
@@ -85,6 +87,8 @@ hasami/
 - `Analyzer::try_tokenize(text)` - 形態素解析（不正な参照は `DictError::Corrupt`。FFI・Python はこちら）
 - `Analyzer::load_default()` - `HASAMI_DICT` → `$XDG_DATA_HOME/hasami/*.hsd`（推奨順）の順に辞書を探す。無ければ `DictError::NotFound`
 - `Analyzer::tokenize_sentences(text, &SplitOptions)` - 文ごとの範囲とトークン列
+- `LatticeWorkspace::tokenize_into(text, &dict, offset, &mut out)` - 前分割なしで 1 チャンクを解析し、位置をずらして `out` に足す
+- `analyzer::{format_mecab, format_wakachi}` / `{push_mecab, push_wakachi}` - 出力の書式化（push は既存の String に足す）
 - `hasami::sentence::{split, Splitter}` - 辞書不要の文分割。解析の前分割も `Splitter::chunk_ends`（例外語の内側で切らない）
 - `Splitter::split_with_breaks(text, &breaks)` - 改行とみなすバイト位置を別に渡す分割（括弧の外側で区切る）
 - `sentence::{is_sentence_ender, ascii_run_is_ender, closing_bracket, is_closing_bracket}` - 分割と同じ基準の判定関数
@@ -115,8 +119,8 @@ hasami/
 ## CLI コマンド
 - `hasami build` - 辞書構築
 - `hasami merge` - 既存辞書にCSVを追加マージ
-- `hasami tokenize` - 形態素解析
-- `hasami bench` - ベンチマーク
+- `hasami tokenize` - 形態素解析。標準入力の行は `-j`（既定は CPU の数）で並列に解析し、入力の順に出す
+- `hasami bench` - ベンチマーク（`--text` の繰り返し、または `--file` でファイルの全行を 1 回として測る）
 - `hasami info` - 辞書情報表示（メタデータ・セクションのサイズ。`--verify` で全件検証）
 - `hasami repair` - 誤読エントリの修復・除去（範囲外の文脈 ID、壊れた発音、表記ゆれ、漢数字の人名、削除リスト、一般語の固有名詞の降格 `--demote-common-proper-nouns <IPAdic.hsd>`、追加マージ）
 - `hasami export-sentence-exceptions` - 文分割の例外表（文末記号を含む語）を辞書から抽出する（`src/sentence/builtin_exceptions.txt` の生成）
@@ -137,7 +141,12 @@ make dict-clean           # ダウンロードした辞書ソースを削除（b
                           # repair 前の辞書が要るときは scripts/build-dict.sh --keep-intermediate）
 make clean-lfs            # 手元の LFS の実体を、いまのコミットが使うものだけにする（scripts/clean-lfs.sh。
                           # 消すものはリモートにあることを確かめる。make clean も cargo clean の後に呼ぶ）
+target/release/hasami bench --dict dict/ipadic.hsd --file corpus.txt  # 1 行 1 文のファイルの全行を解析する時間
 ```
+
+解析の処理を変えたら、変更前後で全トークンの全フィールドが一致するか（同点の扱いを含む）を大きなコーパスで確かめ、
+速度は変更前後を交互に走らせて比べる（負荷のあるマシンでは E コアに回されて値が倍近く揺れる）。
+手順と過去の数値は `docs/performance.md`。
 
 ## 辞書ソースの既知の欠陥
 

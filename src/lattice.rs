@@ -487,6 +487,12 @@ struct ChunkChars {
 
 impl ChunkChars {
     fn fill(&mut self, input: &str, dict: &Dictionary, trie: &Trie<'_>) {
+        // 長いチャンクのあとも大きな確保を持ち続けない（文字数は入力のバイト数以下）
+        let len = input.len();
+        shrink_retained(&mut self.offsets, len + 1);
+        shrink_retained(&mut self.codes, len);
+        shrink_retained(&mut self.types, len);
+        shrink_retained(&mut self.runs, len);
         self.offsets.clear();
         self.codes.clear();
         self.types.clear();
@@ -526,6 +532,18 @@ struct Lattice {
 /// チャンクが短くなっても容量ごと残しておく、終了位置ごとの列の数。これより長いチャンクの列は
 /// 次のチャンクで捨てる（まれな長い入力のあとに大きな確保を持ち続けない）
 const ENDS_RETAINED: usize = 1024;
+
+/// 文字ごと・パスの作業用の配列で、次のチャンクに要らなければ手放す容量の下限（要素数）
+const BUFFER_RETAINED: usize = 1 << 16;
+
+/// `v` を空にし、`needed` 要素と [`BUFFER_RETAINED`] の大きい方を超える容量を手放す
+fn shrink_retained<T>(v: &mut Vec<T>, needed: usize) {
+    v.clear();
+    let keep = needed.max(BUFFER_RETAINED);
+    if v.capacity() > keep {
+        v.shrink_to(keep);
+    }
+}
 
 /// トークンを作る（最良パスのノードから `Token` を組み立てる）
 ///
@@ -604,7 +622,6 @@ impl TokenBuilder {
     }
 
     /// 既知語のトークン（表層形は入力の部分文字列から作る）。[`TokenBuilder::prepare`] の後に呼ぶ
-    #[allow(clippy::too_many_arguments)]
     fn known(
         &mut self,
         dict: &Dictionary,
@@ -719,17 +736,19 @@ impl Lattice {
     ///
     /// 列の確保はチャンクをまたいで使い回す。空にするのは直前のチャンクで使った列だけ
     fn reset(&mut self, len: usize) {
-        for v in &mut self.ends[..self.used] {
+        let positions = len + 1;
+        // 残す数を超える列は先に捨てる（長いチャンクの直後に、捨てる列まで空にして回らない）
+        self.ends.truncate(positions.max(ENDS_RETAINED));
+        let used = self.used.min(self.ends.len());
+        for v in &mut self.ends[..used] {
             v.clear();
         }
-        let positions = len + 1;
         if self.ends.len() < positions {
             self.ends.resize_with(positions, Vec::new);
-        } else {
-            self.ends.truncate(positions.max(ENDS_RETAINED));
         }
         self.used = positions;
         self.ends[0].push(Node::BOS);
+        shrink_retained(&mut self.path, 0);
     }
 }
 

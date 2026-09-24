@@ -28,7 +28,7 @@
 
 ## 特徴
 
-- **高速**: MeCab比 **2.8倍** の解析速度（374,000+ sentences/sec）
+- **高速**: ニュース記事 13.3 万行（24.3MB）を 1 スレッドで約 1.1 秒で解析（MeCab の約 3 倍）。`hasami tokenize` は標準入力の行を CPU の数だけ並列に解析する
 - **高精度**: ラティス構築 + Viterbiコスト最小化による最適分割
 - **ゼロ依存**: MeCab/Sudachi等の外部エンジンに非依存
 - **多言語対応**: Rust / Python / C FFI から利用可能
@@ -337,7 +337,13 @@ echo "形態素解析のテスト" | hasami tokenize --dict dict/ipadic-neologd.
 
 # --dict を省くと、環境変数 HASAMI_DICT → ~/.local/share/hasami/*.hsd の順に辞書を探す
 HASAMI_DICT=dict/ipadic-neologd-sudachi.hsd hasami tokenize "形態素解析のテスト"
+
+# 大量の行は並列に解析する（-j の既定は CPU の数。出力の順序は入力どおり。-j 1 で 1 スレッド）
+hasami tokenize --dict dict/ipadic-neologd.hsd -j 4 < corpus.txt > corpus.mecab
 ```
+
+標準入力は行ごとに解析する（前後の空白を除き、空行は飛ばす）。出力はまとめて書き出すが、次の入力を待つ前には
+それまでの結果を書き出すので、1 行ずつ送って結果を読む使い方もできる。
 
 ### Rust API
 
@@ -658,26 +664,35 @@ hasami_free(analyzer);
 ## ベンチマーク
 
 ```bash
+# 同じ文を繰り返す
 hasami bench --dict dict/ipadic-neologd.hsd --text "東京都に住んでいる人々が増えている。" --iterations 100000
+
+# 1 行 1 文のファイルの全行を解析する時間（ファイル全体を 3 回解析して最速の回）
+hasami bench --dict dict/ipadic-neologd.hsd --file corpus.txt
 ```
 
-### 解析速度
+livedoor ニュースコーパスの本文 132,876 行（24.3MB）で測った値。Apple M2（P コア 4 + E コア 4）。
 
-| エンジン | sentences/sec | MeCab比 |
-|----------|--------------|---------|
-| MeCab (fugashi) | ~135,000 | 1.00x |
-| Sudachi | ~80,600 | 0.60x |
-| **hasami** | **~374,000** | **2.77x** |
+### 解析速度（ライブラリ、1 スレッド）
 
-### 辞書ロード速度
+`Analyzer::try_tokenize` を行ごとに呼んで全行を解析する時間（`hasami bench --file` と同じ。出力の書式化なし）。
 
-| エンジン | 平均 | 最速 |
-|----------|------|------|
-| MeCab (fugashi) | 3.1 ms | 1.9 ms |
-| **hasami** (mmap) | 18.1 ms | 11.4 ms |
-| Sudachi | 25.8 ms | 11.5 ms |
+| 辞書 | 時間 | 速度 |
+|------|-----:|-----:|
+| ipadic | 1.10s | 22 MB/s |
+| ipadic-neologd | 1.36s | 18 MB/s |
+| ipadic-neologd-sudachi | 1.39s | 17 MB/s |
 
-*Apple Silicon (M4)、IPAdic辞書使用、10文×3000イテレーションでの計測*
+### CLI（標準入力 → MeCab 形式、ipadic）
+
+| | 時間 |
+|---|---:|
+| MeCab 0.996（`mecab -b 1000000`） | 3.17s |
+| hasami（`-j 1`） | 1.25s |
+| hasami（既定。CPU の数だけ並列） | 0.54s |
+
+辞書のロードは 3 辞書とも 1ms 未満（mmap。ロード時はヘッダと小さな表だけを検査する）。
+計測の方法と、速くしたときに試したこと・見送ったことは [docs/performance.md](docs/performance.md)。
 
 ## 開発
 
