@@ -136,18 +136,22 @@ REMOVE_ARGS=()
 for f in dict/user-remove/*.csv; do
   REMOVE_ARGS+=(--remove "$f")
 done
-# NEologd・SudachiDict を含む辞書に掛ける repair 一式。dict/user の追加語は削除の後に足す
+# NEologd・SudachiDict を含む辞書に掛ける repair 一式。dict/user の追加語は削除の後に足す。
+# NEologd が固有名詞にした一般語 (成果物・可視化・多角的 等) の降格は、IPAdic 単体の中間辞書で
+# 表層形を解析して決める (中間辞書は同じ接続行列を持つので、文脈 ID をそのまま持ち込める)
 FULL_REPAIR=(
   --drop-invalid-context-ids
   --drop-ortho-variants
   --drop-numeral-misreadings
   "${REMOVE_ARGS[@]}"
+  --demote-common-proper-nouns "$WORK/ipadic.base.hsd"
   --merge dict/user
 )
 
 # ---------------------------------------------------------------- 辞書
 
-build_ipadic() {
+# IPAdic の中間辞書 (repair 前)。NEologd を含む辞書の土台と、固有名詞の降格の参照に使う
+build_ipadic_base() {
   fetch_git "$IPADIC_REPO" "$IPADIC_COMMIT" "$SRC/mecab" mecab-ipadic
   # 記号の未知語の扱いと、EUC-JP の変換差を埋める別表記を整えたソースを作る (scripts/prepare_ipadic.py)
   local patch
@@ -155,6 +159,10 @@ build_ipadic() {
   log "build ipadic ($patch)"
   "$HASAMI" build --input "$WORK/ipadic-src" --output "$WORK/ipadic.base.hsd" \
     --meta name=ipadic --meta "sources=$SOURCE_IPADIC" --meta "ipadic_patch=$patch"
+}
+
+build_ipadic() {
+  build_ipadic_base
   # IPAdic 単体は発音の修復を掛けない (記号の読みを残す)。外国人名の姓・名だけを除く
   "$HASAMI" repair --dict "$WORK/ipadic.base.hsd" --output "$WORK/ipadic.tmp.hsd" \
     --drop-invalid-context-ids --no-pronunciation-repair \
@@ -192,6 +200,8 @@ build_neologd() {
 
 build_sudachi() {
   [ -f "$WORK/ipadic-neologd.base.hsd" ] || build_neologd
+  # repair の固有名詞の降格が参照する
+  [ -f "$WORK/ipadic.base.hsd" ] || build_ipadic_base
   # IPAdic・NEologd に既にある語を除くため、両方のソースを参照する
   [ -d "$SRC/neologd-seed" ] || prepare_neologd_seed
   local raw=$SRC/sudachi-raw/$SUDACHI_VERSION entry name hash
