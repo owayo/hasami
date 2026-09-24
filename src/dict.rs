@@ -278,6 +278,25 @@ fn is_canonical_word(pos: &str) -> bool {
         || pos.starts_with("名詞,非自立")
 }
 
+/// EUC-JP の変換表で写し先が分かれる字: (WHATWG・CP932 側, JIS・iconv 側)
+const EUC_JP_AMBIGUOUS: [(char, char); 7] = [
+    ('\u{2015}', '\u{2014}'), // ― → — (0xA1BD)
+    ('\u{FF5E}', '\u{301C}'), // ～ → 〜 (0xA1C1)
+    ('\u{2225}', '\u{2016}'), // ∥ → ‖ (0xA1C2)
+    ('\u{FF0D}', '\u{2212}'), // － → − (0xA1DD)
+    ('\u{FFE0}', '\u{00A2}'), // ￠ → ¢ (0xA1F1)
+    ('\u{FFE1}', '\u{00A3}'), // ￡ → £ (0xA1F2)
+    ('\u{FFE2}', '\u{00AC}'), // ￢ → ¬ (0xA2CC)
+];
+
+/// encoding_rs が EUC-JP から写した字を JIS の対応表の字にする
+fn euc_jp_jis_side(c: char) -> char {
+    EUC_JP_AMBIGUOUS
+        .iter()
+        .find(|(whatwg, _)| *whatwg == c)
+        .map_or(c, |&(_, jis)| jis)
+}
+
 /// 辞書エントリ（1形態素に対応）
 ///
 /// 活用型・活用形が無い語は `*`（MeCab 形式 CSV と同じ）。空文字列は書き出し時に `*` にそろえる。
@@ -556,6 +575,10 @@ impl DictBuilder {
             } else if is_katakana_str(&entry.reading) {
                 entry.pronunciation = Arc::clone(&entry.reading);
             } else if entry.pronunciation.is_empty() && entry.reading.is_empty() {
+                continue;
+            } else if entry.pos.starts_with("記号") {
+                // 記号（「、」「。」「「」等）は読み・発音に記号そのものを持つ（MeCab・OpenJTalk と同じ）。
+                // 空にすると、句読点を発音の並びで見分ける読み上げの前処理が句読点を見失う
                 continue;
             } else {
                 // 読みも発音もカタカナでない（ラテン文字の辞書エントリ等）。
@@ -1258,6 +1281,11 @@ impl DictBuilder {
     }
 
     /// バイト列をUTF-8にデコード（EUC-JP自動検出対応）
+    ///
+    /// EUC-JP のうち変換表によって写し先が分かれる 7 字（ダッシュ・波ダッシュ・マイナス等）は、
+    /// JIS の対応表（iconv・MeCab と同じ）の字にそろえる。encoding_rs（WHATWG）は Windows（CP932）と
+    /// 同じ字に写すが、それでは MeCab の出力と文字列が食い違い、JIS 側の字で書かれた文章
+    /// （「〜」U+301C、「—」U+2014 等）にも当たらない。
     pub(crate) fn decode_to_utf8(bytes: &[u8]) -> String {
         // まずUTF-8として試す
         if let Ok(s) = std::str::from_utf8(bytes) {
@@ -1265,7 +1293,7 @@ impl DictBuilder {
         }
         // EUC-JPとしてデコード
         let (cow, _, _) = encoding_rs::EUC_JP.decode(bytes);
-        cow.into_owned()
+        cow.chars().map(euc_jp_jis_side).collect()
     }
 
     fn source(&self) -> DictSource<'_> {
@@ -1379,94 +1407,94 @@ pub fn write_lexicon_csv<W: std::io::Write>(dict: &Dictionary, writer: W) -> io:
 mod tests {
     use super::*;
 
-#[test]
-fn test_build_and_lookup() {
-    let mut builder = DictBuilder::new();
-    builder.add_entry(DictEntry {
-        surface: "東京".into(),
-        left_id: 1,
-        right_id: 1,
-        cost: 3000,
-        pos: "名詞,固有名詞,地域,一般".into(),
-        base_form: "東京".into(),
-        reading: "トウキョウ".into(),
-        pronunciation: "トーキョー".into(),
-        ..Default::default()
-    });
-    builder.add_entry(DictEntry {
-        surface: "都".into(),
-        left_id: 2,
-        right_id: 2,
-        cost: 4000,
-        pos: "名詞,接尾,地域,*".into(),
-        base_form: "都".into(),
-        reading: "ト".into(),
-        pronunciation: "ト".into(),
-        ..Default::default()
-    });
+    #[test]
+    fn test_build_and_lookup() {
+        let mut builder = DictBuilder::new();
+        builder.add_entry(DictEntry {
+            surface: "東京".into(),
+            left_id: 1,
+            right_id: 1,
+            cost: 3000,
+            pos: "名詞,固有名詞,地域,一般".into(),
+            base_form: "東京".into(),
+            reading: "トウキョウ".into(),
+            pronunciation: "トーキョー".into(),
+            ..Default::default()
+        });
+        builder.add_entry(DictEntry {
+            surface: "都".into(),
+            left_id: 2,
+            right_id: 2,
+            cost: 4000,
+            pos: "名詞,接尾,地域,*".into(),
+            base_form: "都".into(),
+            reading: "ト".into(),
+            pronunciation: "ト".into(),
+            ..Default::default()
+        });
 
-    let dict = builder.build().unwrap();
-    let results = dict.lookup("東京都").unwrap();
-    assert_eq!(results.len(), 1);
-    assert_eq!(results[0].0, "東京".len());
-    assert_eq!(&*results[0].1[0].surface, "東京");
-    assert_eq!(&*results[0].1[0].pronunciation, "トーキョー");
-    assert_eq!(&*results[0].1[0].conj_type, "*");
-}
+        let dict = builder.build().unwrap();
+        let results = dict.lookup("東京都").unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, "東京".len());
+        assert_eq!(&*results[0].1[0].surface, "東京");
+        assert_eq!(&*results[0].1[0].pronunciation, "トーキョー");
+        assert_eq!(&*results[0].1[0].conj_type, "*");
+    }
 
-// --- 追加テスト ---
+    // --- 追加テスト ---
 
-#[test]
-fn test_connection_matrix_cost() {
-    // 次の語の left_id が 3、前の語の right_id が 2。costs[left_id * num_right + right_id]
-    let matrix = ConnectionMatrix {
-        num_left: 3,
-        num_right: 2,
-        costs: vec![0, 1, 2, 3, 4, 5],
-    };
-    assert_eq!(matrix.cost(0, 0), Some(0));
-    assert_eq!(matrix.cost(1, 0), Some(1));
-    assert_eq!(matrix.cost(0, 1), Some(2));
-    assert_eq!(matrix.cost(1, 2), Some(5));
-}
+    #[test]
+    fn test_connection_matrix_cost() {
+        // 次の語の left_id が 3、前の語の right_id が 2。costs[left_id * num_right + right_id]
+        let matrix = ConnectionMatrix {
+            num_left: 3,
+            num_right: 2,
+            costs: vec![0, 1, 2, 3, 4, 5],
+        };
+        assert_eq!(matrix.cost(0, 0), Some(0));
+        assert_eq!(matrix.cost(1, 0), Some(1));
+        assert_eq!(matrix.cost(0, 1), Some(2));
+        assert_eq!(matrix.cost(1, 2), Some(5));
+    }
 
-#[test]
-fn test_connection_matrix_out_of_bounds() {
-    let matrix = ConnectionMatrix::zeros(2, 2);
-    assert_eq!(matrix.cost(10, 0), None);
-    assert_eq!(matrix.cost(0, 10), None);
-}
+    #[test]
+    fn test_connection_matrix_out_of_bounds() {
+        let matrix = ConnectionMatrix::zeros(2, 2);
+        assert_eq!(matrix.cost(10, 0), None);
+        assert_eq!(matrix.cost(0, 10), None);
+    }
 
-#[test]
-fn test_connection_matrix_contains_ids() {
-    // left_id が 3 種類、right_id が 2 種類
-    let matrix = ConnectionMatrix::zeros(3, 2);
-    assert!(matrix.contains_ids(2, 1));
-    assert!(!matrix.contains_ids(3, 0));
-    assert!(!matrix.contains_ids(0, 2));
-}
+    #[test]
+    fn test_connection_matrix_contains_ids() {
+        // left_id が 3 種類、right_id が 2 種類
+        let matrix = ConnectionMatrix::zeros(3, 2);
+        assert!(matrix.contains_ids(2, 1));
+        assert!(!matrix.contains_ids(3, 0));
+        assert!(!matrix.contains_ids(0, 2));
+    }
 
-#[test]
-fn test_load_matrix_reads_mecab_orientation() {
-    // 1 行目は「right_id の数 left_id の数」、各行は「right_id left_id コスト」。
-    // 正方でない行列で向きを取り違えないことを確かめる
-    let dir = std::env::temp_dir().join(format!("hasami-matrix-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join("matrix.def");
-    std::fs::write(&path, "2 3\n0 0 1\n0 2 3\n1 0 4\n1 2 6\n").unwrap();
-    let mut builder = DictBuilder::new();
-    builder.load_matrix(&path).unwrap();
-    let m = builder.matrix.as_ref().unwrap();
-    assert_eq!((m.num_right, m.num_left), (2, 3));
-    assert_eq!(m.cost(0, 0), Some(1));
-    assert_eq!(m.cost(0, 2), Some(3));
-    assert_eq!(m.cost(1, 0), Some(4));
-    assert_eq!(m.cost(1, 2), Some(6));
-    assert_eq!(m.cost(1, 1), Some(0));
-    std::fs::write(&path, "2 3\n2 0 1\n").unwrap();
-    assert!(builder.load_matrix(&path).is_err());
-    std::fs::remove_dir_all(&dir).unwrap();
-}
+    #[test]
+    fn test_load_matrix_reads_mecab_orientation() {
+        // 1 行目は「right_id の数 left_id の数」、各行は「right_id left_id コスト」。
+        // 正方でない行列で向きを取り違えないことを確かめる
+        let dir = std::env::temp_dir().join(format!("hasami-matrix-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("matrix.def");
+        std::fs::write(&path, "2 3\n0 0 1\n0 2 3\n1 0 4\n1 2 6\n").unwrap();
+        let mut builder = DictBuilder::new();
+        builder.load_matrix(&path).unwrap();
+        let m = builder.matrix.as_ref().unwrap();
+        assert_eq!((m.num_right, m.num_left), (2, 3));
+        assert_eq!(m.cost(0, 0), Some(1));
+        assert_eq!(m.cost(0, 2), Some(3));
+        assert_eq!(m.cost(1, 0), Some(4));
+        assert_eq!(m.cost(1, 2), Some(6));
+        assert_eq!(m.cost(1, 1), Some(0));
+        std::fs::write(&path, "2 3\n2 0 1\n").unwrap();
+        assert!(builder.load_matrix(&path).is_err());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     #[test]
     fn test_pos_has_prefix_is_element_wise() {
@@ -1619,6 +1647,16 @@ fn test_load_matrix_reads_mecab_orientation() {
         let utf8_bytes = "こんにちは".as_bytes();
         let result = DictBuilder::decode_to_utf8(utf8_bytes);
         assert_eq!(result, "こんにちは");
+    }
+
+    #[test]
+    fn test_decode_to_utf8_euc_jp_uses_jis_side_characters() {
+        // ダッシュ・波ダッシュ・‖・マイナス・¢・£・¬ は MeCab（iconv）と同じ字にする
+        let bytes: &[u8] = &[
+            0xA1, 0xBD, 0xA1, 0xC1, 0xA1, 0xC2, 0xA1, 0xDD, 0xA1, 0xF1, 0xA1, 0xF2, 0xA2, 0xCC,
+        ];
+        let result = DictBuilder::decode_to_utf8(bytes);
+        assert_eq!(result, "\u{2014}\u{301C}\u{2016}\u{2212}\u{00A2}\u{00A3}\u{00AC}");
     }
 
     #[test]

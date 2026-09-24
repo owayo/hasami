@@ -11,16 +11,17 @@ See [LICENSE-APACHE-2.0](LICENSE-APACHE-2.0) for the full license text.
 
 - Repository: https://github.com/WorksApplications/SudachiDict
 
-hasami の統合辞書 (`ipadic-neologd-sudachi.hsd`) では、SudachiDict Core の語彙データを
-MeCab IPAdic 互換形式に変換し、品詞体系を IPAdic の left_id/right_id にリマッピングしています。
-変換スクリプト: `scripts/convert_sudachi_to_mecab.py`, `scripts/remap_sudachi_to_ipadic.py`
+hasami の統合辞書 (`ipadic-neologd-sudachi.hsd`) では、SudachiDict の raw 辞書ソース
+(small + core、版は `scripts/build-dict.sh` で固定) の語彙データを MeCab IPAdic 互換形式に変換し、
+品詞体系を IPAdic に、文脈 ID を IPAdic の left_id/right_id に写しています。
+変換スクリプト: `scripts/convert_sudachi_raw.py`
 
 ### UniDic (SudachiDict に内包)
 
 Copyright (c) 2011-2013, The UniDic Consortium
 All rights reserved.
 
-SudachiDict の語彙データおよび接続行列 (matrix.def) の一部は UniDic に由来します。
+SudachiDict の語彙データの一部は UniDic に由来します。
 UniDic は BSD 3-Clause License の下で利用されています。
 
 Redistribution and use in source and binary forms, with or without
