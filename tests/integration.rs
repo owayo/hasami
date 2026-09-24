@@ -1,7 +1,7 @@
 //! インテグレーションテスト: 辞書構築→解析→出力の一貫性検証
 
-use hasami::analyzer::{Analyzer, format_mecab, format_wakachi};
 use hasami::Dictionary;
+use hasami::analyzer::{Analyzer, format_mecab, format_wakachi};
 use hasami::dict::{DictBuilder, DictEntry};
 
 /// ビルダーを .hsd に書き出す
@@ -1483,7 +1483,10 @@ fn test_export_roundtrip_through_add_csv() {
 
     let loaded = Dictionary::load(&hsd).unwrap();
     let mut buf = Vec::new();
-    assert_eq!(hasami::dict::write_lexicon_csv(&loaded, &mut buf).unwrap(), 5);
+    assert_eq!(
+        hasami::dict::write_lexicon_csv(&loaded, &mut buf).unwrap(),
+        5
+    );
     let csv = write_temp("export_roundtrip.csv", std::str::from_utf8(&buf).unwrap());
 
     let mut restored = DictBuilder::new();
@@ -1507,8 +1510,16 @@ fn test_export_roundtrip_through_add_csv() {
     let originals: Vec<DictEntry> = originals
         .into_iter()
         .map(|e| DictEntry {
-            conj_type: if e.conj_type.is_empty() { "*".into() } else { e.conj_type },
-            conj_form: if e.conj_form.is_empty() { "*".into() } else { e.conj_form },
+            conj_type: if e.conj_type.is_empty() {
+                "*".into()
+            } else {
+                e.conj_type
+            },
+            conj_form: if e.conj_form.is_empty() {
+                "*".into()
+            } else {
+                e.conj_form
+            },
             ..e
         })
         .collect();

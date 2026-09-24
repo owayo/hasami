@@ -8,6 +8,7 @@ pub mod dict;
 pub mod ffi;
 pub mod hsd;
 pub mod lattice;
+pub mod sentence;
 
 pub use analyzer::Analyzer;
 pub use dict::DictEntry;

@@ -11,6 +11,7 @@
 
 use super::DictError;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 pub const BASE_IS_SURFACE: u8 = 1 << 0;
 pub const PRON_IS_READING: u8 = 1 << 1;
@@ -177,6 +178,21 @@ impl PackedStr<'_> {
                     s.push(char::from_u32(KANA_BASE + b as u32).unwrap_or('\u{FFFD}'));
                 }
                 s
+            }
+        }
+    }
+
+    /// `Arc<str>` にする。カタカナ詰めは `scratch` に復号してから 1 回だけ確保する
+    /// （String を作ってから Arc に移すと確保が 2 回・解放が 1 回になる）
+    pub fn to_arc(self, scratch: &mut String) -> Arc<str> {
+        match self {
+            PackedStr::Utf8(s) => Arc::from(s),
+            PackedStr::Kana(bytes) => {
+                scratch.clear();
+                for &b in bytes {
+                    scratch.push(char::from_u32(KANA_BASE + b as u32).unwrap_or('\u{FFFD}'));
+                }
+                Arc::from(scratch.as_str())
             }
         }
     }

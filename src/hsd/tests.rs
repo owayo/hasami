@@ -813,3 +813,47 @@ fn random_corruption_never_panics() {
         }
     }
 }
+
+#[test]
+fn token_cache_does_not_change_results_or_leak_between_dictionaries() {
+    use crate::lattice::LatticeWorkspace;
+    let a = sample_builder().build().unwrap();
+    // 同じ表層形・同じエントリ番号で読みだけ違う辞書
+    let mut other = DictBuilder::new();
+    other.set_matrix(ConnectionMatrix::zeros(4, 4));
+    for e in sample_entries() {
+        other.add_entry(DictEntry {
+            reading: format!("{}ベツ", e.reading).into(),
+            pronunciation: format!("{}ベツ", e.pronunciation).into(),
+            ..e
+        });
+    }
+    let b = other.build().unwrap();
+    let describe = |tokens: &[crate::lattice::Token]| -> Vec<String> {
+        tokens
+            .iter()
+            .map(|t| {
+                format!(
+                    "{}/{}/{}/{}/{}",
+                    t.surface, t.start, t.pos, t.reading, t.word_cost
+                )
+            })
+            .collect()
+    };
+    let text = "東京都の示し金曜日𠮷野家";
+    let mut fresh_a = LatticeWorkspace::new();
+    let expected_a = describe(&fresh_a.tokenize(text, &a).unwrap());
+    let mut fresh_b = LatticeWorkspace::new();
+    let expected_b = describe(&fresh_b.tokenize(text, &b).unwrap());
+    assert_ne!(expected_a, expected_b);
+
+    // 1 つのワークスペースで辞書を交互に使っても、キャッシュが混ざらない
+    let mut ws = LatticeWorkspace::new();
+    for _ in 0..3 {
+        assert_eq!(describe(&ws.tokenize(text, &a).unwrap()), expected_a);
+        assert_eq!(describe(&ws.tokenize(text, &b).unwrap()), expected_b);
+    }
+    // 位置が違っても、キャッシュから作ったトークンの位置は入力どおり
+    let tokens = ws.tokenize("金金", &a).unwrap();
+    assert_eq!((tokens[0].start, tokens[1].start), (0, "金".len()));
+}

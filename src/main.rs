@@ -608,10 +608,12 @@ fn cmd_export(dict_path: &Path, output: Option<&Path>) -> io::Result<()> {
             hasami::dict::write_lexicon_csv(&dict, io::BufWriter::new(file))?
         }
         // `| head` などで読み手が先に閉じたら、そこで静かに終える
-        None => match hasami::dict::write_lexicon_csv(&dict, io::BufWriter::new(io::stdout().lock())) {
-            Err(e) if e.kind() == io::ErrorKind::BrokenPipe => return Ok(()),
-            result => result?,
-        },
+        None => {
+            match hasami::dict::write_lexicon_csv(&dict, io::BufWriter::new(io::stdout().lock())) {
+                Err(e) if e.kind() == io::ErrorKind::BrokenPipe => return Ok(()),
+                result => result?,
+            }
+        }
     };
     eprintln!(
         "Exported {} entries in {:.2}s{}",

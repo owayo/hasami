@@ -41,6 +41,8 @@ pub enum DictError {
     Corrupt(String),
     /// 辞書を作れない入力（空の表層形、範囲外の文脈 ID、除去済み辞書の再編集など）
     Invalid(String),
+    /// 既定の場所に辞書が無い（探した場所）。[`crate::Analyzer::load_default`] が返す
+    NotFound(Vec<String>),
 }
 
 impl DictError {
@@ -70,10 +72,19 @@ impl fmt::Display for DictError {
                 container::VERSION
             ),
             DictError::UnsupportedPlatform => {
-                write!(f, "big-endian machines are not supported by the .hsd format")
+                write!(
+                    f,
+                    "big-endian machines are not supported by the .hsd format"
+                )
             }
             DictError::Corrupt(m) => write!(f, "corrupt dictionary: {m}"),
             DictError::Invalid(m) => write!(f, "{m}"),
+            DictError::NotFound(searched) => write!(
+                f,
+                "no dictionary found (searched: {}); set {} to a .hsd file or put one in the data directory",
+                searched.join(", "),
+                crate::analyzer::DICT_ENV
+            ),
         }
     }
 }
@@ -108,6 +119,7 @@ impl From<DictError> for io::Error {
         match e {
             DictError::Io(e) => e,
             DictError::Invalid(m) => io::Error::new(io::ErrorKind::InvalidInput, m),
+            e @ DictError::NotFound(_) => io::Error::new(io::ErrorKind::NotFound, e.to_string()),
             other => io::Error::new(io::ErrorKind::InvalidData, other.to_string()),
         }
     }

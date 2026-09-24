@@ -23,11 +23,14 @@ use crate::lattice::Token;
 use memmap2::Mmap;
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock};
 
 /// 活用型・活用形が無いことを表す辞書上の値
 const NO_CONJ: &str = "*";
 static EMPTY_ARC: LazyLock<Arc<str>> = LazyLock::new(|| Arc::from(""));
+/// 辞書ごとに振る一意な番号（解析器のキャッシュを辞書が変わったら捨てるため）
+static NEXT_DICT_ID: AtomicU64 = AtomicU64::new(0);
 
 enum Storage {
     Mmap(Mmap),
@@ -94,6 +97,7 @@ pub struct VerifyReport {
 ///
 /// 辞書は読み込み専用で、`Arc` で包んで複数のスレッド・[`crate::Analyzer`] から共有できる。
 pub struct Dictionary {
+    id: u64,
     storage: Storage,
     layout: Layout,
     meta: Meta,
@@ -337,6 +341,7 @@ impl Dictionary {
         let token_conj_types = to_token_conj(&conj_types);
         let token_conj_forms = to_token_conj(&conj_forms);
         Ok(Dictionary {
+            id: NEXT_DICT_ID.fetch_add(1, Ordering::Relaxed),
             storage,
             layout,
             meta,
@@ -382,6 +387,11 @@ impl Dictionary {
             num_left: self.num_left,
             num_right: self.num_right,
         }
+    }
+
+    /// この辞書の一意な番号（プロセス内で読み込んだ順）
+    pub(crate) fn id(&self) -> u64 {
+        self.id
     }
 
     pub(crate) fn classifier(&self) -> &CharClassifier {
@@ -486,22 +496,23 @@ impl Dictionary {
         start: usize,
         end: usize,
         word_cost: i16,
+        scratch: &mut String,
     ) -> Result<Token, DictError> {
         let f = self.feature(entry_id as usize)?;
         let surface: Arc<str> = Arc::from(surface);
         let reading: Arc<str> = if f.reading.is_empty() {
             Arc::clone(&EMPTY_ARC)
         } else {
-            Arc::from(f.reading.into_string())
+            f.reading.to_arc(scratch)
         };
         let pronunciation = match f.pronunciation {
             None => Arc::clone(&reading),
             Some(p) if p.is_empty() => Arc::clone(&EMPTY_ARC),
-            Some(p) => Arc::from(p.into_string()),
+            Some(p) => p.to_arc(scratch),
         };
         let base_form = match f.base_form {
             None => Arc::clone(&surface),
-            Some(b) => Arc::from(b.into_string()),
+            Some(b) => b.to_arc(scratch),
         };
         Ok(Token {
             surface,
