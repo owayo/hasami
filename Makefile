@@ -1,4 +1,4 @@
-.PHONY: build release install clean test fmt check help setup-hooks \
+.PHONY: build release install clean clean-lfs test fmt check help setup-hooks \
        dict dict-ipadic dict-neologd dict-sudachi dict-repair dict-unidic-cwj dict-unidic-csj dict-clean \
        dict-download-unidic-cwj dict-download-unidic-csj
 
@@ -52,8 +52,14 @@ setup-hooks: ## Enable repository hooks and Git LFS for this clone
 	git config core.hooksPath .githooks
 	git lfs install --local
 
-clean: ## Clean build artifacts
+clean: ## Clean build artifacts and Git LFS objects the current commit does not use
 	cargo clean
+	scripts/clean-lfs.sh
+
+# 手元の LFS の実体を、いまのコミット (と未 push のコミット・stash) が使うものだけにする。
+# 消す実体はリモートにあることを確かめてから消す。DRY_RUN=1 で消す対象を表示するだけ
+clean-lfs: ## Delete local Git LFS objects the current commit does not use (DRY_RUN=1 to preview)
+	scripts/clean-lfs.sh $(if $(DRY_RUN),--dry-run)
 
 ## Dictionary Build
 
