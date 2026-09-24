@@ -187,7 +187,9 @@ target/release/hasami bench --dict dict/ipadic.hsd --file corpus.txt  # 1 行 1 
 
 ### カタカナの未知語
 
-未知語の候補は MeCab と同じ（`UnkGrouping::for_each_len`）だが、`lattice.rs` はカタカナの並び全体の候補に規則を足す
+未知語の候補は MeCab と同じ（`UnkGrouping::for_each_len`）。候補ごとに unk.def の文字種のテンプレートの数だけノードを
+作り（`Dictionary::unk_templates`、`Node::entry` は `UNK_FLAG | テンプレートの番号`）、品詞は接続コストで決まる
+（MeCab と同じ。解析の時間は約 15% 増えた。`docs/performance.md`）。`lattice.rs` はカタカナの並び全体の候補に規則を足す
 （詳細は README の「未知語」、経緯は `docs/hsd-format.md` の 7 章）。
 
 - 3 字以上の並び全体の候補は、3 字以上（`COMPOUND_MIN_CHARS`）の既知語を隙間なく並べて覆えるなら作らない（`RunCover`）。
