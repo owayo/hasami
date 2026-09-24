@@ -653,6 +653,41 @@ fn import_keeps_char_definitions_and_unknown_templates() {
 }
 
 #[test]
+fn char_type_index_matches_the_classifier() {
+    use crate::char_class::type_index;
+    // 範囲の重なり・開始位置の重複・BMP 外の範囲を含む char.def
+    let dir = temp_dir();
+    let char_def = dir.join("char.def");
+    std::fs::write(
+        &char_def,
+        "DEFAULT 0 1 0\nSPACE 0 1 0\nKANJI 0 0 2\nSYMBOL 1 1 0\nALPHA 1 1 0\nKANJINUMERIC 1 1 0\n\
+         GREEK 1 1 0\n0x0020 SPACE\n0x0021..0x002F SYMBOL\n0x0041..0x005A ALPHA\n\
+         0x0391..0x03C9 GREEK\n0x3000..0x303F SYMBOL\n0x3007 KANJINUMERIC\n0x4E00..0x9FFF KANJI\n\
+         0x4E00 KANJINUMERIC\n0x4E8C KANJINUMERIC\n0xFF00..0xFFEF SYMBOL\n0x20000..0x2A6DF KANJI\n",
+    )
+    .unwrap();
+    let mut builder = sample_builder();
+    builder.load_char_def(&char_def).unwrap();
+    let dict = builder.build().unwrap();
+    let classifier = dict.char_classifier();
+    let samples = (0..=0xFFFFu32)
+        .step_by(7)
+        .chain([
+            0x3007, 0x4E00, 0x4E8C, 0x10000, 0x1F600, 0x20000, 0x20BB7, 0x2A6DF, 0x10FFFF,
+        ])
+        .filter_map(char::from_u32);
+    for c in samples {
+        assert_eq!(
+            dict.char_type_index(c) as usize,
+            type_index(classifier.classify_char(c)),
+            "U+{:04X}",
+            c as u32
+        );
+    }
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
 fn build_rejects_invalid_input() {
     // エントリなし
     assert!(matches!(

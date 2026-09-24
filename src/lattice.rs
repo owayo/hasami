@@ -1,8 +1,23 @@
-//! ラティス構築 + Viterbi デコーディング（最適化版）
+//! ラティス構築 + Viterbi デコーディング
+//!
+//! 前分割したチャンクごとに次の順で解析する。
+//!
+//! 1. 文字ごとの前処理（`ChunkChars`）: バイト位置・trie の文字符号・文字種・同じ文字種が続く長さを
+//!    1 回だけ求める。辞書引きは開始位置ごとに数文字先まで辿るので、復号と表の引きを繰り返さない
+//! 2. ラティスの構築と Viterbi を同時に行う: 開始位置（文字位置）の昇順に、trie の共通接頭辞検索で
+//!    見つけたエントリと未知語をノードにする。位置 i に来たときには i で終わるノードが揃っているので、
+//!    ノードを作るときに最良の前ノードをその場で決め、終了位置ごとの列（`Lattice::ends`）に
+//!    累積コストごと入れる。i で終わるノードが無い位置（BOS から辿り着けない位置）は飛ばす
+//! 3. EOS の最良の前ノードから辿って最良パスを求め、トークンを作る
+//!
+//! 同点のときは先に追加した前ノードが勝つ（`<` の先勝ち）。ノードを追加する順序（開始位置の昇順、
+//! trie が報告する順、群の中のエントリの順、未知語は既知語の後）は、ラティスを作り終えてから Viterbi を
+//! 行っていたときと同じなので、同点の扱いも含めて結果は変わらない。
 
-use crate::char_class::{CharType, type_index};
+use crate::char_class::ALL_CHAR_TYPES;
+use crate::hsd::trie::Trie;
 use crate::hsd::{DictError, Dictionary};
-use std::sync::{Arc, LazyLock};
+use std::sync::Arc;
 
 /// トークン（形態素解析結果の1単位）
 #[derive(Debug, Clone)]
@@ -30,8 +45,6 @@ pub struct Token {
     /// 辞書由来 (true=辞書, false=未知語)
     pub is_known: bool,
 }
-
-static EMPTY_ARC: LazyLock<Arc<str>> = LazyLock::new(|| Arc::from(""));
 
 /// アルファベット1文字のカタカナ読みを返す
 fn alpha_to_kana(c: char) -> Option<&'static str> {
@@ -289,15 +302,25 @@ fn apply_contextual_readings(tokens: &mut [Token]) {
         if apply_pos_reading_override(&mut tokens[i]) {
             continue;
         }
-        let next_is_number = tokens.get(i + 1).is_some_and(|t| is_number_pos(&t.pos));
-        if apply_kazu_reading_override(&mut tokens[i], next_is_number) {
-            continue;
+        // 前後のトークンを見る補正は、対象の語のときだけ前後を調べる（どのトークンでも調べると、
+        // 次のトークンの品詞の文字列比較が全トークンに掛かる）
+        if &*tokens[i].surface == "数" {
+            let next_is_number = tokens.get(i + 1).is_some_and(|t| is_number_pos(&t.pos));
+            if apply_kazu_reading_override(&mut tokens[i], next_is_number) {
+                continue;
+            }
         }
-        let after_decimal_point = is_after_decimal_point(tokens, i);
-        if apply_decimal_counter_override(&mut tokens[i], after_decimal_point) {
-            continue;
+        if DECIMAL_COUNTER_OVERRIDES
+            .iter()
+            .any(|&(surface, _)| &*tokens[i].surface == surface)
+        {
+            let after_decimal_point = is_after_decimal_point(tokens, i);
+            if apply_decimal_counter_override(&mut tokens[i], after_decimal_point) {
+                continue;
+            }
         }
-        if !tokens[i].surface.chars().all(|c| c.is_ascii_alphabetic()) {
+        // 非 ASCII の文字は ASCII の英字のバイトを含まないので、バイトで調べても文字で調べるのと同じ
+        if !tokens[i].surface.bytes().all(|b| b.is_ascii_alphabetic()) {
             // 「々」は記号として辞書に入っていて読みを持たない。「日々」「人々」のように
             // 辞書にある語なら 1 トークンになるが、「前々項」のような語は
             // 「前」「々」「項」に割れ、「々」がそこだけ無音になる。
@@ -395,60 +418,140 @@ fn alphabet_reading(surface: &str) -> Option<Arc<str>> {
     Some(Arc::from(reading.as_str()))
 }
 
-/// ラティスノード（コンパクト表現 - Viterbiデータ分離）
+/// ラティスのノード（終了位置ごとの列に、追加した順に入れる）
+///
+/// 追加するときに最良の前ノードを決めるので、左文脈 ID は持たない。終了位置は入っている列で分かる。
 #[derive(Clone, Copy)]
-struct LatticeNode {
+struct Node {
+    /// BOS からこのノードの終わりまでの最小の累積コスト
+    cost: i64,
+    /// 辞書エントリの番号。BOUNDARY_ID = BOS、`UNK_FLAG | 文字種の番号` = 未知語
+    entry: u32,
+    /// 最良の前ノードの、開始位置で終わるノードの列（`ends[start]`）の中での番号
+    prev: u32,
+    /// 開始の文字位置
     start: u32,
-    end: u32,
-    /// 辞書エントリの番号。BOUNDARY_ID = BOS/EOS、UNK_FLAG付き = 未知語
-    entry_id: u32,
-    left_id: u16,
     right_id: u16,
     word_cost: i16,
-    char_type: CharType,
 }
 
 const BOUNDARY_ID: u32 = u32::MAX;
-const NO_PREV: u32 = u32::MAX;
 const UNK_FLAG: u32 = 0x8000_0000;
 
-impl LatticeNode {
-    #[inline]
-    fn is_known(&self) -> bool {
-        self.entry_id != BOUNDARY_ID && (self.entry_id & UNK_FLAG) == 0
-    }
+impl Node {
+    const BOS: Node = Node {
+        cost: 0,
+        entry: BOUNDARY_ID,
+        prev: 0,
+        start: 0,
+        right_id: 0,
+        word_cost: 0,
+    };
 
     #[inline]
     fn is_boundary(&self) -> bool {
-        self.entry_id == BOUNDARY_ID
+        self.entry == BOUNDARY_ID
+    }
+
+    /// 未知語なら文字種の番号
+    #[inline]
+    fn unknown_type(&self) -> Option<usize> {
+        (self.entry & UNK_FLAG != 0).then_some((self.entry & !UNK_FLAG) as usize)
     }
 }
 
 /// 再利用可能なラティスワークスペース
 pub struct LatticeWorkspace {
-    nodes: Vec<LatticeNode>,
-    /// Viterbi用: total_cost[node_idx]
-    costs: Vec<i64>,
-    /// Viterbi用: prev[node_idx]
-    prevs: Vec<u32>,
-    /// end_nodes[byte_pos] = そのバイト位置で終了するノードインデックスのリスト
-    end_nodes: Vec<Vec<u32>>,
-    /// 素性レコードの読み・発音を復号するときの再利用バッファ
-    decode_scratch: String,
-    /// 既知語のトークンの文字列のキャッシュ
-    token_cache: TokenCache,
+    /// 解析中のチャンクの文字ごとの情報
+    chars: ChunkChars,
+    lattice: Lattice,
+    /// トークンを作る（既知語のキャッシュと、トークンに入れる文字列の解析器ごとの写し）
+    tokens: TokenBuilder,
 }
 
-/// 既知語のトークンの文字列（表層形・品詞・活用・原形・読み・発音）のキャッシュ
+/// 解析するチャンクの文字ごとの情報（チャンクごとに 1 回だけ作る）
 ///
-/// 辞書エントリの番号で引く直接マップ方式。同じ語を何度も解析するときに、素性レコードの復号と
-/// 文字列の確保を省く（v3 は辞書の全文字列をキャッシュしていたが、v4 はよく出る語だけを
-/// 解析器ごとに持つ）。解析器（`Analyzer::clone`）ごとに独立しているのでロックは要らない。
-/// 文脈による読みの補正はキャッシュから作った `Token` に対して行い、キャッシュには戻さない。
-struct TokenCache {
-    /// キャッシュを作った辞書の番号。違う辞書で解析したら捨てる
+/// 辞書引きは開始位置ごとに数文字先まで辿るので、文字の復号と符号・文字種の引きを先に済ませておく。
+/// 位置はすべて文字の番号（0 始まり）。
+#[derive(Default)]
+struct ChunkChars {
+    /// 各文字のバイト位置。末尾に入力の長さを加えた「文字数 + 1」要素
+    offsets: Vec<u32>,
+    /// 各文字の trie の符号（辞書のキーに現れない文字は 0）
+    codes: Vec<u16>,
+    /// 各文字の文字種（`type_index` の値）
+    types: Vec<u8>,
+    /// その文字から同じ文字種が続く文字数（1 以上）
+    runs: Vec<u32>,
+}
+
+impl ChunkChars {
+    fn fill(&mut self, input: &str, dict: &Dictionary, trie: &Trie<'_>) {
+        self.offsets.clear();
+        self.codes.clear();
+        self.types.clear();
+        for (pos, c) in input.char_indices() {
+            self.offsets.push(pos as u32);
+            // 符号は u16 の表から引くので u16 に収まる
+            self.codes.push(trie.char_code(c) as u16);
+            self.types.push(dict.char_type_index(c));
+        }
+        self.offsets.push(input.len() as u32);
+        let n = self.types.len();
+        self.runs.clear();
+        self.runs.resize(n, 1);
+        for i in (0..n.saturating_sub(1)).rev() {
+            if self.types[i] == self.types[i + 1] {
+                self.runs[i] = self.runs[i + 1] + 1;
+            }
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.codes.len()
+    }
+}
+
+/// ラティス
+struct Lattice {
+    /// `ends[pos]` = 文字位置 pos で終わるノード（追加した順）。`ends[0]` は BOS だけ。
+    /// `used` 以降の列は空（容量だけ持つ）
+    ends: Vec<Vec<Node>>,
+    /// 直前のチャンクで使った列の数
+    used: usize,
+    /// 最良パス（終了位置, `ends` の中での番号）の再利用バッファ
+    path: Vec<(u32, u32)>,
+}
+
+/// チャンクが短くなっても容量ごと残しておく、終了位置ごとの列の数。これより長いチャンクの列は
+/// 次のチャンクで捨てる（まれな長い入力のあとに大きな確保を持ち続けない）
+const ENDS_RETAINED: usize = 1024;
+
+/// トークンを作る（最良パスのノードから `Token` を組み立てる）
+///
+/// - 既知語のキャッシュ: 辞書エントリの番号で引く直接マップ方式。同じ語を何度も解析するときに、
+///   素性レコードの復号と文字列の確保を省く（v3 は辞書の全文字列をキャッシュしていたが、v4 はよく出る
+///   語だけを解析器ごとに持つ）。文脈による読みの補正はキャッシュから作った `Token` に対して行い、
+///   キャッシュには戻さない
+/// - 品詞・活用型・活用形・未知語の品詞・空文字列は、辞書の表の `Arc` を複製せず、解析器ごとに同じ内容の
+///   `Arc` を作って使う（初めて使うときに作る）。辞書の `Arc` をそのまま複製すると、複数のスレッドの
+///   解析器が同じ参照カウントをトークンごとに更新し合い、キャッシュラインの取り合いで並列に解析しても
+///   速くならない
+///
+/// 解析器（`Analyzer::clone`）ごとに独立しているのでロックは要らない。違う辞書で解析したら作り直す。
+struct TokenBuilder {
+    /// 写しとキャッシュを作った辞書の番号
     dict_id: u64,
+    empty: Arc<str>,
+    pos: Vec<Option<Arc<str>>>,
+    conj_types: Vec<Option<Arc<str>>>,
+    conj_forms: Vec<Option<Arc<str>>>,
+    /// 文字種ごとの未知語の品詞
+    unk_pos: Vec<Option<Arc<str>>>,
+    /// 既知語のトークンのキャッシュ（エントリ番号, トークン）
     slots: Vec<Option<(u32, Token)>>,
+    /// 素性レコードの読み・発音を復号するときの再利用バッファ
+    scratch: String,
 }
 
 /// キャッシュのスロット数
@@ -456,16 +559,53 @@ const TOKEN_CACHE_SLOTS: usize = 1024;
 /// これより長い表層形の語はキャッシュしない（まれな長い固有名詞でメモリを使わない）
 const TOKEN_CACHE_MAX_SURFACE: usize = 64;
 
-impl TokenCache {
+/// 解析器ごとの写しを引く。無ければ `s` から作る（空文字列は `empty` を使う）
+#[inline]
+fn local_str(slot: &mut Option<Arc<str>>, empty: &Arc<str>, s: &str) -> Arc<str> {
+    Arc::clone(slot.get_or_insert_with(|| {
+        if s.is_empty() {
+            Arc::clone(empty)
+        } else {
+            Arc::from(s)
+        }
+    }))
+}
+
+impl TokenBuilder {
     fn new() -> Self {
-        TokenCache {
+        TokenBuilder {
             dict_id: u64::MAX,
+            empty: Arc::from(""),
+            pos: Vec::new(),
+            conj_types: Vec::new(),
+            conj_forms: Vec::new(),
+            unk_pos: Vec::new(),
             slots: Vec::new(),
+            scratch: String::with_capacity(64),
         }
     }
 
+    /// `dict` で解析する準備（前と違う辞書なら写しとキャッシュを捨てる）
+    fn prepare(&mut self, dict: &Dictionary) {
+        if self.dict_id == dict.id() {
+            return;
+        }
+        self.dict_id = dict.id();
+        let reset = |v: &mut Vec<Option<Arc<str>>>, len: usize| {
+            v.clear();
+            v.resize(len, None);
+        };
+        reset(&mut self.pos, dict.pos_count());
+        reset(&mut self.conj_types, dict.conj_type_count());
+        reset(&mut self.conj_forms, dict.conj_form_count());
+        reset(&mut self.unk_pos, ALL_CHAR_TYPES.len());
+        self.slots.clear();
+        self.slots.resize(TOKEN_CACHE_SLOTS, None);
+    }
+
+    /// 既知語のトークン（表層形は入力の部分文字列から作る）。[`TokenBuilder::prepare`] の後に呼ぶ
     #[allow(clippy::too_many_arguments)]
-    fn known_token(
+    fn known(
         &mut self,
         dict: &Dictionary,
         entry_id: u32,
@@ -473,15 +613,9 @@ impl TokenCache {
         start: usize,
         end: usize,
         word_cost: i16,
-        scratch: &mut String,
     ) -> Result<Token, DictError> {
-        if self.dict_id != dict.id() {
-            self.slots.clear();
-            self.slots.resize(TOKEN_CACHE_SLOTS, None);
-            self.dict_id = dict.id();
-        }
-        let slot = &mut self.slots[entry_id as usize % TOKEN_CACHE_SLOTS];
-        if let Some((cached_id, token)) = slot {
+        let slot = entry_id as usize % TOKEN_CACHE_SLOTS;
+        if let Some((cached_id, token)) = &self.slots[slot] {
             if *cached_id == entry_id {
                 let mut token = token.clone();
                 token.start = start;
@@ -490,48 +624,140 @@ impl TokenCache {
                 return Ok(token);
             }
         }
-        let token = dict.known_token(entry_id, surface, start, end, word_cost, scratch)?;
-        if surface.len() <= TOKEN_CACHE_MAX_SURFACE {
-            *slot = Some((entry_id, token.clone()));
+        let f = dict.feature(entry_id as usize)?;
+        let scratch = &mut self.scratch;
+        let surface: Arc<str> = Arc::from(surface);
+        let reading: Arc<str> = if f.reading.is_empty() {
+            Arc::clone(&self.empty)
+        } else {
+            f.reading.to_arc(scratch)
+        };
+        let pronunciation = match f.pronunciation {
+            None => Arc::clone(&reading),
+            Some(p) if p.is_empty() => Arc::clone(&self.empty),
+            Some(p) => p.to_arc(scratch),
+        };
+        let base_form = match f.base_form {
+            None => Arc::clone(&surface),
+            Some(b) => b.to_arc(scratch),
+        };
+        let empty = &self.empty;
+        let token = Token {
+            pos: local_str(
+                &mut self.pos[f.pos_id as usize],
+                empty,
+                dict.pos_name(f.pos_id),
+            ),
+            conj_type: local_str(
+                &mut self.conj_types[f.conj_type_id as usize],
+                empty,
+                dict.token_conj_type(f.conj_type_id),
+            ),
+            conj_form: local_str(
+                &mut self.conj_forms[f.conj_form_id as usize],
+                empty,
+                dict.token_conj_form(f.conj_form_id),
+            ),
+            surface,
+            start,
+            end,
+            base_form,
+            reading,
+            pronunciation,
+            word_cost,
+            is_known: true,
+        };
+        if token.surface.len() <= TOKEN_CACHE_MAX_SURFACE {
+            self.slots[slot] = Some((entry_id, token.clone()));
         }
         Ok(token)
     }
+
+    /// 未知語のトークン（品詞は文字種ごとのテンプレート、原形は表層形、読みは空）。
+    /// [`TokenBuilder::prepare`] の後に呼ぶ
+    fn unknown(
+        &mut self,
+        dict: &Dictionary,
+        type_idx: usize,
+        surface: &str,
+        start: usize,
+        end: usize,
+        word_cost: i16,
+    ) -> Token {
+        let surface: Arc<str> = Arc::from(surface);
+        let empty = &self.empty;
+        Token {
+            pos: local_str(
+                &mut self.unk_pos[type_idx],
+                empty,
+                &dict.unk_info(type_idx).pos,
+            ),
+            conj_type: Arc::clone(empty),
+            conj_form: Arc::clone(empty),
+            base_form: Arc::clone(&surface),
+            reading: Arc::clone(empty),
+            pronunciation: Arc::clone(empty),
+            surface,
+            start,
+            end,
+            word_cost,
+            is_known: false,
+        }
+    }
+}
+
+impl Lattice {
+    fn new() -> Self {
+        Lattice {
+            ends: Vec::with_capacity(ENDS_RETAINED),
+            used: 0,
+            path: Vec::with_capacity(64),
+        }
+    }
+
+    /// 文字数 `len` のチャンクのために空にして BOS を置く（終了位置は 0..=len）
+    ///
+    /// 列の確保はチャンクをまたいで使い回す。空にするのは直前のチャンクで使った列だけ
+    fn reset(&mut self, len: usize) {
+        for v in &mut self.ends[..self.used] {
+            v.clear();
+        }
+        let positions = len + 1;
+        if self.ends.len() < positions {
+            self.ends.resize_with(positions, Vec::new);
+        } else {
+            self.ends.truncate(positions.max(ENDS_RETAINED));
+        }
+        self.used = positions;
+        self.ends[0].push(Node::BOS);
+    }
+}
+
+/// `prevs`（ある位置で終わるノード）のうち、左文脈の行 `row` で接続したときに累積コストが最小のもの
+///
+/// Returns: (累積コスト + 接続コスト, `prevs` の中での番号)。同点なら先に追加したノード（`<` の先勝ち）。
+/// `prevs` が空なら (i64::MAX, 0)
+#[inline]
+fn best_prev(prevs: &[Node], row: &[i16]) -> (i64, u32) {
+    let mut best_cost = i64::MAX;
+    let mut best_prev = 0;
+    for (k, p) in prevs.iter().enumerate() {
+        let total = p.cost + row[p.right_id as usize] as i64;
+        if total < best_cost {
+            best_cost = total;
+            best_prev = k as u32;
+        }
+    }
+    (best_cost, best_prev)
 }
 
 impl LatticeWorkspace {
     pub fn new() -> Self {
         LatticeWorkspace {
-            nodes: Vec::with_capacity(4096),
-            costs: Vec::with_capacity(4096),
-            prevs: Vec::with_capacity(4096),
-            end_nodes: Vec::with_capacity(1024),
-            decode_scratch: String::with_capacity(64),
-            token_cache: TokenCache::new(),
+            chars: ChunkChars::default(),
+            lattice: Lattice::new(),
+            tokens: TokenBuilder::new(),
         }
-    }
-
-    fn clear(&mut self, byte_len: usize) {
-        self.nodes.clear();
-        self.costs.clear();
-        self.prevs.clear();
-        let positions = byte_len + 1;
-        for v in self.end_nodes.iter_mut() {
-            v.clear();
-        }
-        if self.end_nodes.len() < positions {
-            self.end_nodes.resize_with(positions, Vec::new);
-        } else {
-            self.end_nodes.truncate(positions);
-        }
-    }
-
-    #[inline]
-    fn add_node(&mut self, end_pos: usize, node: LatticeNode, total_cost: i64) {
-        let idx = self.nodes.len() as u32;
-        self.nodes.push(node);
-        self.costs.push(total_cost);
-        self.prevs.push(NO_PREV);
-        self.end_nodes[end_pos].push(idx);
     }
 
     /// ラティスを構築して Viterbi で最良パスを求める
@@ -539,37 +765,54 @@ impl LatticeWorkspace {
     /// 辞書の不正な参照（範囲外の群・文脈 ID・素性レコード、壊れた trie）を見つけたら
     /// [`DictError::Corrupt`] を返す。検証済みの辞書（`hasami info --verify`）では起きない。
     pub fn tokenize(&mut self, input: &str, dict: &Dictionary) -> Result<Vec<Token>, DictError> {
+        let mut tokens = Vec::new();
+        self.tokenize_into(input, dict, 0, &mut tokens)?;
+        Ok(tokens)
+    }
+
+    /// [`LatticeWorkspace::tokenize`] の結果を `out` の末尾に足す。トークンの位置には `offset` を足す
+    ///
+    /// 文脈による読みの補正は、足したトークンの中だけで行う（`out` にあった前のトークンは見ない）。
+    /// エラーのときは `out` に途中までのトークンが残りうる。
+    pub fn tokenize_into(
+        &mut self,
+        input: &str,
+        dict: &Dictionary,
+        offset: usize,
+        out: &mut Vec<Token>,
+    ) -> Result<(), DictError> {
         if input.is_empty() {
-            return Ok(Vec::new());
+            return Ok(());
         }
         let view = dict.view();
-        let classifier = dict.classifier();
-        let byte_len = input.len();
-        self.clear(byte_len);
+        self.chars.fill(input, dict, &view.trie);
+        let chars = &self.chars;
+        let n = chars.len();
+        let lattice = &mut self.lattice;
+        lattice.reset(n);
 
-        // BOS ノード
-        self.add_node(
-            0,
-            LatticeNode {
-                start: 0,
-                end: 0,
-                entry_id: BOUNDARY_ID,
-                left_id: 0,
-                right_id: 0,
-                word_cost: 0,
-                char_type: CharType::Default,
-            },
-            0,
-        );
-
-        // 各文字位置から辞書引き + 未知語生成
-        for (byte_pos, c) in input.char_indices() {
+        // 各文字位置から辞書引き + 未知語生成。ノードは開始位置の昇順に追加するので、位置 i に来た
+        // ときには i で終わるノードがすべて揃っていて、追加するノードの最良の前ノードをその場で決められる
+        // （同点は先に追加した前ノードが勝つ）。i で終わるノードが無い位置には BOS から辿り着けないので、
+        // そこから始まるノードは作らない
+        for i in 0..n {
+            let (done, rest) = lattice.ends.split_at_mut(i + 1);
+            let prevs = &done[i];
+            if prevs.is_empty() {
+                continue;
+            }
+            // rest[k] は位置 i + 1 + k で終わるノードの列
+            let mut push = |end: usize, node: Node| rest[end - i - 1].push(node);
             let mut has_known = false;
             let mut corrupt: Option<DictError> = None;
 
             // 群 = trie の値が指すエントリから、群の最後の印が立つエントリまで
-            view.trie
-                .common_prefix_search(input, byte_pos, |end, group| {
+            view.trie.common_prefix_search_codes(
+                input,
+                &chars.codes,
+                &chars.offsets,
+                i,
+                |end, group| {
                     if corrupt.is_some() {
                         return;
                     }
@@ -589,18 +832,17 @@ impl LatticeWorkspace {
                             )));
                             return;
                         }
-                        self.add_node(
+                        let (cost, prev) = best_prev(prevs, view.matrix_row(left_id));
+                        push(
                             end,
-                            LatticeNode {
-                                start: byte_pos as u32,
-                                end: end as u32,
-                                entry_id: id as u32,
-                                left_id,
+                            Node {
+                                cost: cost + e.cost as i64,
+                                entry: id as u32,
+                                prev,
+                                start: i as u32,
                                 right_id,
                                 word_cost: e.cost,
-                                char_type: CharType::Default,
                             },
-                            i64::MAX,
                         );
                         has_known = true;
                         if e.is_last() {
@@ -608,139 +850,83 @@ impl LatticeWorkspace {
                         }
                         id += 1;
                     }
-                })?;
+                },
+            )?;
             if let Some(e) = corrupt {
                 return Err(e);
             }
 
             // 未知語処理（文字種ごとの先頭のテンプレートだけを使う）
-            let char_type = classifier.classify_char(c);
-            let unk = dict.unk_info(type_index(char_type));
+            let type_idx = chars.types[i] as usize;
+            let unk = dict.unk_info(type_idx);
             if unk.invoke || !has_known {
-                let single_len = c.len_utf8();
-                let (left_id, right_id, cost) = (unk.left_id, unk.right_id, unk.cost);
-                let unk_node = |end: usize| LatticeNode {
-                    start: byte_pos as u32,
-                    end: end as u32,
-                    entry_id: UNK_FLAG,
-                    left_id,
-                    right_id,
-                    word_cost: cost,
-                    char_type,
+                // この位置の未知語は left_id が同じなので、最良の前ノードは 1 度だけ求める
+                let (cost, prev) = best_prev(prevs, view.matrix_row(unk.left_id));
+                let node = Node {
+                    cost: cost + unk.cost as i64,
+                    entry: UNK_FLAG | type_idx as u32,
+                    prev,
+                    start: i as u32,
+                    right_id: unk.right_id,
+                    word_cost: unk.cost,
                 };
-
-                // コールバックで直接ノード追加（Vec アロケーション排除）
                 let mut added_single = false;
-                classifier.group_at_cb(input, byte_pos, |group_len, _| {
-                    let end = byte_pos + group_len;
-                    if group_len == single_len {
+                unk.grouping.for_each_unk_len(chars.runs[i], |len| {
+                    if len == 1 {
                         added_single = true;
                     }
-                    self.add_node(end, unk_node(end), i64::MAX);
+                    push(i + len as usize, node);
                 });
 
                 // 1文字未知語がまだなければ追加
                 if !added_single {
-                    let single_end = byte_pos + single_len;
-                    self.add_node(single_end, unk_node(single_end), i64::MAX);
+                    push(i + 1, node);
                 }
             }
         }
 
-        // --- Viterbi forward pass (separate costs/prevs arrays for cache locality) ---
-        for end_pos in 1..=byte_len {
-            for ni_idx in 0..self.end_nodes[end_pos].len() {
-                let node_idx = self.end_nodes[end_pos][ni_idx] as usize;
-                let node = self.nodes[node_idx];
-                // 転置した行列の、この語の left_id の行を前の語の right_id で引く
-                let row = view.matrix_row(node.left_id);
-                let node_word_cost = node.word_cost as i64;
-
-                let mut best_cost = i64::MAX;
-                let mut best_prev = NO_PREV;
-                for &prev_idx in &self.end_nodes[node.start as usize] {
-                    let prev_total = self.costs[prev_idx as usize];
-                    if prev_total == i64::MAX {
-                        continue;
-                    }
-                    let conn_cost = row[self.nodes[prev_idx as usize].right_id as usize] as i64;
-                    let total = prev_total + conn_cost + node_word_cost;
-                    if total < best_cost {
-                        best_cost = total;
-                        best_prev = prev_idx;
-                    }
-                }
-
-                self.costs[node_idx] = best_cost;
-                self.prevs[node_idx] = best_prev;
-            }
+        // --- EOS（left_id 0）の最良前ノードからトレースバック ---
+        // 位置 n にはいつも辿り着ける（辿り着ける位置からは、既知語か未知語で必ず先へ進める。ノードは
+        // 入力の外で終わらない）。辿り着けなければトークンを出さない（前ノードの無いパスと同じ扱い）
+        let eos_prevs = &lattice.ends[n];
+        debug_assert!(!eos_prevs.is_empty(), "the end of the chunk is unreachable");
+        if eos_prevs.is_empty() {
+            return Ok(());
         }
-
-        // --- EOS（left_id 0）の最良前ノード決定 ---
-        let eos_row = view.matrix_row(0);
-        let mut best_cost = i64::MAX;
-        let mut best_last = NO_PREV;
-        for &prev_idx in &self.end_nodes[byte_len] {
-            let prev_total = self.costs[prev_idx as usize];
-            if prev_total == i64::MAX {
-                continue;
-            }
-            let conn_cost = eos_row[self.nodes[prev_idx as usize].right_id as usize] as i64;
-            let total = prev_total + conn_cost;
-            if total < best_cost {
-                best_cost = total;
-                best_last = prev_idx;
-            }
-        }
-
-        // --- トレースバック ---
-        let mut path = Vec::with_capacity(32);
-        let mut current = best_last;
-        while current != NO_PREV {
-            let ci = current as usize;
-            if self.nodes[ci].is_boundary() {
+        let (_, last) = best_prev(eos_prevs, view.matrix_row(0));
+        lattice.path.clear();
+        let (mut pos, mut idx) = (n, last as usize);
+        loop {
+            let node = lattice.ends[pos][idx];
+            if node.is_boundary() {
                 break;
             }
-            path.push(current);
-            current = self.prevs[ci];
+            lattice.path.push((pos as u32, idx as u32));
+            (pos, idx) = (node.start as usize, node.prev as usize);
         }
-        path.reverse();
 
         // --- トークン生成（表層形は入力の部分文字列から作る） ---
-        let mut tokens: Vec<Token> = Vec::with_capacity(path.len());
-        for &idx in &path {
-            let node = self.nodes[idx as usize];
-            let (start, end) = (node.start as usize, node.end as usize);
+        let first = out.len();
+        out.reserve(lattice.path.len());
+        self.tokens.prepare(dict);
+        for &(end_pos, idx) in lattice.path.iter().rev() {
+            let node = lattice.ends[end_pos as usize][idx as usize];
+            let start = chars.offsets[node.start as usize] as usize;
+            let end = chars.offsets[end_pos as usize] as usize;
             let surface = &input[start..end];
-            if node.is_known() {
-                tokens.push(self.token_cache.known_token(
-                    dict,
-                    node.entry_id,
-                    surface,
-                    start,
-                    end,
-                    node.word_cost,
-                    &mut self.decode_scratch,
-                )?);
-            } else {
-                let surface: Arc<str> = Arc::from(surface);
-                tokens.push(Token {
-                    start,
-                    end,
-                    pos: Arc::clone(&dict.unk_info(type_index(node.char_type)).pos),
-                    conj_type: Arc::clone(&EMPTY_ARC),
-                    conj_form: Arc::clone(&EMPTY_ARC),
-                    base_form: Arc::clone(&surface),
-                    reading: Arc::clone(&EMPTY_ARC),
-                    pronunciation: Arc::clone(&EMPTY_ARC),
-                    surface,
-                    word_cost: node.word_cost,
-                    is_known: false,
-                });
-            }
+            let (start, end) = (offset + start, offset + end);
+            out.push(match node.unknown_type() {
+                None => self
+                    .tokens
+                    .known(dict, node.entry, surface, start, end, node.word_cost)?,
+                Some(type_idx) => {
+                    self.tokens
+                        .unknown(dict, type_idx, surface, start, end, node.word_cost)
+                }
+            });
         }
-        apply_contextual_readings(&mut tokens);
-        Ok(tokens)
+        apply_contextual_readings(&mut out[first..]);
+        Ok(())
     }
 }
 
@@ -914,7 +1100,7 @@ mod tests {
     #[test]
     fn test_lattice_workspace_default() {
         let ws = LatticeWorkspace::default();
-        assert_eq!(ws.nodes.capacity(), 4096);
+        assert_eq!(ws.lattice.ends.capacity(), 1024);
     }
 
     #[test]
@@ -926,6 +1112,86 @@ mod tests {
         let tokens = ws.tokenize(&input, &dict).unwrap();
         let reconstructed: String = tokens.iter().map(|t| &*t.surface).collect();
         assert_eq!(reconstructed, input);
+    }
+
+    fn describe(tokens: &[Token]) -> Vec<(String, usize, usize, String, i16, bool)> {
+        tokens
+            .iter()
+            .map(|t| {
+                (
+                    t.surface.to_string(),
+                    t.start,
+                    t.end,
+                    t.pos.to_string(),
+                    t.word_cost,
+                    t.is_known,
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn test_tokenize_into_appends_with_offset() {
+        let dict = make_test_dict();
+        let mut ws = LatticeWorkspace::new();
+        let expected = ws.tokenize("東京都に住んでいる", &dict).unwrap();
+
+        let mut out = ws.tokenize("住んでいる", &dict).unwrap();
+        let before = describe(&out);
+        ws.tokenize_into("東京都に住んでいる", &dict, 100, &mut out)
+            .unwrap();
+        // 前にあったトークンはそのまま、後ろに位置をずらして足す
+        assert_eq!(describe(&out[..before.len()]), before);
+        let appended = &out[before.len()..];
+        assert_eq!(appended.len(), expected.len());
+        for (a, e) in appended.iter().zip(&expected) {
+            assert_eq!((a.start, a.end), (e.start + 100, e.end + 100));
+            assert_eq!(&*a.surface, &*e.surface);
+        }
+        // 空の入力は何も足さない
+        ws.tokenize_into("", &dict, 5, &mut out).unwrap();
+        assert_eq!(out.len(), before.len() + expected.len());
+    }
+
+    #[test]
+    fn test_workspace_reuse_across_lengths() {
+        // 長い入力（ノード列を残す上限を超える長さを含む）と短い入力を交互に解析しても、
+        // 新しいワークスペースで解析したときと同じ結果になる
+        let dict = make_test_dict();
+        let unit = "東京都に住んでいるXYZ。";
+        let unit_chars = unit.chars().count();
+        let inputs: Vec<String> = [0, 3, 1, 100, 1, ENDS_RETAINED / unit_chars + 2, 2, 50, 0]
+            .iter()
+            .map(|&n| format!("{}住む", unit.repeat(n)))
+            .collect();
+        let mut ws = LatticeWorkspace::new();
+        for input in inputs.iter().chain(inputs.iter().rev()) {
+            let expected = describe(&LatticeWorkspace::new().tokenize(input, &dict).unwrap());
+            assert_eq!(describe(&ws.tokenize(input, &dict).unwrap()), expected);
+            assert!(ws.lattice.ends.len() > input.chars().count());
+        }
+        // 長い入力のあとも、残すノード列は上限まで
+        ws.tokenize("住む", &dict).unwrap();
+        assert!(ws.lattice.ends.len() <= ENDS_RETAINED);
+    }
+
+    #[test]
+    fn test_token_strings_are_not_shared_between_workspaces() {
+        // 品詞・活用・空文字列の Arc は解析器ごとの写し。別の解析器（別のスレッド）と参照カウントを
+        // 取り合わない。同じ解析器の中では使い回す
+        let dict = make_test_dict();
+        let mut a = LatticeWorkspace::new();
+        let mut b = LatticeWorkspace::new();
+        let ta = a.tokenize("東京都XYZ", &dict).unwrap();
+        let tb = b.tokenize("東京都XYZ", &dict).unwrap();
+        let ta2 = a.tokenize("東京都XYZ", &dict).unwrap();
+        for i in 0..ta.len() {
+            assert_eq!(ta[i].pos, tb[i].pos);
+            assert!(!Arc::ptr_eq(&ta[i].pos, &tb[i].pos));
+            assert!(!Arc::ptr_eq(&ta[i].conj_type, &tb[i].conj_type));
+            assert!(Arc::ptr_eq(&ta[i].pos, &ta2[i].pos));
+            assert!(Arc::ptr_eq(&ta[i].conj_type, &ta2[i].conj_form));
+        }
     }
 
     #[test]
