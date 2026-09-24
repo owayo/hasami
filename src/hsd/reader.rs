@@ -584,6 +584,11 @@ impl Dictionary {
         })
     }
 
+    /// 全表層形（重複なし、バイト順）。文分割の例外表の抽出などに使う
+    pub fn surfaces(&self) -> Result<Vec<String>, DictError> {
+        Ok(self.groups()?.into_iter().map(|(_, key)| key).collect())
+    }
+
     /// 表層形と群の先頭を集め、群の先頭の昇順（= 表層形のバイト順）に並べる
     fn groups(&self) -> Result<Vec<(u32, String)>, DictError> {
         let mut keys = self.trie().keys()?;

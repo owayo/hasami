@@ -4,16 +4,19 @@
 //! ロード時に全体を検証して `Vec<Arc<str>>` に 1 回だけ実体化する。
 
 use super::DictError;
+#[cfg(feature = "build")]
 use std::collections::HashMap;
 use std::sync::Arc;
 
 /// 表の文字列を出現順に重複なく集める
+#[cfg(feature = "build")]
 #[derive(Default)]
 pub struct StringTableBuilder {
     ids: HashMap<Arc<str>, u32>,
     strings: Vec<Arc<str>>,
 }
 
+#[cfg(feature = "build")]
 impl StringTableBuilder {
     /// 文字列の番号を返す（初めて見る文字列なら末尾に足す）
     pub fn intern(&mut self, s: &str) -> u32 {
@@ -96,7 +99,7 @@ pub fn parse(bytes: &[u8], what: &str, max_count: usize) -> Result<Vec<Arc<str>>
     Ok(strings)
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "build"))]
 mod tests {
     use super::*;
 
