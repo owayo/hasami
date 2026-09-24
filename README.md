@@ -118,13 +118,38 @@ make dict-clean
 
 | 辞書 | 作り方 |
 | --- | --- |
-| `ipadic.hsd` | IPAdic を build し、外国人名の姓・名だけを除く（発音の修復は掛けない） |
+| `ipadic.hsd` | IPAdic を `scripts/prepare_ipadic.py` で整えて build し、外国人名の姓・名だけを除く（発音の修復は掛けない） |
 | `ipadic-neologd.hsd` | IPAdic に NEologd の seed を merge し、repair 一式（範囲外 ID・表記ゆれ・漢数字の人名・`dict/user-remove/*.csv`）を掛けてから `dict/user/*.csv` を足す |
-| `ipadic-neologd-sudachi.hsd` | IPAdic + NEologd に SudachiDict を変換して merge し、同じ repair 一式を掛ける |
+| `ipadic-neologd-sudachi.hsd` | IPAdic + NEologd に SudachiDict の raw 辞書を `scripts/convert_sudachi_raw.py` で変換して merge し、同じ repair 一式を掛ける |
+
+`scripts/prepare_ipadic.py` は上流の IPAdic を書き換えずに、次の 2 点を変えたソースを作る（何を変えたかは
+辞書のメタデータ `ipadic_patch` に残る）。
+
+- **記号の未知語**: IPAdic の char.def は `— 。 、 「 ♪ ⇒` などを SYMBOL（まとめて 1 語）にし、unk.def はその未知語を
+  「名詞,サ変接続」にする。このままだと辞書に無い記号の並びが句点ごと 1 つの名詞になる（「楽しみたい——。」の「——。」）。
+  SYMBOL を「既知語がある位置では未知語を作らず、作るときも 1 文字ずつ」「記号,一般」に変える
+- **EUC-JP の変換差**: IPAdic の CSV は EUC-JP で、ダッシュ・波ダッシュ・マイナスなど 7 字は変換表によって
+  写し先が分かれる。hasami は JIS の対応表どおり（MeCab と同じ）「—」「〜」「−」に写し、Windows 由来の文章が使う
+  「―」「～」「－」の別表記を表層形に足す（33 語。「あ〜」と「あ～」のどちらでも感動詞「アー」になる）
+
+SudachiDict は内容語（名詞・固有名詞・形状詞・連体詞・副詞・接続詞・感動詞・動詞・形容詞）と記号だけを取り込み、
+IPAdic・NEologd・`dict/user` に表層形がある語は落とす。品詞は IPAdic 体系に写し、文脈 ID は IPAdic の left-id.def から
+引く（対応する ID が無い品詞・活用形は取り込まない）。原形は SudachiDict の辞書形なので、活用語の原形が正しくなる
+（「誤っ」→「誤る」、「示し」→「示す」、「読み込み」→「読み込む」）。取り込み範囲はニュース 2 万行で比べて決めた。
+
+| 取り込む範囲 | 追加語数 | 読みが変わる行 | 解析時間（IPAdic + NEologd 比） |
+| --- | --- | --- | --- |
+| 旧方式（変換済み CSV を範囲外 ID ごと取り込み） | +179 万 | 49.3% | 1.75〜1.9 倍 |
+| 全品詞・既存語との重複を残す | +141 万 | 37.8% | 1.22〜1.29 倍 |
+| 名詞・表層形が既存語と同じなら落とす | +24 万 | 5.6% | 1.0 倍 |
+| **内容語 + 記号・表層形が同じなら落とす（採用）** | +40 万 | 7.0% | 1.0〜1.03 倍 |
+
+採用した範囲で読みが変わった箇所を無作為に 60 件見ると、改善 48・悪化 5・同等 7 だった（改善は英単語の読み
+「cafe→カフェ」、複合語「加齢→カレイ」、半角記号が名詞でなく記号になる、など）。
 
 上流はすべて版を固定している（IPAdic・NEologd は git の commit、SudachiDict はダウンロードの SHA-256）。
 取得物と、repair を掛ける前の中間辞書は `.dict-src/` に置き、取得物は 2 回目以降は再取得しない。
-3 辞書の作り直しは取得済みなら数分で終わる（推奨辞書の repair は 1 回 30 秒ほど）。
+3 辞書の作り直しは取得済みなら 5 分ほどで終わる（うち SudachiDict の変換が 3 分、最大 RSS は約 3GB）。
 
 `dict/user/*.csv` には `#` で始まるコメント行を書ける。`#` で始まってもエントリの列数（13 列）が
 そろった行は語として読む（NEologd には `#` で始まるハッシュタグの語がある）。
@@ -140,7 +165,31 @@ hasami build --input ./ipadic/ --output dict.hsd
 # 既存辞書にCSVを追加マージ
 hasami merge --dict dict.hsd --input custom_words.csv
 hasami merge --dict dict.hsd --input ./extra_dict/ --output merged.hsd
+
+# メタデータ（辞書名・品詞体系・上流の版）を付ける
+hasami build --input ./unidic/ --output unidic.hsd --meta pos_scheme=unidic --meta sources=unidic-cwj@202512
+
+# 辞書の情報と全件検証、MeCab 形式 CSV（活用型・活用形付き）への書き出し
+hasami info --dict dict.hsd --verify
+hasami export --dict dict.hsd --output lex.csv
 ```
+
+### 辞書形式 (.hsd)
+
+`.hsd` は v4 形式（64 バイトのヘッダ + セクション表 + 64 バイト境界のセクション）。mmap してそのまま参照するので、
+ロードはヘッダと小さな表の検査だけで 1ms 前後、解析で触れたページだけが読み込まれる。
+
+- 表層形は文字単位の double-array trie（単独の末尾は圧縮）に持ち、エントリは 1 件 6 バイト
+- 品詞・活用型・活用形・読み・発音・原形は重複を除いた素性レコードに持ち、最良パスの語だけ復号する
+- 辞書の中身はメタデータ（`hasami info` で表示）に名前・品詞体系・上流の版・掛けた repair が残る
+- 壊れたファイルはロード時・解析時に `DictError` になる（panic しない）。全件の検査は `hasami info --verify`
+- v3 以前の `.hsd` は読めない。`scripts/build-dict.sh`（または `hasami build`）で作り直す
+- 書き出しは一時ファイルに書いてから rename で差し替える。読み込み中の辞書ファイルを直接書き換えてはいけない
+
+`--prune-dominated`（build / merge / repair）は、同じ表層形・同じ文脈 ID の中でコストが最小でないエントリを除いた
+最終辞書を作る。解析結果（1-best）は変わらないが、除いた辞書は merge・repair の入力にできない。配布辞書には掛けていない。
+
+形式の設計・試したこと・計測は [docs/hsd-format.md](docs/hsd-format.md) にまとめてある。
 
 ### 辞書の修復
 
@@ -161,7 +210,7 @@ hasami repair --dict dict/ipadic-neologd-sudachi.hsd \
 | 対象 | 内容 |
 | --- | --- |
 | `--drop-invalid-context-ids` | 接続行列の範囲外の文脈 ID を持つエントリを削除する。範囲外の ID は接続コスト 0 として扱われ、他の候補に不当に勝つ。推奨辞書には、SudachiDict の文脈 ID のまま混入した重複が 137 万件ある |
-| 壊れた発音（常時） | 発音フィールドに表層形が入っているエントリ（SudachiDict 由来）を、同じ (表層形, 読み) を持つ健全なエントリの発音形で置き換える。借用できなければ読みを使い、読みもラテン文字のままなら空にして解析時の読み補完に委ねる。発音も読みもカタカナでない記号（「、」「「」等）の読みも空になる。`--no-pronunciation-repair` で省ける（削除リストだけを適用したいとき） |
+| 壊れた発音（常時） | 発音フィールドに表層形が入っているエントリ（SudachiDict 由来）を、同じ (表層形, 読み) を持つ健全なエントリの発音形で置き換える。借用できなければ読みを使い、読みもラテン文字のままなら空にして解析時の読み補完に委ねる。記号（「、」「。」「「」等）は読み・発音に記号そのものを持つ（MeCab・OpenJTalk と同じ）ので変えない。`--no-pronunciation-repair` で省ける（削除リストだけを適用したいとき） |
 | `--drop-ortho-variants` | 活用語・機能語と衝突する名詞エントリを削除する。「高い」→「高位(コウイ)」、「学ぶ」→「学部(ガクブ)」等が形容詞・動詞に勝って誤読になるのを防ぐ。代名詞と衝突する 1 文字の人名（「何」→姓の「ガ」）も落とす |
 | `--drop-numeral-misreadings` | 漢数字だけで綴られた固有名詞を削除する。「十五(トウゴ)」「二十八(ツチヤ)」等が数詞に勝つのを防ぐ。「万一」「八百万」のような一般語・副詞は残す |
 | `--remove <CSV>` | CSV に列挙したエントリを削除する。列は `表層形,読み[,品詞]`。3 列目の品詞 (例 `"名詞,固有名詞,人名"`) を書くと、その品詞で始まるエントリだけを消す。品詞は `,` で区切った要素ごとに前から比べる。3 列目を省くと品詞を問わず消す。どのエントリにも当たらなかった行は件数と例を表示する |
@@ -500,7 +549,7 @@ NEologd は Apache License 2.0 に加え、IPAdic のライセンス条件も適
 
 #### SudachiDict (`dict/ipadic-neologd-sudachi.hsd`)
 
-[SudachiDict](https://github.com/WorksApplications/SudachiDict) Core の語彙データを変換して構築。統合辞書では品詞体系を IPAdic 互換にリマッピングしています。
+[SudachiDict](https://github.com/WorksApplications/SudachiDict) の raw 辞書ソース（small + core）の語彙データを変換して構築。統合辞書では品詞体系と文脈 ID を IPAdic に写しています。
 
 > Copyright (c) 2017-2023 Works Applications Co., Ltd.
 >

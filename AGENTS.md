@@ -109,17 +109,18 @@ make dict-clean           # ダウンロードした辞書ソースと中間辞�
 
 | ソース | 欠陥 | 影響 | 対処 |
 | --- | --- | --- | --- |
-| SudachiDict | `.dict-src/sudachi/sudachi.csv` の発音フィールド（13列目）が表層形のまま。92% が非カタカナ | 「方法」の発音が「ホーホー」でなく「ホウホウ」になり長音が失われる。読みがラテン文字の語（Siemens 等）は読みが消える | `repair`（常時） |
+| SudachiDict | raw 辞書に発音の列が無い（旧版の変換 CSV は発音に表層形が入っていた） | 発音が読みのままだと「方法」が「ホーホー」でなく「ホウホウ」になり長音が失われる | `scripts/convert_sudachi_raw.py` は発音に読みを入れ、`repair`（常時）が同じ語の健全なエントリから長音の発音を借りるか組み立てる |
 | NEologd | 表記ゆれ正規化エントリが活用語の語形を名詞として登録している | 「質の高い」→「シツノコウイ」、「概念を学ぶ」→「ガイネンヲガクブ」 | `repair --drop-ortho-variants` |
 | NEologd / SudachiDict | 漢数字だけで綴られた人名・地名 | 「十五」→「トウゴ」、「二十八」→「ツチヤ」 | `repair --drop-numeral-misreadings` |
 | SudachiDict | 代名詞と同じ表層の 1 文字の人名 | 「何なのか」→「ガナノカ」 | `repair --drop-ortho-variants` |
 | NEologd `mecab-user-dict-seed` | 読みが別語のものに差し替わっているエントリが散在する | 「最終面接」→「イチジメンセツ」、「目標数値」→「スウチモクヒョウ」、「情報収集」→「ジョホウシュウシュウ」 | `dict/user-remove/misreading-entries.csv` に列挙して `repair --remove` |
-| SudachiDict | IPAdic の文脈 ID に写し漏れ、SudachiDict の文脈 ID（接続行列の範囲外）のまま入った重複が 137 万件ある | 範囲外の ID は接続コスト 0 として扱われ、UniDic 体系の品詞の語が不当に勝つ | `repair --drop-invalid-context-ids`（build / merge / repair は範囲外 ID をエラーにする） |
+| SudachiDict（旧版の変換） | IPAdic の文脈 ID に写し漏れ、SudachiDict の文脈 ID（接続行列の範囲外）のまま入った重複が 137 万件あった | 範囲外の ID は接続コスト 0 として扱われ、UniDic 体系の品詞の語が不当に勝つ | `scripts/convert_sudachi_raw.py` は ID を引けない語を取り込まない。古い辞書は `repair --drop-invalid-context-ids`（build / merge / repair は範囲外 ID をエラーにする） |
+| SudachiDict（旧版の変換） | 活用語の原形が表層形のまま（「示し」の原形が「示し」） | 原形で動詞を引く処理（noslop の述語照合など）が空振りする | raw 変換は SudachiDict の辞書形を原形にする（「示す」「誤る」「読み込む」） |
+| IPAdic | char.def が `— 。 、 「 ♪` などを SYMBOL（まとめて 1 語）にし、unk.def がその未知語を「名詞,サ変接続」にする | 辞書に無い記号の並びが句点ごと 1 つの名詞になる（「楽しみたい——。」の「——。」） | `scripts/prepare_ipadic.py` が SYMBOL を「既知語がある位置では作らない・1 文字ずつ・記号,一般」に変える |
+| IPAdic | CSV が EUC-JP で、ダッシュ・波ダッシュ・マイナス等 7 字は変換表で写し先が分かれる | encoding_rs（WHATWG）の変換だと「—」「〜」「−」の語が辞書に無くなる | `DictBuilder::decode_to_utf8` が JIS の対応表（MeCab と同じ字）にそろえ、`prepare_ipadic.py` が Windows 側の「―」「～」「－」の別表記を足す |
+| IPAdic | 「−」「－」を「ヒク」と読む | 文章ではハイフン代わりが多く「K−POP」が「ケーヒクポップ」になる | `dict/user-remove/misreading-entries.csv`（NEologd を含む 2 辞書） |
 | IPAdic / NEologd / SudachiDict | 中国・朝鮮系の姓・名（1 文字姓の音読み、朝鮮語・普通話の字音で読む名、カタカナの外国人名） | 「金がない」→「キムガナイ」（朝鮮の姓の「金(キム)」）。「何なのか」→「ガナノカ」 | `dict/user-remove/foreign-names.csv` を `repair --remove`。生成は `scripts/find_foreign_names.py`（README の「外国人名の除去」） |
 
-`convert_sudachi_to_mecab.py` は現在 `pronunciation = reading` で出力するが、
-`.dict-src/sudachi/sudachi.csv` は旧版スクリプトの出力が残っているため上記の欠陥を持つ。
-CSV から辞書を作り直す場合は変換をやり直すこと。
 
 ### 文脈で決まる読み
 
