@@ -347,19 +347,24 @@ crates.io には公開していない（`hasami` の名前は別のプロジェ�
 
 ```toml
 [dependencies]
-# 解析だけ（Analyzer・Dictionary・sentence）。依存は memmap2 と bytemuck だけになる
-hasami = { git = "https://github.com/owayo/hasami", default-features = false }
+# 解析まで（Analyzer・Dictionary・Token と sentence）。依存は memmap2 と bytemuck だけになる
+hasami = { git = "https://github.com/owayo/hasami", default-features = false, features = ["analyzer"] }
+# 文分割（sentence）だけなら。依存は無い
+# hasami = { git = "https://github.com/owayo/hasami", default-features = false }
 # 辞書も作るなら（DictBuilder、MeCab 形式 CSV の読み書き）
 # hasami = { git = "https://github.com/owayo/hasami", default-features = false, features = ["build"] }
 ```
 
 | feature | 中身 | 追加の依存 |
 | --- | --- | --- |
-| （なし） | 解析（`Analyzer`・`Dictionary`・`Token`・`sentence`）、C FFI | memmap2, bytemuck |
-| `build` | 辞書の構築・修復・書き出し（`DictBuilder`、`write_lexicon_csv`） | csv, encoding_rs, glob |
+| （なし） | 辞書の要らない文分割（`sentence`） | なし |
+| `analyzer` | 解析（`Analyzer`・`Dictionary`・`Token`・品詞の正規化）、C FFI | memmap2, bytemuck |
+| `build` | 辞書の構築・修復・書き出し（`DictBuilder`、`write_lexicon_csv`。`analyzer` を含む） | csv, encoding_rs, glob |
 | `cli` | `hasami` コマンド（`build` を含む） | clap, indicatif, serde_json |
 
 既定は `cli`（`cargo install` やこのリポジトリでのビルドで CLI が使える）。
+`default-features = false` だけで解析器を使っていた場合は `features = ["analyzer"]` を足す（`v26.9.100` までは
+feature なしでも解析器が入っていた）。
 
 **版の方針**: 版は `yy.m.counter` の日付版（例: `26.9.100`。リリースワークフローが年・月・月内の連番で付ける）で、
 semver の互換性は表さない。API と辞書形式はどの版でも変わりうるので、git 依存では
@@ -422,9 +427,23 @@ let mut analyzer = match hasami::Analyzer::load_default() {
 
 #### 文分割（辞書不要）
 
-`hasami::sentence` は辞書をロードせずに日本語の文境界を求める。括弧の対応を取ってから括弧の内側の文末記号を
-無視し、`Yahoo!ニュース`・`モーニング娘。`・`Hey!Say!JUMP` のように文末記号を含む語（推奨辞書から抽出した
-2 万語の例外表）の内側では切らない。URL の `?` や `!important` でも切らない。
+`hasami::sentence` は辞書をロードせずに日本語の文境界を求める（feature なしで使え、依存も無い）。
+括弧の対応を取ってから括弧の内側の文末記号を無視し、`Yahoo!ニュース`・`モーニング娘。`・`Hey!Say!JUMP` のように
+文末記号を含む語（推奨辞書から抽出した約 1.9 万語の例外表）の内側では切らない。URL の `?` や `!important`、
+数字に挟まれた全角ピリオド（`３．１４`・`第３．２節`）でも切らない。
+
+例外表の語は、次のように普通の文と取り違えないよう照合する（規則の全体は `src/sentence/mod.rs` の冒頭）。
+
+- 語の末尾の文末記号は、直後が続きの語（助詞と `から まで より って など だけ しか さえ くらい ぐらい ほど`）で
+  始まるときだけ守る。`もう もし もちろん とにかく やはり しかし` など文頭に立つ語で始まるなら切る。
+  `寒いね。` `好きだ。` のように普通の文末と同じ形で終わる語の後ろでは、`でも では とはいえ だけど` も文頭の語とみなす
+  （`高すぎ。でも買った。` `好きなのはモーニング娘。もう一度言う。` は 2 文、`Yahoo!では…` は 1 文）
+- 語の途中から一致したものは数えない（`食べる。` の中の `べる。`、`主流。` の中の `流。`）
+- 全角の英数字・記号は半角に畳んで比べる（`Yahoo！ニュース`・`Ｙａｈｏｏ！ニュース` も守る）
+
+例外表の索引はビルド時に作って埋め込むので、`Splitter::new` の初回と最初の分割は 1ms 未満で済む。表の版は
+`sentence::BUILTIN_EXCEPTIONS_VERSION`（`語の数-語のハッシュ`）で分かる。文末記号・括弧の判定は
+`is_sentence_ender`・`closing_bracket`・`is_closing_bracket`・`ascii_run_is_ender` で分割と同じ基準のまま使える。
 
 ```rust
 use hasami::sentence::{self, LineBreaks, SplitOptions};
@@ -443,6 +462,11 @@ let options = SplitOptions {
     ..SplitOptions::default()
 };
 let splitter = sentence::Splitter::new(&options);
+
+// 改行の字を取り除いた解析用のテキストを、元の改行の位置（バイト位置）で区切る
+let text = "一行目の途中で折り返して続く文。二文目";
+let breaks = ["一行目の途中で折り返して".len()];
+let sentences = sentence::Splitter::default().split_with_breaks(text, &breaks);
 ```
 
 形態素解析の前分割（ラティスを小さく保つための区切り）にも同じ規則を使っているので、例外表の語は解析でも割れない。
@@ -679,6 +703,11 @@ make dict
 ## ライセンス
 
 [MIT](LICENSE)
+
+ただし、ライブラリに埋め込む文分割の例外表（`src/sentence/builtin_exceptions.txt`）は配布辞書の表層形から抽出したもので、
+mecab-ipadic（NAIST-2003）・mecab-ipadic-NEologd（Apache-2.0）・SudachiDict（Apache-2.0。UniDic（BSD-3-Clause）を含む）に由来する。
+hasami をリンクしたバイナリには辞書を同梱しなくてもこの表が入るので、配布するときは
+[`src/sentence/builtin_exceptions.NOTICE`](src/sentence/builtin_exceptions.NOTICE) の表示を添える（詳細は [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md)）。
 
 ### 同梱辞書のライセンス
 
