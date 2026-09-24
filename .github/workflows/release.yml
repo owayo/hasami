@@ -178,9 +178,20 @@ jobs:
           name: ${{ matrix.asset_name }}
           path: ${{ matrix.asset_name }}
 
+  # 配布辞書はタグのコミットから作り、artifact `dictionaries` に上げる (バイナリの build と並列に走る)
+  dictionaries:
+    name: Dictionaries
+    needs: prepare-release
+    if: ${{ !inputs.dry_run }}
+    permissions:
+      contents: read
+    uses: ./.github/workflows/dict-build.yml
+    with:
+      ref: ${{ needs.prepare-release.outputs.tag }}
+
   release:
     name: Create Release
-    needs: [prepare-release, build]
+    needs: [prepare-release, build, dictionaries]
     if: ${{ !inputs.dry_run }}
     runs-on: ubuntu-latest
     steps:
@@ -189,10 +200,53 @@ jobs:
         with:
           path: artifacts
 
+      # バイナリ 5 つ、配布辞書 3 つ (生のままと zstd で圧縮したもの)、目録、辞書のライセンスを release/ に
+      # 平らに集め、過不足と目録の中身を確かめてから SHA256SUMS を作る
       - name: Prepare release files
+        env:
+          VERSION: ${{ needs.prepare-release.outputs.version }}
         run: |
           mkdir -p release
-          find artifacts -type f \( -name "*.tar.gz" -o -name "*.zip" \) -exec mv {} release/ \;
+          while IFS= read -r -d '' f; do
+            name=$(basename "$f")
+            if [ -e "release/$name" ]; then
+              echo "::error::添付ファイルの名前が重なる: $name"
+              exit 1
+            fi
+            mv "$f" "release/$name"
+          done < <(find artifacts -type f \( -name '*.tar.gz' -o -name '*.zip' -o -name '*.hsd' -o -name '*.hsd.zst' \
+            -o -name dictionaries.json -o -name THIRD_PARTY_LICENSES.md \) -print0)
+
+          expected=(
+            hasami-x86_64-unknown-linux-gnu.tar.gz
+            hasami-aarch64-unknown-linux-gnu.tar.gz
+            hasami-x86_64-apple-darwin.tar.gz
+            hasami-aarch64-apple-darwin.tar.gz
+            hasami-x86_64-pc-windows-msvc.zip
+            ipadic.hsd ipadic.hsd.zst
+            ipadic-neologd.hsd ipadic-neologd.hsd.zst
+            ipadic-neologd-sudachi.hsd ipadic-neologd-sudachi.hsd.zst
+            dictionaries.json
+            THIRD_PARTY_LICENSES.md
+          )
+          if ! diff -u <(printf '%s\n' "${expected[@]}" | LC_ALL=C sort) \
+            <(find release -type f -printf '%f\n' | LC_ALL=C sort); then
+            echo "::error::release/ のファイルが期待する添付ファイルと一致しない"
+            exit 1
+          fi
+
+          # 目録はこの版の hasami が作ったもので、載せた SHA-256 が添付するファイルと合う
+          # (hasami dict download は目録の SHA-256 で確かめる)
+          actual=$(jq -r .hasami_version release/dictionaries.json)
+          if [ "$actual" != "$VERSION" ]; then
+            echo "::error::dictionaries.json の hasami_version が $actual で、このリリースの版 $VERSION と一致しない"
+            exit 1
+          fi
+          jq -r '.dictionaries[] | "\(.sha256)  \(.file)", "\(.compressed.sha256)  \(.compressed.file)"' \
+            release/dictionaries.json | (cd release && sha256sum --check --strict -)
+
+          (cd release && sha256sum -- * > SHA256SUMS)
+          cat release/SHA256SUMS
           ls -la release/
 
       - name: Create Release
@@ -235,11 +289,64 @@ jobs:
             #### Windows
             Download `hasami-x86_64-pc-windows-msvc.zip`, extract, and add to PATH.
 
+            ### Dictionaries
+
+            hasami needs a dictionary. The dictionaries are not in the repository; they are attached to this release.
+
+            ```bash
+            hasami dict download        # the recommended dictionary, into ~/.local/share/hasami/ (%LOCALAPPDATA%\hasami on Windows)
+            hasami dict download --all  # all three dictionaries
+            hasami tokenize "形態素解析のテスト"  # uses the downloaded dictionary when --dict is omitted
+            ```
+
+            | Dictionary | Contents |
+            | --- | --- |
+            | `ipadic` | IPAdic |
+            | `ipadic-neologd` | IPAdic + NEologd |
+            | `ipadic-neologd-sudachi` | IPAdic + NEologd + SudachiDict (recommended) |
+
+            Each dictionary is attached as `<name>.hsd`. `<name>.hsd.zst` is the same dictionary compressed with zstd; `hasami dict download` fetches it and checks the SHA-256 after decompressing. `dictionaries.json` lists the dictionaries with their sizes and SHA-256, and `SHA256SUMS` covers every file of this release.
+
+            To download a dictionary with curl and verify it:
+
+            ```bash
+            base=https://github.com/${{ github.repository }}/releases/download/${{ needs.prepare-release.outputs.tag }}
+            curl -fL --remote-name-all "$base/ipadic-neologd-sudachi.hsd" "$base/SHA256SUMS"
+            grep ' ipadic-neologd-sudachi.hsd$' SHA256SUMS | sha256sum --check --strict -
+            ```
+
+            The dictionaries contain data from IPAdic, mecab-ipadic-NEologd and SudachiDict. Their licenses are in `THIRD_PARTY_LICENSES.md`; distribute it together with the dictionaries when you redistribute them.
+
           files: release/*
+          fail_on_unmatched_files: true
           draft: false
           prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # 公開した添付ファイルが release/ と名前・大きさ・状態まで一致するか (アップロードの取りこぼしを見つける)。
+      # GitHub がアップロード時に計算した SHA-256 (digest) を返していれば、それも照らす
+      - name: Verify release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.prepare-release.outputs.tag }}
+        run: |
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets > "$RUNNER_TEMP/assets.json"
+          find release -type f -printf '%f %s uploaded\n' | LC_ALL=C sort > "$RUNNER_TEMP/expected.txt"
+          jq -r '.assets[] | "\(.name) \(.size) \(.state)"' "$RUNNER_TEMP/assets.json" | LC_ALL=C sort \
+            > "$RUNNER_TEMP/published.txt"
+          if ! diff -u "$RUNNER_TEMP/expected.txt" "$RUNNER_TEMP/published.txt"; then
+            echo "::error::公開した添付ファイルが release/ のファイルと一致しない"
+            exit 1
+          fi
+
+          jq -r '.assets[] | select(.digest != null) | "\(.digest | ltrimstr("sha256:"))  \(.name)"' \
+            "$RUNNER_TEMP/assets.json" > "$RUNNER_TEMP/published.sha256"
+          if [ -s "$RUNNER_TEMP/published.sha256" ]; then
+            (cd release && sha256sum --check --strict --quiet "$RUNNER_TEMP/published.sha256")
+          else
+            echo "::warning::GitHub が添付ファイルの digest を返さなかったので、SHA-256 の照合を省いた"
+          fi
 
   release-summary:
     name: Release Summary

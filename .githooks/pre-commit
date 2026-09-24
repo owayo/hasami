@@ -1,32 +1,29 @@
 #!/bin/sh
-# Git LFS を通らずに大きなファイルがコミットされるのを止める。
+# 50MB を超えるファイルのコミットを止める。
 #
-# .gitattributes で LFS 対象にしていても、`git lfs install` していない環境では
-# フィルタが走らず実体が入る。そのまま積み上げると GitHub の 100MB 制限で push が
-# 通らなくなり、履歴を書き換えるしかなくなる（実際に 2 コミット分やり直した）。
+# 配布辞書 (dict/*.hsd) のような大きなファイルはリポジトリに置かず、リリースに添付する。
+# 一度コミットすると GitHub の 100MB 制限で push が通らなくなり、履歴を書き換えるしかなくなる。
 #
 # 有効にする: make setup-hooks
 
 limit=52428800 # 50MB
 
 fail=0
-for path in $(git diff --cached --name-only --diff-filter=AM); do
-	blob=$(git ls-files -s -- "$path" | awk '{print $2}')
-	[ -n "$blob" ] || continue
-	size=$(git cat-file -s "$blob" 2>/dev/null) || continue
+# パスは 1 行ずつ読む (空白やワイルドカードの文字を含む名前を分割・展開しない)。
+# :0:<パス> はインデックスに置いた内容
+while IFS= read -r path; do
+	[ -n "$path" ] || continue
+	size=$(git cat-file -s ":0:$path" 2>/dev/null) || continue
 	[ "$size" -gt "$limit" ] || continue
 
-	# LFS ポインタなら実体は LFS 側にあるので問題ない
-	if git cat-file -p "$blob" 2>/dev/null | head -c 45 | grep -q '^version https://git-lfs'; then
-		continue
-	fi
-
-	printf 'error: %s (%d MB) staged without Git LFS\n' "$path" "$((size / 1048576))" >&2
+	printf 'error: %s (%d MB) is larger than 50 MB\n' "$path" "$((size / 1048576))" >&2
 	fail=1
-done
+done <<EOF
+$(git -c core.quotePath=false diff --cached --name-only --diff-filter=AM)
+EOF
 
 if [ "$fail" -ne 0 ]; then
-	printf '\n`git lfs install` を実行し、`git add` し直してください。\n' >&2
-	printf '意図的に大きなファイルを入れる場合は --no-verify で回避できます。\n' >&2
+	printf '\n大きなファイルはコミットしない。配布辞書はリポジトリに置かず、リリースに添付する。\n' >&2
+	printf 'git restore --staged <path> で外してください。意図的に入れる場合は --no-verify で回避できます。\n' >&2
 	exit 1
 fi

@@ -5,6 +5,10 @@ hasami の辞書データと、ライブラリに埋め込む文分割の例外�
 添える表示は、「文分割の組み込みの例外表」の節と
 [`src/sentence/builtin_exceptions.NOTICE`](src/sentence/builtin_exceptions.NOTICE) にまとめた。
 
+配布辞書 (`ipadic.hsd`・`ipadic-neologd.hsd`・`ipadic-neologd-sudachi.hsd` と、それを zstd で圧縮した `.hsd.zst`) は
+リポジトリに置かず、リリースの添付ファイルとして配る。このファイルも同じリリースに添付する。辞書を再配布するときは、
+このファイルを一緒に配る。
+
 ## SudachiDict
 
 Copyright (c) 2017-2023 Works Applications Co., Ltd.
