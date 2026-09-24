@@ -247,14 +247,20 @@ fn pos_has_prefix<S: AsRef<str>>(pos: &str, prefix: &[S]) -> bool {
 /// NEologd の「名詞,固有名詞,一般」には、IPAdic で「一般名詞 + 接尾辞」に分かれる語が 3.7 万あるが、
 /// 接尾辞の品詞だけでは一般語と固有名詞を分けられない。「名詞,接尾,一般」にも「〜線」（路線名）
 /// 「〜法」（法律名）「〜院」（寺院名）「〜会」（団体名）「〜社」「〜賞」のように固有名詞を作る語が多い。
-/// そこで一般名詞を作る接尾辞だけを表層形で挙げる。載せたのは、SudachiDict で普通名詞と固有名詞の
-/// どちらに分類されているかを参照し、候補をすべて目で見て、固有名詞がほぼ混ざらない接尾辞
-/// （「〜度」は 87 語中「公孫度」など歴史上の人名 2 語だけ）。「〜書」（「唐書」「梁書」）・「〜式」
-/// （「公文式」「ねじ式」）は作品名・商標が数 % 混ざるので外した。「〜機」「〜車」「〜家」「〜士」
-/// 「〜師」「〜虫」も境界を確かめていないので入れていない
-const COMMON_NOUN_SUFFIXES: [&str; 28] = [
-    "的", "化", "性", "者", "物", "論", "学", "力", "率", "感", "度", "費", "料", "権", "症", "型",
-    "系", "制", "体", "器", "業", "剤", "員", "官", "数", "罪", "病", "術",
+/// そこで一般名詞を作る接尾辞だけを表層形で挙げる。
+///
+/// 選び方: SudachiDict で同じ表層形が普通名詞か固有名詞かを参照して候補を絞り、推奨辞書で降格される
+/// 表層形を接尾辞ごとに全件か 50 件の標本で目で見て、固有名詞が混ざらないものを残した。
+/// 例外として「〜力」（185 語中、力士名「北勝力」・社名「格力」など 4% 前後）と「〜度」（85 語中、
+/// 人名「公孫度」など 2〜3%）は入れた。誤って降格しても読みは変わらず、「説得力」「影響力」
+/// 「満足度」「理解度」のような抽象語を拾える方が大きい。
+/// 外したもの: 「〜論」（「国富論」「資本論」など著作名が 1 割近い）、「〜型」（「吹雪型」「秋月型」
+/// など艦級名が 1 割）、「〜系」（「ナスルーラ系」など競走馬の父系名が 1 割強）、「〜書」（「唐書」
+/// 「梁書」）、「〜式」（「公文式」「ねじ式」）。「〜機」「〜車」「〜家」「〜士」「〜師」「〜虫」は
+/// 境界を確かめていないので入れていない
+const COMMON_NOUN_SUFFIXES: [&str; 25] = [
+    "的", "化", "性", "者", "物", "学", "力", "率", "感", "度", "費", "料", "権", "症", "制", "体",
+    "器", "業", "剤", "員", "官", "数", "罪", "病", "術",
 ];
 
 /// 固有名詞の降格で、語の途中に来てよい接尾辞（「心理/的/安全/性」の「的」）
@@ -412,6 +418,37 @@ pub struct DemotionStats {
     pub by_suffix: Vec<(String, usize)>,
     /// 降格したエントリの先頭の数件（`表層形 (読み) -> 品詞`）
     pub samples: Vec<String>,
+}
+
+/// 参照辞書にある接尾辞の読み（固有名詞のエントリの読みを除く）
+///
+/// 降格するエントリの読みは、語末の接尾辞のこの読みのどれかで終わらなければならない
+/// （「力」ならリョク・リキ・チカラ）。「こだま学(コダママナブ)」「かわら力(カワラツトム)」のような
+/// 人名や、「鉄道員(ポッポヤ)」「漂泊者(アウトロー)」のような作品名は接尾辞を字どおりに読まないので、
+/// これで除ける。固有名詞かどうかを決める条件ではなく候補を絞る条件で、「目力(メヂカラ)」
+/// 「兄者(アニジャ)」のように連濁などで読みが変わる一般語も降格しない。
+fn common_suffix_readings(
+    reference: &Dictionary,
+) -> Result<HashMap<&'static str, Vec<Arc<str>>>, DictError> {
+    let mut out = HashMap::new();
+    for suffix in COMMON_NOUN_SUFFIXES {
+        let mut readings: Vec<Arc<str>> = Vec::new();
+        for (end, entries) in reference.lookup(suffix)? {
+            if end != suffix.len() {
+                continue;
+            }
+            for e in entries {
+                if !e.reading.is_empty()
+                    && !pos_has_prefix(&e.pos, &["名詞", "固有名詞"])
+                    && !readings.contains(&e.reading)
+                {
+                    readings.push(e.reading);
+                }
+            }
+        }
+        out.insert(suffix, readings);
+    }
+    Ok(out)
 }
 
 /// 参照辞書で降格先の品詞のエントリが最も多く使う (left_id, right_id) の組を求める
@@ -1037,10 +1074,10 @@ impl DictBuilder {
     /// （文章の Linter 等）では、抽象的な文が具体的に見えてしまう。
     ///
     /// `reference`（IPAdic 単体の辞書）で表層形を解析し、「一般名詞・サ変接続・形容動詞語幹の
-    /// 連続 + 一般名詞を作る接尾辞」に分かれるエントリを、`名詞,一般`（語末が「化」なら
-    /// `名詞,サ変接続`、「的」なら `名詞,形容動詞語幹`）に変える。判定の条件は `demotion_target`、
-    /// 接尾辞の一覧は `COMMON_NOUN_SUFFIXES` を参照。人名・地域・組織（固有名詞の他の下位分類）は
-    /// 対象にしない。
+    /// 連続 + 一般名詞を作る接尾辞」に分かれ、読みが接尾辞の読みで終わるエントリを、`名詞,一般`
+    /// （語末が「化」なら `名詞,サ変接続`、「的」なら `名詞,形容動詞語幹`）に変える。判定の条件は
+    /// `demotion_target` と `common_suffix_readings`、接尾辞の一覧は `COMMON_NOUN_SUFFIXES` を参照。
+    /// 人名・地域・組織（固有名詞の他の下位分類）は対象にしない。
     ///
     /// 品詞に合わせて文脈 ID も付け替える（参照辞書でその品詞のエントリが最も多く使う組）。
     /// コスト・原形・読み・発音は変えない。文脈 ID を持ち込むので、参照辞書はこの辞書と同じ
@@ -1079,11 +1116,16 @@ impl DictBuilder {
             }
         }
         let targets = analyze_demotion_targets(reference, &surfaces)?;
+        let suffix_readings = common_suffix_readings(reference)?;
         let decisions: Vec<(usize, DemotedPos, &str)> = candidates
             .iter()
             .filter_map(|&i| {
-                let surface = &*self.entries[i].surface;
-                targets[surface_index[surface]].map(|(target, suffix)| (i, target, suffix))
+                let e = &self.entries[i];
+                let (target, suffix) = targets[surface_index[&*e.surface]]?;
+                suffix_readings[suffix]
+                    .iter()
+                    .any(|r| e.reading.ends_with(&**r))
+                    .then_some((i, target, suffix))
             })
             .collect();
         drop(surface_index);

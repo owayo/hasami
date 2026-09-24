@@ -126,6 +126,10 @@ make dict-clean           # ダウンロードした辞書ソースと中間辞�
 | IPAdic | CSV が EUC-JP で、ダッシュ・波ダッシュ・マイナス等 7 字は変換表で写し先が分かれる | encoding_rs（WHATWG）の変換だと「—」「〜」「−」の語が辞書に無くなる | `DictBuilder::decode_to_utf8` が JIS の対応表（MeCab と同じ字）にそろえ、`prepare_ipadic.py` が Windows 側の「―」「～」「－」の別表記を足す |
 | IPAdic | 「−」「－」を「ヒク」と読む | 文章ではハイフン代わりが多く「K−POP」が「ケーヒクポップ」になる | `dict/user-remove/misreading-entries.csv`（NEologd を含む 2 辞書） |
 | IPAdic / NEologd / SudachiDict | 中国・朝鮮系の姓・名（1 文字姓の音読み、朝鮮語・普通話の字音で読む名、カタカナの外国人名） | 「金がない」→「キムガナイ」（朝鮮の姓の「金(キム)」）。「何なのか」→「ガナノカ」 | `dict/user-remove/foreign-names.csv` を `repair --remove`。生成は `scripts/find_foreign_names.py`（README の「外国人名の除去」） |
+| NEologd | 一般語を「名詞,固有名詞,一般」で登録している（成果物・多角的・包括的・可視化・言語化・心理的・安全性・担当者 など） | 固有名詞を具体性の手掛かりに数える処理（noslop）で抽象的な文が具体的に見える。品詞が固有名詞なので接続も固有名詞のもの（「言語化と」が「言語 / 化 / と」に割れる） | `repair --demote-common-proper-nouns <IPAdic の中間辞書>`。IPAdic で「一般名詞 + 一般名詞を作る接尾辞」に分かれる語を `名詞,一般`（〜化はサ変接続、〜的は形容動詞語幹）にし、文脈 ID も付け替える（README の「一般語の固有名詞の降格」） |
+| NEologd | 規則で拾えない一般語が固有名詞・人名になっている（ステークホルダー、原形が「ANGAGEMENT」「Youth case」の人名もあるエンゲージメント・ユースケース、爆速） | 同上 | `dict/user-remove/common-words-as-proper-nouns.csv` で固有名詞のエントリを落とし、`dict/user/common-word-fixes.csv` で一般名詞を足す |
+| IPAdic / NEologd | 「深掘り」「深堀り」「腹落ち」が 1 語にならない | 「深(形容詞) / 掘り(動詞)」「深堀(人名) / り」「腹 / 落ち(接尾)」 | `dict/user/common-word-fixes.csv`（名詞,サ変接続。「深堀り」の原形は「深掘り」） |
+| NEologd `neologd-adjective-std-dict-seed` | 形容詞・イ段の 143 語で、ガル接続のエントリの表層形が基本形のまま（「うそ寂しい」がガル接続） | 原形は正しい。このエントリが選ばれると活用形がガル接続になる（「くどくどしい説明」の「くどくどしい」） | 対処なし（原形の修復は不要。活用語で「活用形が基本形でも `*` でもなく原形 = 表層形」の 173 件は、この 143 件と IPAdic の「乞う(連用タ接続)」「あり(ラ変連用形)」など原形と同形の活用形だけ） |
 
 
 ### 文脈で決まる読み
