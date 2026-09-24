@@ -23,6 +23,10 @@ pub struct HasamiToken {
     pub end: u32,
     /// 品詞情報（UTF-8 のヌル終端文字列）
     pub pos: *mut c_char,
+    /// 活用型（UTF-8 のヌル終端文字列。活用しない語・未知語は空文字列）
+    pub conj_type: *mut c_char,
+    /// 活用形（UTF-8 のヌル終端文字列。活用しない語・未知語は空文字列）
+    pub conj_form: *mut c_char,
     /// 原形（UTF-8 のヌル終端文字列）
     pub base_form: *mut c_char,
     /// 読み（UTF-8 のヌル終端文字列）
@@ -157,7 +161,14 @@ pub unsafe extern "C" fn hasami_tokenize(
             }
         };
 
-        let tokens = analyzer.tokenize(input);
+        // 壊れた辞書で panic しないよう、エラーを返す経路で解析する
+        let tokens = match analyzer.try_tokenize(input) {
+            Ok(tokens) => tokens,
+            Err(e) => {
+                set_last_error(handle, &format!("解析に失敗しました: {e}"));
+                return empty;
+            }
+        };
         let len = tokens.len();
 
         if len == 0 {
@@ -174,6 +185,12 @@ pub unsafe extern "C" fn hasami_tokenize(
                 start: t.start as u32,
                 end: t.end as u32,
                 pos: CString::new(t.pos.as_ref()).unwrap_or_default().into_raw(),
+                conj_type: CString::new(t.conj_type.as_ref())
+                    .unwrap_or_default()
+                    .into_raw(),
+                conj_form: CString::new(t.conj_form.as_ref())
+                    .unwrap_or_default()
+                    .into_raw(),
                 base_form: CString::new(t.base_form.as_ref())
                     .unwrap_or_default()
                     .into_raw(),
@@ -218,6 +235,12 @@ pub unsafe extern "C" fn hasami_free_tokens(list: HasamiTokenList) {
             }
             if !token.pos.is_null() {
                 drop(CString::from_raw(token.pos));
+            }
+            if !token.conj_type.is_null() {
+                drop(CString::from_raw(token.conj_type));
+            }
+            if !token.conj_form.is_null() {
+                drop(CString::from_raw(token.conj_form));
             }
             if !token.base_form.is_null() {
                 drop(CString::from_raw(token.base_form));
@@ -282,8 +305,9 @@ mod tests {
             base_form: "猫".into(),
             reading: "ネコ".into(),
             pronunciation: "ネコ".into(),
+            ..Default::default()
         });
-        let analyzer = Analyzer::from_dict(builder.build());
+        let analyzer = Analyzer::from_dict(builder.build().unwrap());
         Box::into_raw(Box::new(HasamiAnalyzer {
             inner: analyzer,
             last_error: None,

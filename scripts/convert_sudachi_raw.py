@@ -1,30 +1,33 @@
-r"""SudachiDict の公式 raw 辞書ソース (V1 形式 CSV) を hasami 用 MeCab 形式 CSV に変換する.
+r"""SudachiDict の raw 辞書ソース (V1 形式 CSV) を hasami 用の MeCab 形式 CSV にする.
 
-IPAdic + NEologd の辞書に SudachiDict の語彙を追加するための変換スクリプト。
-品詞を IPAdic 体系に写し、文脈 ID は IPAdic の left-id.def から
-(品詞, 活用型, 活用形, rewrite.def による語彙化) の組で引く。
-対応する ID が無い品詞・活用形は代表 ID で代用せず、取り込まない。
+IPAdic + NEologd の辞書に SudachiDict の語彙を足すための変換。品詞を IPAdic 体系に
+写し、文脈 ID は IPAdic の left-id.def から (品詞, 活用型, 活用形, rewrite.def の
+語彙化) の組で引く。対応する ID が無い品詞・活用形は代表 ID で代用せず、取り込まない。
 
-入力 (http://sudachi.s3-website-ap-northeast-1.amazonaws.com/sudachidict-raw/v1/ から取得):
-    small_lex.csv, core_lex.csv (任意で notcore_lex.csv)
+入力: sudachidict-raw/v1/<版>/{small_lex,core_lex}.zip を展開した CSV (V1 形式)
 
-列の扱い:
+出力列 (13 列):
     表層形   Headword (空なら IndexForm)。IndexForm は Sudachi の入力正規化
-             (小文字化・NFKC) 後の表記で、正規化しない hasami では原表記の方が当たる
-    文脈 ID  IPAdic の left-id.def (= right-id.def) から引く
-    コスト   Sudachi のコスト。--cost-scale / --cost-offset で線形変換できる
+             (小文字化・NFKC) 後の表記なので、入力を正規化しない hasami では
+             Headword の方が本文に当たる
+    文脈 ID  IPAdic の left-id.def (= right-id.def) から引いた ID を左右に入れる
+    コスト   Sudachi の値をそのまま使う (IPAdic の同じ語より 1300〜3700 高いが、
+             下げると短い断片語が IPAdic の語を割るため変換しない)
     品詞     UniDic 系 → IPAdic 系 (POS_MAP)
-    活用     UniDic の活用型・活用形 → IPAdic の活用型・活用形。
-             原形から作った IPAdic の活用表と表層形が一致するものだけ採る
-    原形     DictionaryForm が指す辞書形の見出し (空なら自分自身)
+    活用型・活用形  UniDic → IPAdic。原形から作った IPAdic の活用表と表層形が一致
+             するものだけ採る (PARADIGMS, CFORM_MAP)
+    原形     DictionaryForm が指す辞書形の見出し (空欄は自分自身)
     読み     ReadingForm。記号の「キゴウ」は IPAdic に合わせて表層形にする
-    発音     読みと同じ
+    発音     読みと同じ (長音の発音は hasami repair が組み立てる)
 
 取り込まないもの:
     LeftId = -1 の語 (分割情報の構成語専用で、単独では出現しない)
-    文語の活用語、助詞・助動詞 (IPAdic の閉じた語彙で、語ごとに ID が異なる)
-    IPAdic の活用表に無い活用形 (「回ろう」「回ん(連用)」「高っ」等)
-    --exclude-existing に渡した辞書と (表層形, 品詞大分類, 読み) が同じ語
+    文語の活用語、助詞・助動詞、助動詞語幹 (IPAdic が収録済みの閉じた語彙)
+    数詞 (「2(ニ)」等が数字列を 1 桁ずつに割る)
+    1〜2 文字の英字だけの語 (「In」「tel」等が「Intel」のような英単語を割る)
+    IPAdic の活用表に無い活用形 (「回ろう」「回ん(連用形)」「高っ」等)
+    --scope の範囲外の品詞
+    --exclude-existing に渡した辞書に表層形が既にある語 (--dedup-key で変更可)
 
 Usage:
     python3 scripts/convert_sudachi_raw.py \
@@ -33,12 +36,13 @@ Usage:
         --ipadic-dir .dict-src/mecab/mecab-ipadic \
         --exclude-existing .dict-src/mecab/mecab-ipadic \
         --exclude-existing .dict-src/neologd-seed \
-        --scope noun \
-        --output .dict-src/sudachi-converted/sudachi.csv
+        --exclude-existing dict/user \
+        --output .dict-src/build/sudachi.csv
 """
 
 import argparse
 import collections
+import contextlib
 import csv
 import re
 import sys
@@ -75,14 +79,24 @@ _REQUIRED += ("pos5", "pos6", "reading", "dictionary")
 
 
 def unescape(value):
-    r"""Sudachi の \uXXXX / \u{X..} エスケープを戻す."""
+    r"""Sudachi の \uXXXX / \u{X..} エスケープを戻す.
+
+    Returns:
+        str: エスケープを戻した文字列.
+
+    """
     if "\\u" not in value:
         return value
     return _ESCAPE.sub(lambda m: chr(int(m.group(1) or m.group(2), 16)), value)
 
 
 def read_lexicon(path):
-    """V1 形式の lexicon CSV を 1 行ずつ dict で返す (列はヘッダー名で引く)."""
+    """V1 形式の lexicon CSV を 1 行ずつ読む (列はヘッダー名で引く).
+
+    Yields:
+        dict: 内部名 (_COLUMN_ALIASES の値) → 値.
+
+    """
     with open(path, encoding="utf-8", newline="") as f:
         reader = csv.reader(f)
         header = next(reader)
@@ -99,7 +113,12 @@ def read_lexicon(path):
 
 
 def split_reference(ref):
-    """語参照 "見出し,品詞1..6,読み[,参照ID]" を (見出し, 品詞6つ組, 読み) にする."""
+    """語参照 "見出し,品詞1..6,読み[,参照ID]" を分解する.
+
+    Returns:
+        tuple: (見出し, 品詞6つ組, 読み)。形式が合わなければ None.
+
+    """
     parts = ref.split(",")
     if len(parts) < 8:
         return None
@@ -107,7 +126,12 @@ def split_reference(ref):
 
 
 def decode_bytes(raw):
-    """UTF-8 でなければ EUC-JP (IPAdic 配布物) として読む."""
+    """UTF-8 でなければ EUC-JP (IPAdic 配布物) として読む.
+
+    Returns:
+        str: デコードした文字列.
+
+    """
     try:
         return raw.decode("utf-8")
     except UnicodeDecodeError:
@@ -115,7 +139,12 @@ def decode_bytes(raw):
 
 
 def csv_files(path):
-    """ファイルならそのもの、ディレクトリなら直下の *.csv を名前順で返す."""
+    """CSV ファイルの一覧.
+
+    Returns:
+        list: ファイルならそのもの、ディレクトリなら直下の *.csv (名前順).
+
+    """
     p = Path(path)
     return sorted(p.glob("*.csv")) if p.is_dir() else [p]
 
@@ -179,12 +208,18 @@ class ContextIds:
         return pat == "*" or pat == value
 
     def lookup(self, pos, ctype, cform, base):
-        """(品詞4つ組, 活用型, 活用形, 原形) の文脈 ID。無ければ None."""
+        """rewrite.def で素性を書き換え、left-id.def の ID を引く.
+
+        Returns:
+            int: (品詞4つ組, 活用型, 活用形, 原形) の文脈 ID。無ければ None.
+
+        """
         feature = (*pos, ctype, cform, base)
         for pattern, output in self.rules:
             if len(pattern) > len(feature):
                 continue
-            if all(self._match(p, v) for p, v in zip(pattern, feature)):
+            head = feature[: len(pattern)]
+            if all(self._match(p, v) for p, v in zip(pattern, head, strict=True)):
                 rewritten = []
                 for out in output:
                     if out.startswith("$"):
@@ -215,8 +250,8 @@ POS_MAP = {
     ("名詞", "固有名詞", "人名", "名"): ("proper", "名詞,固有名詞,人名,名"),
     ("名詞", "固有名詞", "地名", "一般"): ("proper", "名詞,固有名詞,地域,一般"),
     ("名詞", "固有名詞", "地名", "国"): ("proper", "名詞,固有名詞,地域,国"),
-    # 数字 1 文字ごとの語 (「2(ニ)」「0(レイ)」) が IPAdic の未知語処理 (数字の連続を
-    # 1 語にまとめる) に勝ち、「2012年」を「ニ レイ イチ ニ ネン」と読ませるため取り込まない
+    # 数字 1 文字の語 (「2(ニ)」「0(レイ)」) が IPAdic の未知語処理 (数字の連続を
+    # 1 語にまとめる) に勝ち、「2012年」を「ニレイイチニネン」と読ませるので取り込まない
     ("名詞", "数詞"): ("numeral", "名詞,数,*,*"),
     ("代名詞",): ("pronoun", "名詞,代名詞,一般,*"),
     ("形状詞", "一般"): ("adjv", "名詞,形容動詞語幹,*,*"),
@@ -283,7 +318,12 @@ SCOPES["content-symbol"] = SCOPES["content"] | {"symbol"}
 
 
 def map_pos(pos):
-    """Sudachi の品詞6つ組を (取り込み区分, IPAdic 品詞4つ組) に写す. 無ければ None."""
+    """Sudachi の品詞6つ組を IPAdic の品詞に写す.
+
+    Returns:
+        tuple: (取り込み区分, IPAdic 品詞4つ組)。対応が無ければ None.
+
+    """
     fields = [p for p in pos[:4] if p != "*"]
     for n in range(len(fields), 0, -1):
         hit = POS_MAP.get(tuple(fields[:n]))
@@ -329,7 +369,7 @@ _ADJ = {
     "ガル接続": ("",),
 }
 
-# IPAdic 活用型 → (原形の語尾, {活用形: 語幹に続く表記})。IPAdic の CSV の実データから作った
+# IPAdic 活用型 → (原形の語尾, {活用形: 語幹に続く表記})。IPAdic の CSV から作った
 PARADIGMS = {
     "五段・カ行イ音便": _godan("く", "か", "こ", "き", "け", "きゃ", ta="い"),
     "五段・カ行促音便": _godan("く", "か", "こ", "き", "け", "きゃ", ta="っ"),
@@ -451,12 +491,21 @@ CFORM_MAP = {
 
 _I_ROW = set("イキシチニヒミリギジヂビピィ")
 
-# IPAdic が語ごとの専用の活用型を持つ動詞 (IPAdic 自身に収録済み)
-_SPECIAL_VERBS = {"する", "為る", "くれる", "呉れる", "得る", "える"}
+# IPAdic が語ごとの専用の活用型 (サ変・スル、一段・クレル、一段・得ル) を持つ動詞。
+# IPAdic 自身に収録済みなので取り込まない
+_SPECIAL_VERBS = {"する", "為る", "くれる", "呉れる", "得る"}
 
 
 def ipadic_ctype(pos1, ctype, base, base_reading, cforms):
-    """UniDic の活用型と語彙素の情報から IPAdic の活用型を決める. 決められなければ None."""
+    """UniDic の活用型と語彙素の情報から IPAdic の活用型を決める.
+
+    五段カ行のイ音便・促音便、五段ラ行の「なさる」型、形容詞のアウオ段・イ段のように
+    UniDic が区別しないものは、語彙素が持つ活用形の集合と辞書形の読みで決める。
+
+    Returns:
+        str: IPAdic の活用型。対応が無ければ None.
+
+    """
     if ctype.startswith("文語") or base in _SPECIAL_VERBS:
         return None
     if pos1 in ("形容詞", "接尾辞") and ctype == "形容詞":
@@ -503,7 +552,13 @@ def ipadic_ctype(pos1, ctype, base, base_reading, cforms):
 
 
 def ipadic_cform(ctype, cform, surface, base):
-    """表層形が IPAdic の活用表のどの活用形に当たるか. 当たらなければ None."""
+    """表層形が IPAdic の活用表のどの活用形に当たるかを決める.
+
+    Returns:
+        str: IPAdic の活用形。UniDic の活用形に対応し、かつ表層形が活用表と一致する
+        ものが無ければ None.
+
+    """
     ending, table = PARADIGMS[ctype]
     if not base.endswith(ending):
         return None
@@ -523,7 +578,13 @@ def ipadic_cform(ctype, cform, surface, base):
 
 
 def lexeme_key(entry, headword):
-    """活用語の語彙素キー (辞書形の見出し, 品詞6つ組, 読み)."""
+    """活用語の語彙素キー.
+
+    Returns:
+        tuple: DictionaryForm が指す (辞書形の見出し, 品詞6つ組, 読み)。
+        DictionaryForm が空欄の行は自分自身が辞書形.
+
+    """
     ref = entry["dictionary"]
     if ref:
         return split_reference(ref)
@@ -532,7 +593,12 @@ def lexeme_key(entry, headword):
 
 
 def collect_lexemes(paths):
-    """活用語の語彙素ごとに、Sudachi が持つ活用形の集合を集める (IPAdic 活用型の判定用)."""
+    """活用語の語彙素ごとに、Sudachi が持つ活用形を集める (IPAdic 活用型の判定用).
+
+    Returns:
+        dict: 語彙素キー → 活用形の集合.
+
+    """
     forms = collections.defaultdict(set)
     for path in paths:
         for entry in read_lexicon(path):
@@ -554,7 +620,12 @@ DEDUP_KEYS = {
 
 
 def load_existing(paths, key):
-    """既存辞書 (MeCab 形式 CSV) のエントリを key で写した集合."""
+    """既存辞書 (MeCab 形式 CSV) のエントリを重複判定のキーにする.
+
+    Returns:
+        set: key(表層形, 品詞大分類, 読み) の集合.
+
+    """
     keys = set()
     for path in paths:
         for f in csv_files(path):
@@ -571,84 +642,100 @@ def load_existing(paths, key):
     return keys
 
 
-def convert(args):
-    """Raw CSV を読み、変換済みエントリの dict と統計を返す."""
-    ids = ContextIds(args.ipadic_dir)
-    groups = SCOPES[args.scope]
-    lexemes = collect_lexemes(args.lex)
-    dedup_key = DEDUP_KEYS[args.dedup_key]
-    existing = load_existing(args.exclude_existing, dedup_key)
+# 1〜2 文字の英字だけの語。hasami は 1〜2 文字の英字の辞書読みを使わず綴り読みにする
+# (lattice.rs の should_trust_dict_reading) ので読みの足しにならず、「Intel」を
+# 「In」+「tel」、「Android」を「An」+「droid」のように英単語を割るだけなので除く
+_SHORT_ALPHA = re.compile(r"[A-Za-zＡ-Ｚａ-ｚ]{1,2}")
+
+
+class Converter:
+    """Raw CSV の 1 行を IPAdic 互換のエントリに写す."""
+
+    def __init__(self, args):
+        """IPAdic の ID 表・語彙素の活用形・既存辞書の重複キーを用意する."""
+        self.ids = ContextIds(args.ipadic_dir)
+        self.groups = SCOPES[args.scope]
+        self.lexemes = collect_lexemes(args.lex)
+        self.dedup_key = DEDUP_KEYS[args.dedup_key]
+        self.existing = load_existing(args.exclude_existing, self.dedup_key)
+
+    def convert(self, entry):
+        """1 行を変換する.
+
+        Returns:
+            tuple: (取り込み区分, 出力キー, コスト) か、取り込まない理由の文字列.
+
+        """
+        if entry["left"] == "-1" or entry["right"] == "-1":
+            return "split_only"
+        pos = tuple(entry[f"pos{i}"] for i in range(1, 7))
+        mapped = map_pos(pos)
+        if mapped is None:
+            return "pos_unmapped:" + pos[0]
+        group, ipos = mapped
+        if group not in self.groups:
+            return "out_of_scope:" + group
+        surface = unescape(entry["headword"]) or unescape(entry["index"])
+        if _SHORT_ALPHA.fullmatch(surface):
+            return "short_alpha"
+        reading = unescape(entry["reading"])
+        if group == "symbol" and reading in ("", "キゴウ"):
+            reading = surface
+        ctype = cform = "*"
+        base = surface
+        if pos[4] != "*":
+            key = lexeme_key(entry, surface)
+            if key is None:
+                return "bad_dictionary_form"
+            base, _, base_reading = key
+            cforms = self.lexemes.get(key, set())
+            ctype = ipadic_ctype(pos[0], pos[4], base, base_reading, cforms)
+            if ctype is None:
+                return "ctype_unmapped:" + pos[4]
+            cform = ipadic_cform(ctype, pos[5], surface, base)
+            if cform is None:
+                return "cform_unmapped:" + pos[5]
+        cid = self.ids.lookup(ipos, ctype, cform, base)
+        if cid is None:
+            return "no_context_id"
+        if self.dedup_key(surface, ipos[0], reading) in self.existing:
+            return "exists"
+        cost = int(entry["cost"])
+        return group, (surface, cid, ipos, ctype, cform, base, reading), cost
+
+
+def convert(args, skipped_log):
+    """Raw CSV を読み、変換済みエントリの dict と統計を返す.
+
+    同じ (表層形, 文脈 ID, 品詞, 活用, 原形, 読み) になった行 (終止形と連体形など) は
+    コストの低い方を 1 行だけ残す。
+
+    Returns:
+        tuple: ({出力キー: コスト}, 統計の Counter).
+
+    """
+    converter = Converter(args)
     stats = collections.Counter()
-    skipped_log = None
-    if args.skipped_log:
-        Path(args.skipped_log).parent.mkdir(parents=True, exist_ok=True)
-        skipped_log = open(args.skipped_log, "w", encoding="utf-8")
     out = {}
-
-    def skip(reason, entry, surface=""):
-        stats[f"skip:{reason}"] += 1
-        if skipped_log:
-            pos = ",".join(entry[f"pos{i}"] for i in range(1, 7))
-            skipped_log.write(f"{reason}\t{surface or entry['index']}\t{pos}\n")
-
     for path in args.lex:
         for entry in read_lexicon(path):
             stats["rows"] += 1
-            if entry["left"] == "-1" or entry["right"] == "-1":
-                skip("split_only", entry)
+            result = converter.convert(entry)
+            if isinstance(result, str):
+                stats[f"skip:{result}"] += 1
+                if skipped_log:
+                    pos = ",".join(entry[f"pos{i}"] for i in range(1, 7))
+                    skipped_log.write(f"{result}\t{entry['index']}\t{pos}\n")
                 continue
-            pos = tuple(entry[f"pos{i}"] for i in range(1, 7))
-            mapped = map_pos(pos)
-            if mapped is None:
-                skip("pos_unmapped:" + pos[0], entry)
-                continue
-            group, ipos = mapped
-            if group not in groups:
-                skip("out_of_scope", entry)
-                continue
-            surface = unescape(entry["headword"]) or unescape(entry["index"])
-            reading = unescape(entry["reading"])
-            if group == "symbol" and reading in ("", "キゴウ"):
-                reading = surface
-            if pos[4] == "*":
-                ctype = cform = "*"
-                base = surface
-            else:
-                key = lexeme_key(entry, surface)
-                if key is None:
-                    skip("bad_dictionary_form", entry, surface)
-                    continue
-                base, base_pos, base_reading = key
-                ctype = ipadic_ctype(
-                    pos[0], pos[4], base, base_reading, lexemes.get(key, set())
-                )
-                if ctype is None:
-                    skip("ctype_unmapped:" + pos[4], entry, surface)
-                    continue
-                cform = ipadic_cform(ctype, pos[5], surface, base)
-                if cform is None:
-                    skip("cform_unmapped:" + pos[5], entry, surface)
-                    continue
-            cid = ids.lookup(ipos, ctype, cform, base)
-            if cid is None:
-                skip("no_context_id", entry, surface)
-                continue
-            if dedup_key(surface, ipos[0], reading) in existing:
-                skip("exists", entry, surface)
-                continue
-            cost = round(int(entry["cost"]) * args.cost_scale + args.cost_offset)
-            cost = max(-32768, min(32767, cost))
-            key = (surface, cid, ipos, ctype, cform, base, reading)
+            group, key, cost = result
             prev = out.get(key)
-            if prev is not None:
+            if prev is None:
+                stats[f"out:{group}"] += 1
+            else:
                 stats["merged_duplicate"] += 1
                 if cost >= prev:
                     continue
-            else:
-                stats[f"out:{group}"] += 1
             out[key] = cost
-    if skipped_log:
-        skipped_log.close()
     return out, stats
 
 
@@ -683,35 +770,41 @@ def main():
         "--exclude-existing",
         action="append",
         default=[],
-        help="(表層形, 品詞大分類, 読み) が同じ語を落とす既存辞書の CSV/ディレクトリ",
+        help="この辞書 (MeCab 形式 CSV またはそのディレクトリ) にある語を落とす",
     )
     parser.add_argument(
         "--dedup-key",
         choices=sorted(DEDUP_KEYS),
         default="surface",
-        help="既存辞書と重複とみなす単位 (surface: 表層形が既にあれば落とす, "
-        "reading: 表層形+読み, pos-reading: 表層形+品詞大分類+読み。既定: surface)",
+        help="既存辞書と重複とみなす単位。surface: 表層形が既にあれば落とす (既定)、"
+        "reading: 表層形と読み、pos-reading: 表層形と品詞大分類と読み",
     )
     parser.add_argument(
         "--scope",
         choices=sorted(SCOPES),
-        default="noun",
-        help="取り込む品詞 (all / content / noun / proper, 既定: noun)",
+        default="content-symbol",
+        help="取り込む品詞 (既定: content-symbol = 名詞・固有名詞・形状詞・連体詞・"
+        "副詞・接続詞・感動詞・動詞・形容詞・記号)",
     )
-    parser.add_argument("--cost-scale", type=float, default=1.0)
-    parser.add_argument("--cost-offset", type=float, default=0.0)
     parser.add_argument("--output", required=True, help="出力 CSV")
     parser.add_argument("--skipped-log", help="取り込まなかった行の理由を TSV で書く")
     args = parser.parse_args()
 
     start = time.time()
-    entries, stats = convert(args)
+    with contextlib.ExitStack() as stack:
+        skipped_log = None
+        if args.skipped_log:
+            Path(args.skipped_log).parent.mkdir(parents=True, exist_ok=True)
+            skipped_log = stack.enter_context(
+                open(args.skipped_log, "w", encoding="utf-8")
+            )
+        entries, stats = convert(args, skipped_log)
     write_csv(entries, args.output)
     for key in sorted(stats):
         print(f"{key}\t{stats[key]}", file=sys.stderr)
+    elapsed = time.time() - start
     print(
-        f"wrote {len(entries)} entries to {args.output}"
-        f" in {time.time() - start:.1f}s",
+        f"wrote {len(entries)} entries to {args.output} in {elapsed:.1f}s",
         file=sys.stderr,
     )
 

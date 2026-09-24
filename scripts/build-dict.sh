@@ -42,8 +42,15 @@ SUDACHI_FILES=(
   "small_lex.zip e49936daef64043657752eb9f4ada912cf0316e26dd158a6200c770e2f93e706"
   "core_lex.zip d8ed376d8ff368226314a43151ab02591378dd344bff017d8a93ae9839212edf"
 )
-# SudachiDict から取り込む範囲 (scripts/convert_sudachi_raw.py の --scope)
-SUDACHI_SCOPE=noun
+# SudachiDict から取り込む範囲 (scripts/convert_sudachi_raw.py の --scope)。内容語 (名詞・固有名詞・形状詞・
+# 連体詞・副詞・接続詞・感動詞・動詞・形容詞) と記号。助詞・助動詞・数詞・接頭辞・接尾辞・代名詞は、IPAdic の語を
+# 押しのけて誤分割・誤読を増やすので入れない (取り込み範囲ごとの比較は README の「辞書のローカルビルド」)
+SUDACHI_SCOPE=content-symbol
+
+# 辞書のメタデータ (hasami info で見える) に残す上流の版
+SOURCE_IPADIC=ipadic@${IPADIC_COMMIT:0:12}
+SOURCE_NEOLOGD=neologd@${NEOLOGD_COMMIT:0:12}
+SOURCE_SUDACHI=sudachi-raw@$SUDACHI_VERSION/$SUDACHI_SCOPE
 
 # ---------------------------------------------------------------- 引数
 
@@ -143,7 +150,8 @@ FULL_REPAIR=(
 build_ipadic() {
   fetch_git "$IPADIC_REPO" "$IPADIC_COMMIT" "$SRC/mecab" mecab-ipadic
   log "build ipadic"
-  "$HASAMI" build --input "$SRC/mecab/mecab-ipadic" --output "$WORK/ipadic.base.hsd"
+  "$HASAMI" build --input "$SRC/mecab/mecab-ipadic" --output "$WORK/ipadic.base.hsd" \
+    --meta name=ipadic --meta "sources=$SOURCE_IPADIC"
   # IPAdic 単体は発音の修復を掛けない (記号の読みを残す)。外国人名の姓・名だけを除く
   "$HASAMI" repair --dict "$WORK/ipadic.base.hsd" --output "$WORK/ipadic.tmp.hsd" \
     --drop-invalid-context-ids --no-pronunciation-repair \
@@ -172,7 +180,8 @@ build_neologd() {
   prepare_neologd_seed
   log "merge neologd"
   "$HASAMI" merge --dict "$WORK/ipadic.base.hsd" --input "$SRC/neologd-seed" \
-    --output "$WORK/ipadic-neologd.base.hsd"
+    --output "$WORK/ipadic-neologd.base.hsd" \
+    --meta name=ipadic-neologd --meta "sources=$SOURCE_IPADIC,$SOURCE_NEOLOGD"
   "$HASAMI" repair --dict "$WORK/ipadic-neologd.base.hsd" --output "$WORK/ipadic-neologd.tmp.hsd" \
     "${FULL_REPAIR[@]}"
   install_dict "$WORK/ipadic-neologd.tmp.hsd" "$OUT/ipadic-neologd.hsd"
@@ -196,11 +205,14 @@ build_sudachi() {
     --ipadic-dir "$SRC/mecab/mecab-ipadic" \
     --exclude-existing "$SRC/mecab/mecab-ipadic" \
     --exclude-existing "$SRC/neologd-seed" \
+    --exclude-existing dict/user \
     --scope "$SUDACHI_SCOPE" \
     --output "$WORK/sudachi.csv"
   log "merge sudachi"
   "$HASAMI" merge --dict "$WORK/ipadic-neologd.base.hsd" --input "$WORK/sudachi.csv" \
-    --output "$WORK/ipadic-neologd-sudachi.base.hsd"
+    --output "$WORK/ipadic-neologd-sudachi.base.hsd" \
+    --meta name=ipadic-neologd-sudachi \
+    --meta "sources=$SOURCE_IPADIC,$SOURCE_NEOLOGD,$SOURCE_SUDACHI"
   "$HASAMI" repair --dict "$WORK/ipadic-neologd-sudachi.base.hsd" \
     --output "$WORK/ipadic-neologd-sudachi.tmp.hsd" "${FULL_REPAIR[@]}"
   install_dict "$WORK/ipadic-neologd-sudachi.tmp.hsd" "$OUT/ipadic-neologd-sudachi.hsd"
