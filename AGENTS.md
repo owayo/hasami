@@ -37,7 +37,7 @@ hasami/
 │   │   └── tests.rs    # 往復・再現性・支配エントリの除去・壊れたファイルの拒否
 │   ├── char_class.rs   # 文字分類（未知語処理）。辞書は BMP の文字種表を持ち、解析では表を引く
 │   ├── sentence/       # 辞書不要の文分割
-│   │   ├── mod.rs      # 規則 1〜9、Splitter（split / split_with_breaks / chunk_ends）、判定関数
+│   │   ├── mod.rs      # 規則 1〜9、Splitter（split / split_with_breaks / split_fragments / chunk_ends）、判定関数
 │   │   ├── exceptions.rs  # 例外表の照合（左の境界、続きの語・文頭の語、字幅の畳み込み）と抽出規則
 │   │   ├── index.rs    # 例外表の索引（錨の列 + 鍵の頭 3 字の表）。build.rs と共有
 │   │   ├── chars.rs    # 文末記号・字幅の畳み込み・字種。build.rs と共有（std 以外に依存しない）
@@ -91,6 +91,9 @@ hasami/
 - `analyzer::{format_mecab, format_wakachi}` / `{push_mecab, push_wakachi}` - 出力の書式化（push は既存の String に足す）
 - `hasami::sentence::{split, Splitter}` - 辞書不要の文分割。解析の前分割も `Splitter::chunk_ends`（例外語の内側で切らない）
 - `Splitter::split_with_breaks(text, &breaks)` - 改行とみなすバイト位置を別に渡す分割（括弧の外側で区切る）
+- `Splitter::split_fragments(text)` / `split_fragments_with_breaks(text, &breaks)` - 文を括弧の内側の文末記号でも
+  区切った断片（一文の長さを測る用途）。断片は文の境界をまたがず、文末記号に続く閉じ括弧は前の断片に付く。
+  括弧の内側の改行では区切らない。形態素解析の前分割の `chunk_ends` は断片の代わりにならない
 - `sentence::{is_sentence_ender, ascii_run_is_ender, closing_bracket, is_closing_bracket}` - 分割と同じ基準の判定関数
 - `sentence::BUILTIN_EXCEPTIONS_VERSION` - 例外表の版（`語の数-語の FNV-1a 64`。build.rs が生成）
 - 例外表を変えたら `hasami export-sentence-exceptions --dict dict/ipadic-neologd-sudachi.hsd --output src/sentence/builtin_exceptions.txt`
