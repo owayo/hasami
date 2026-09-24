@@ -28,7 +28,7 @@
 
 ## 特徴
 
-- **高速**: ニュース記事 13.3 万行（24.3MB）を 1 スレッドで約 1.1 秒で解析（MeCab の約 3 倍）。`hasami tokenize` は標準入力の行を CPU の数だけ並列に解析する
+- **高速**: ニュース記事 13.3 万行（24.3MB）を 1 スレッドで約 1 秒で解析（MeCab の約 3 倍）。`hasami tokenize` は標準入力の行を CPU の数だけ並列に解析する
 - **高精度**: ラティス構築 + Viterbiコスト最小化による最適分割
 - **ゼロ依存**: MeCab/Sudachi等の外部エンジンに非依存
 - **多言語対応**: Rust / Python / C FFI から利用可能
@@ -679,17 +679,17 @@ livedoor ニュースコーパスの本文 132,876 行（24.3MB）で測った�
 
 | 辞書 | 時間 | 速度 |
 |------|-----:|-----:|
-| ipadic | 1.10s | 22 MB/s |
-| ipadic-neologd | 1.36s | 18 MB/s |
-| ipadic-neologd-sudachi | 1.39s | 17 MB/s |
+| ipadic | 1.00s | 24 MB/s |
+| ipadic-neologd | 1.29s | 19 MB/s |
+| ipadic-neologd-sudachi | 1.34s | 18 MB/s |
 
-### CLI（標準入力 → MeCab 形式、ipadic）
+### CLI（標準入力 → MeCab 形式）
 
-| | 時間 |
-|---|---:|
-| MeCab 0.996（`mecab -b 1000000`） | 3.17s |
-| hasami（`-j 1`） | 1.25s |
-| hasami（既定。CPU の数だけ並列） | 0.54s |
+| | ipadic | ipadic-neologd-sudachi |
+|---|---:|---:|
+| MeCab 0.996（`mecab -b 1000000`） | 3.09s | — |
+| hasami（`-j 1`） | 1.24s | 1.62s |
+| hasami（既定。CPU の数だけ並列） | 0.43s | 0.49s |
 
 辞書のロードは 3 辞書とも 1ms 未満（mmap。ロード時はヘッダと小さな表だけを検査する）。
 計測の方法と、速くしたときに試したこと・見送ったことは [docs/performance.md](docs/performance.md)。
