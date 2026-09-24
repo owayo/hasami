@@ -34,7 +34,7 @@
 - **多言語対応**: Rust / Python / C FFI から利用可能
 - **MeCab辞書互換**: IPAdic / UniDic 等のMeCab形式辞書をそのまま利用可能
 - **辞書マージ**: 既存辞書にMeCab形式CSVを追加可能
-- **高速辞書ロード**: mmap-native バイナリ形式（.hsd）で ~18ms ロード
+- **高速辞書ロード**: mmap-native バイナリ形式（.hsd v4）。ロード時はヘッダと小さな表だけを検査し、本体は解析で触れたページだけを読む
 - **未知語処理**: 文字分類ベースの未知語推定（unk.def対応）
 
 ## 動作環境
@@ -67,18 +67,13 @@ cargo build --workspace
 
 ## アーキテクチャ
 
-```
-入力テキスト
-    ↓
-[Double-Array Trie] 辞書引き（共通接頭辞検索）
-    ↓
-[文字分類] 未知語ノード生成
-    ↓
-[ラティス構築] 全候補をラティスに展開
-    ↓
-[Viterbi] 接続コスト + 単語コストで最適パス探索
-    ↓
-トークン列（形態素解析結果）
+```mermaid
+flowchart TD
+    IN[入力テキスト] --> TRIE["文字単位 Double-Array Trie<br/>辞書引き（共通接頭辞検索）"]
+    TRIE --> UNK["文字分類<br/>未知語ノード生成"]
+    UNK --> LAT["ラティス構築<br/>全候補をラティスに展開"]
+    LAT --> VIT["Viterbi<br/>接続コスト + 単語コストで最適パス探索"]
+    VIT --> OUT["トークン列<br/>最良パスの語だけ素性（品詞・活用・読み）を復号"]
 ```
 
 ## 辞書
@@ -251,9 +246,29 @@ for token in &tokens {
     println!("{}\t{}\t{}", token.surface, token.pos, token.reading);
 }
 
+// 活用型・活用形（活用しない語・未知語は空文字列）
+let tokens = analyzer.tokenize("読み込み、");
+println!("{} {}", tokens[0].conj_type, tokens[0].conj_form); // 五段・マ行 連用形
+
 // バッチ処理
 let results = analyzer.tokenize_batch(&["文1", "文2", "文3"]);
 ```
+
+`tokenize` は辞書に不正な参照を見つけると panic する（`hasami info --verify` で検証済みの辞書では起きない）。
+検証していない辞書を扱うときは、エラーを返す `try_tokenize` を使う。
+
+```rust
+match analyzer.try_tokenize("東京都に住んでいる") {
+    Ok(tokens) => { /* ... */ }
+    Err(e) => eprintln!("壊れた辞書: {e}"),
+}
+```
+
+`Token` のフィールドは `surface`・`start`・`end`（入力のバイト位置）・`pos`（品詞 4 階層）・`conj_type`・`conj_form`・
+`base_form`・`reading`・`pronunciation`・`word_cost`・`is_known`。
+
+辞書は mmap で読み込むので、読み込み中の辞書ファイルを書き換えたり切り詰めたりしてはいけない。
+辞書を差し替えるときは別名で書いてから rename する（`hasami build` / `merge` / `repair` の出力はそうしている）。
 
 #### 並行解析（Rust マルチスレッド）
 
@@ -263,7 +278,7 @@ let results = analyzer.tokenize_batch(&["文1", "文2", "文3"]);
 use hasami::Analyzer;
 
 let analyzer = Analyzer::load("dict/ipadic-neologd.hsd")?;
-analyzer.prewarm(); // 並列前にArc<str>キャッシュを温めると初回スパイク回避
+analyzer.prewarm(); // 解析で触れる辞書のページを先に読み込み、初回の待ちを避ける
 
 let inputs: Vec<&str> = vec!["文1", "文2", "文3", "文4"];
 let results: Vec<Vec<_>> = std::thread::scope(|s| {
@@ -329,7 +344,7 @@ import hasami
 from concurrent.futures import ThreadPoolExecutor
 
 analyzer = hasami.Analyzer("dict/ipadic-neologd.hsd")
-analyzer.prewarm()  # 初回並列スパイク回避（推奨）
+analyzer.prewarm()  # 解析で触れる辞書のページを先に読み込む（初回の待ちを避ける）
 
 def tokenize_one(args):
     worker, text = args
@@ -349,6 +364,8 @@ with ThreadPoolExecutor(max_workers=4) as ex:
 token = analyzer.tokenize("猫")[0]
 token.surface        # 表層形: "猫"
 token.pos            # 品詞: "名詞,一般,*,*"
+token.conj_type      # 活用型: ""（活用しない語・未知語は空文字列。動詞なら "五段・カ行イ音便" など）
+token.conj_form      # 活用形: ""（動詞なら "連用形" など）
 token.base_form      # 原形: "猫"
 token.reading        # 読み: "ネコ"
 token.pronunciation  # 発音: "ネコ"
@@ -357,6 +374,8 @@ token.end            # 終了バイト位置: 3
 token.word_cost      # 単語コスト: 3987
 token.is_known       # 辞書語かどうか: True
 ```
+
+辞書が壊れていて解析中に不正な参照を見つけたときは `ValueError`、辞書ファイルを開けないときは `IOError` を送出する。
 
 ### C FFI
 
@@ -384,6 +403,10 @@ for (uint32_t i = 0; i < tokens.len; i++) {
 hasami_free_tokens(tokens);
 hasami_free(analyzer);
 ```
+
+`HasamiToken` のフィールドは `surface`・`start`・`end`・`pos`・`conj_type`・`conj_form`・`base_form`・`reading`・
+`pronunciation`・`is_known`（文字列はすべて UTF-8 のヌル終端）。解析中に辞書の不正な参照を見つけたときは、
+空のリストを返して `hasami_last_error` にエラーを入れる。
 
 ## ベンチマーク
 

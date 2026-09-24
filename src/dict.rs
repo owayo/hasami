@@ -1,7 +1,8 @@
 //! 辞書モジュール - エントリ、接続コスト行列、辞書構築
 
 use crate::char_class::{CharClass, CharClassifier};
-use crate::trie::DoubleArrayTrie;
+use crate::hsd::writer::{self, DictSource};
+use crate::hsd::{DictError, Dictionary, Meta, WriteOptions, WriteStats};
 use std::collections::HashMap;
 use std::io;
 use std::path::Path;
@@ -278,7 +279,9 @@ fn is_canonical_word(pos: &str) -> bool {
 }
 
 /// 辞書エントリ（1形態素に対応）
-#[derive(Clone, Debug)]
+///
+/// 活用型・活用形が無い語は `*`（MeCab 形式 CSV と同じ）。空文字列は書き出し時に `*` にそろえる。
+#[derive(Clone, Debug, Default)]
 pub struct DictEntry {
     /// 表層形（Arc<str>で共有参照）
     pub surface: Arc<str>,
@@ -290,6 +293,10 @@ pub struct DictEntry {
     pub cost: i16,
     /// 品詞情報（カンマ区切り）- Arc<str>で共有参照（クローンコスト最小）
     pub pos: Arc<str>,
+    /// 活用型（MeCab 形式 CSV の 9 列目）
+    pub conj_type: Arc<str>,
+    /// 活用形（MeCab 形式 CSV の 10 列目）
+    pub conj_form: Arc<str>,
     /// 原形
     pub base_form: Arc<str>,
     /// 読み
@@ -309,78 +316,50 @@ pub struct UnkEntry {
 }
 
 /// 接続コスト行列
-#[derive(Clone)]
+///
+/// matrix.def の 1 行目は「前の語の right_id の数」「次の語の left_id の数」、以降の行は
+/// 「前の語の right_id」「次の語の left_id」「コスト」（MeCab と同じ）。
+/// 次の語の left_id ごとに行を持つ転置形で保持する（v4 の MATRIX セクションと同じ並び）。
+/// Viterbi は注目する語（left_id が決まる）を固定して前の語（right_id）を回すので、1 行の中で完結する。
+#[derive(Clone, Debug)]
 pub struct ConnectionMatrix {
-    pub left_size: u16,
-    pub right_size: u16,
-    /// costs[right_id * left_size + left_id] = cost
+    /// 次の語の left_id の数
+    pub num_left: u32,
+    /// 前の語の right_id の数
+    pub num_right: u32,
+    /// `costs[left_id * num_right + right_id]` = 接続コスト
     pub costs: Vec<i16>,
 }
 
 impl ConnectionMatrix {
+    /// すべて 0 の行列
+    pub fn zeros(num_left: u32, num_right: u32) -> Self {
+        ConnectionMatrix {
+            num_left,
+            num_right,
+            costs: vec![0; num_left as usize * num_right as usize],
+        }
+    }
+
     /// 文脈 ID がこの行列で引ける範囲にあるかどうか
     ///
-    /// 行は前の語の `right_id`、列は次の語の `left_id` で引くので、`left_id` は
-    /// `left_size` 未満、`right_id` は `right_size` 未満でなければならない。範囲外の ID は
-    /// 解析時に接続コストが引けず 0 として扱われ、そのエントリが不当に有利になる。
+    /// エントリの `left_id` は `num_left` 未満、`right_id` は `num_right` 未満でなければならない。
+    /// 範囲外の ID を持つエントリは辞書に書き出せない（v3 までは接続コスト 0 として扱われ、
+    /// そのエントリが不当に有利になっていた）。
     #[inline]
     pub fn contains_ids(&self, left_id: u16, right_id: u16) -> bool {
-        left_id < self.left_size && right_id < self.right_size
+        (left_id as u32) < self.num_left && (right_id as u32) < self.num_right
     }
 
-    /// 接続コストを取得
-    /// prev_right_id: 前のトークンの right_id
-    /// next_left_id: 次のトークンの left_id
-    #[inline(always)]
-    pub fn cost(&self, prev_right_id: u16, next_left_id: u16) -> i32 {
-        let row_start = prev_right_id as usize * self.left_size as usize;
-        let idx = row_start + next_left_id as usize;
-        if idx < self.costs.len() {
-            // SAFETY: bounds checked above
-            unsafe { *self.costs.get_unchecked(idx) as i32 }
-        } else {
-            0
+    /// 接続コスト（前の語の right_id → 次の語の left_id）。範囲外なら None
+    #[inline]
+    pub fn cost(&self, prev_right_id: u16, next_left_id: u16) -> Option<i16> {
+        if !self.contains_ids(next_left_id, prev_right_id) {
+            return None;
         }
-    }
-
-    /// 指定 right_id の行スライスを取得（同じ prev ノードから複数の next ノードへ接続する場合に有用）
-    #[inline(always)]
-    pub fn row(&self, prev_right_id: u16) -> &[i16] {
-        let row_start = prev_right_id as usize * self.left_size as usize;
-        let row_end = row_start + self.left_size as usize;
-        if row_end <= self.costs.len() {
-            // SAFETY: bounds checked above
-            unsafe { self.costs.get_unchecked(row_start..row_end) }
-        } else {
-            &[]
-        }
-    }
-}
-
-/// コンパイル済み辞書（ビルド時の中間構造体）
-pub struct Dictionary {
-    /// Double-Array Trie（表層形 → エントリID）
-    pub trie: DoubleArrayTrie,
-    /// 全辞書エントリ
-    pub entries: Vec<DictEntry>,
-    /// 接続コスト行列
-    pub matrix: ConnectionMatrix,
-    /// 文字クラス分類器
-    pub char_classifier: CharClassifier,
-    /// 未知語テンプレート（文字クラス名 → テンプレートリスト）
-    pub unk_entries: HashMap<String, Vec<UnkEntry>>,
-}
-
-impl Dictionary {
-    /// 表層形の共通接頭辞検索
-    pub fn lookup(&self, input: &[u8]) -> Vec<(usize, Vec<&DictEntry>)> {
-        let mut results = Vec::new();
-        self.trie.common_prefix_search_cb(input, |len, ids| {
-            let entries: Vec<&DictEntry> =
-                ids.iter().map(|&id| &self.entries[id as usize]).collect();
-            results.push((len, entries));
-        });
-        results
+        self.costs
+            .get(next_left_id as usize * self.num_right as usize + prev_right_id as usize)
+            .copied()
     }
 }
 
@@ -390,6 +369,10 @@ pub struct DictBuilder {
     matrix: Option<ConnectionMatrix>,
     char_classifier: CharClassifier,
     unk_entries: HashMap<String, Vec<UnkEntry>>,
+    /// 読み込んだ辞書のメタデータ（repair・merge で引き継ぐ）
+    meta: Option<Meta>,
+    /// 品詞・活用型・活用形の Arc を共有するための表（種類が少なく、エントリごとに複製するとメモリを食う）
+    interned: HashMap<Box<str>, Arc<str>>,
 }
 
 impl Default for DictBuilder {
@@ -410,63 +393,65 @@ impl DictBuilder {
             matrix: None,
             char_classifier: CharClassifier::default_japanese(),
             unk_entries: HashMap::new(),
+            meta: None,
+            interned: HashMap::new(),
         }
     }
 
-    /// 既存の .hsd 辞書からエントリをインポート（マージ用）
-    pub fn load_hsd<P: AsRef<Path>>(&mut self, path: P) -> io::Result<()> {
-        let dict = crate::mmap_dict::MmapDictionary::load(path)?;
-        let count = dict.entry_count() as usize;
+    /// 品詞・活用型・活用形の文字列を共有の Arc にする
+    fn intern(&mut self, s: &str) -> Arc<str> {
+        if let Some(arc) = self.interned.get(s) {
+            return Arc::clone(arc);
+        }
+        let arc: Arc<str> = Arc::from(s);
+        self.interned.insert(s.into(), Arc::clone(&arc));
+        arc
+    }
 
-        for i in 0..count {
-            let id = i as u32;
-            let (left_id, right_id, cost) = dict.entry_cost_info(id);
-            let surface: Arc<str> = Arc::from(dict.entry_surface(id));
-            let pos: Arc<str> = Arc::from(dict.entry_pos(id));
-            let base_form: Arc<str> = Arc::from(dict.entry_base_form(id));
-            let reading: Arc<str> = Arc::from(dict.entry_reading(id));
-            let pronunciation: Arc<str> = Arc::from(dict.entry_pronunciation(id));
+    /// 既存の .hsd 辞書を取り込む（merge・repair 用）
+    ///
+    /// エントリ、接続行列（matrix.def なしで作った辞書のゼロ行列は取り込まない）、
+    /// 文字種定義、未知語テンプレート、メタデータを取り込む。支配エントリを除いた最終辞書は
+    /// 消した候補を復元できないので取り込めない（除去前の中間辞書か上流の CSV から作り直す）。
+    pub fn load_hsd<P: AsRef<Path>>(&mut self, path: P) -> Result<(), DictError> {
+        let path = path.as_ref();
+        let dict = Dictionary::load(path)?;
+        if dict.is_pruned() {
+            return Err(DictError::invalid(format!(
+                "{} is a final dictionary with dominated entries pruned; \
+                 repair or merge the intermediate dictionary (built without --prune-dominated) \
+                 or rebuild it from the source CSV",
+                path.display()
+            )));
+        }
+        let before = self.entries.len();
+        self.entries.reserve(dict.entry_count());
+        dict.for_each_entry(|entry| {
+            self.entries.push(entry);
+            Ok(())
+        })?;
 
-            self.entries.push(DictEntry {
-                surface,
-                left_id,
-                right_id,
-                cost,
-                pos,
-                base_form,
-                reading,
-                pronunciation,
-            });
+        if self.matrix.is_none() {
+            self.matrix = dict.connection_matrix();
+        }
+        for (class, templates) in dict.unk_entries() {
+            self.unk_entries.entry(class).or_insert(templates);
+        }
+        self.char_classifier = dict.char_classifier();
+        if self.meta.is_none() {
+            self.meta = Some(dict.meta().clone());
         }
 
-        // 接続行列もインポート（まだ設定されていなければ）。matrix.def なしで作った辞書は
-        // build が置く 1x1 の仮の行列しか持たないので、行列なしとして扱う。本物の行列として
-        // 取り込むと、全エントリの文脈 ID が範囲外と判定されてしまう
-        let left_size = dict.matrix_left_size();
-        let right_size = dict.matrix_right_size();
-        let placeholder = left_size <= 1 && right_size <= 1;
-        if self.matrix.is_none() && !placeholder {
-            let total = left_size as usize * right_size as usize;
-            let mut costs = Vec::with_capacity(total);
-            for r in 0..right_size {
-                let row = dict.matrix_row(r);
-                costs.extend_from_slice(row);
-            }
-            self.matrix = Some(ConnectionMatrix {
-                left_size,
-                right_size,
-                costs,
-            });
-        }
-
-        // 未知語テンプレートもインポート
-        dict.export_unk_entries(&mut self.unk_entries);
-
-        // CharClassifier もインポート
-        dict.export_char_classifier(&mut self.char_classifier);
-
-        eprintln!("Imported {} entries from existing dictionary", count);
+        eprintln!(
+            "Imported {} entries from existing dictionary",
+            self.entries.len() - before
+        );
         Ok(())
+    }
+
+    /// 取り込んだ辞書のメタデータ（`load_hsd` していなければ None）
+    pub fn meta(&self) -> Option<&Meta> {
+        self.meta.as_ref()
     }
 
     /// 現在のエントリ数
@@ -897,8 +882,8 @@ impl DictBuilder {
                  (left_id < {}, right_id < {}):\n  {}\n\
                  Remove them with `hasami repair --drop-invalid-context-ids`.",
                 invalid,
-                matrix.left_size,
-                matrix.right_size,
+                matrix.num_left,
+                matrix.num_right,
                 samples.join("\n  ")
             ),
         ))
@@ -912,6 +897,11 @@ impl DictBuilder {
     /// CharClassifier を直接設定
     pub fn set_char_classifier(&mut self, classifier: CharClassifier) {
         self.char_classifier = classifier;
+    }
+
+    /// 未知語テンプレート（文字種名 → テンプレート）を直接設定
+    pub fn set_unk_entries(&mut self, unk_entries: HashMap<String, Vec<UnkEntry>>) {
+        self.unk_entries = unk_entries;
     }
 
     /// MeCab形式のCSVファイルからエントリを追加
@@ -986,9 +976,9 @@ impl DictBuilder {
                             path.display(),
                             line_no,
                             left_id,
-                            matrix.left_size,
+                            matrix.num_left,
                             right_id,
-                            matrix.right_size
+                            matrix.num_right
                         ),
                     ));
                 }
@@ -998,18 +988,31 @@ impl DictBuilder {
             let pos_parts: Vec<&str> = (4..record.len().min(8))
                 .filter_map(|i| record.get(i))
                 .collect();
-            let pos = pos_parts.join(",");
+            let pos = self.intern(&pos_parts.join(","));
+            // 活用型・活用形は空か列が無ければ `*`
+            let conj = |i: usize| record.get(i).filter(|s| !s.is_empty()).unwrap_or("*");
+            let conj_type = self.intern(conj(8));
+            let conj_form = self.intern(conj(9));
 
-            let base_form: Arc<str> = record.get(10).unwrap_or(&surface).into();
+            let base_form: Arc<str> = match record.get(10) {
+                Some(b) if b != &record[0] => b.into(),
+                _ => Arc::clone(&surface),
+            };
             let reading: Arc<str> = record.get(11).unwrap_or("").into();
-            let pronunciation: Arc<str> = record.get(12).unwrap_or("").into();
+            let pronunciation: Arc<str> = match record.get(12) {
+                Some(p) if p != &*reading => p.into(),
+                Some(_) => Arc::clone(&reading),
+                None => "".into(),
+            };
 
             self.entries.push(DictEntry {
                 surface,
                 left_id,
                 right_id,
                 cost,
-                pos: pos.into(),
+                pos,
+                conj_type,
+                conj_form,
                 base_form,
                 reading,
                 pronunciation,
@@ -1051,6 +1054,9 @@ impl DictBuilder {
     }
 
     /// matrix.def を読み込み
+    ///
+    /// 1 行目は「前の語の right_id の数」「次の語の left_id の数」、以降の行は
+    /// 「前の語の right_id」「次の語の left_id」「コスト」（MeCab の matrix.def と同じ）。
     pub fn load_matrix<P: AsRef<Path>>(&mut self, path: P) -> io::Result<()> {
         let path = path.as_ref();
         let raw_bytes = std::fs::read(path)?;
@@ -1067,22 +1073,18 @@ impl DictBuilder {
                 "Invalid matrix header",
             ));
         }
-
-        let left_size: u16 = parts[0].parse().map_err(|e| {
-            io::Error::new(
+        let num_right: u32 = parse_field(path, 1, "right_id count", parts[0])?;
+        let num_left: u32 = parse_field(path, 1, "left_id count", parts[1])?;
+        if num_right > 1 << 16 || num_left > 1 << 16 {
+            return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("Invalid left_size: {}", e),
-            )
-        })?;
-        let right_size: u16 = parts[1].parse().map_err(|e| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("Invalid right_size: {}", e),
-            )
-        })?;
-
-        let total = left_size as usize * right_size as usize;
-        let mut costs = vec![0i16; total];
+                format!(
+                    "{}: matrix size {num_right}x{num_left} is too large",
+                    path.display()
+                ),
+            ));
+        }
+        let mut matrix = ConnectionMatrix::zeros(num_left, num_right);
 
         for (line_no, line) in lines.enumerate().map(|(i, l)| (i + 2, l)) {
             let line = line.trim();
@@ -1093,33 +1095,33 @@ impl DictBuilder {
             if parts.len() < 3 {
                 continue;
             }
-            let right_id: usize = parse_field(path, line_no, "right_id", parts[0])?;
-            let left_id: usize = parse_field(path, line_no, "left_id", parts[1])?;
+            let right_id: u32 = parse_field(path, line_no, "right_id", parts[0])?;
+            let left_id: u32 = parse_field(path, line_no, "left_id", parts[1])?;
             let cost: i16 = parse_field(path, line_no, "cost", parts[2])?;
-
-            let idx = right_id * left_size as usize + left_id;
-            if idx >= costs.len() {
+            if right_id >= num_right || left_id >= num_left {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     format!(
-                        "matrix id out of range: right_id={}, left_id={} (max {}x{})",
-                        right_id, left_id, right_size, left_size
+                        "{}:{}: matrix id out of range: right_id={} (< {}), left_id={} (< {})",
+                        path.display(),
+                        line_no,
+                        right_id,
+                        num_right,
+                        left_id,
+                        num_left
                     ),
                 ));
             }
-            costs[idx] = cost;
+            matrix.costs[left_id as usize * num_right as usize + right_id as usize] = cost;
         }
-
-        self.matrix = Some(ConnectionMatrix {
-            left_size,
-            right_size,
-            costs,
-        });
 
         eprintln!(
             "Loaded matrix: {}x{} ({} entries)",
-            right_size, left_size, total
+            num_right,
+            num_left,
+            matrix.costs.len()
         );
+        self.matrix = Some(matrix);
 
         Ok(())
     }
@@ -1266,130 +1268,205 @@ impl DictBuilder {
         cow.into_owned()
     }
 
-    /// 辞書をビルド
-    pub fn build(self) -> Dictionary {
-        self.build_with_progress(|_, _| {})
-    }
-
-    /// プログレスコールバック付きで辞書をビルド
-    ///
-    /// `progress(processed, total)` が Trie 構築中に定期的に呼び出される。
-    pub fn build_with_progress(self, progress: impl FnMut(usize, usize)) -> Dictionary {
-        // エントリからTrieを構築
-        let mut trie_entries: Vec<(&[u8], u32)> = self
-            .entries
-            .iter()
-            .enumerate()
-            .map(|(i, e)| (e.surface.as_bytes(), i as u32))
-            .collect();
-
-        // バイト列でソート（Trie構築に必要ではないが効率向上）
-        trie_entries.sort_by(|a, b| a.0.cmp(b.0));
-
-        let trie = DoubleArrayTrie::build_with_progress(&trie_entries, progress);
-
-        let matrix = self.matrix.unwrap_or(ConnectionMatrix {
-            left_size: 1,
-            right_size: 1,
-            costs: vec![0],
-        });
-
-        Dictionary {
-            trie,
-            entries: self.entries,
-            matrix,
-            char_classifier: self.char_classifier,
-            unk_entries: self.unk_entries,
+    fn source(&self) -> DictSource<'_> {
+        DictSource {
+            entries: &self.entries,
+            matrix: self.matrix.as_ref(),
+            classifier: &self.char_classifier,
+            unk_entries: &self.unk_entries,
         }
     }
+
+    /// 書き出しの設定（取り込んだ辞書があればそのメタデータを引き継ぐ）
+    pub fn write_options(&self) -> WriteOptions {
+        WriteOptions {
+            meta: self
+                .meta
+                .clone()
+                .unwrap_or_else(|| WriteOptions::default().meta),
+            prune_dominated: false,
+        }
+    }
+
+    /// メモリ上に辞書を作る（テスト・Python の `DictBuilder` 用）
+    pub fn build(self) -> Result<Dictionary, DictError> {
+        let opts = self.write_options();
+        self.build_with(&opts)
+    }
+
+    /// 設定を指定してメモリ上に辞書を作る
+    pub fn build_with(&self, opts: &WriteOptions) -> Result<Dictionary, DictError> {
+        let sections = writer::build_sections(&self.source(), opts, |_, _| {})?;
+        let (words, len) = sections.to_aligned_buffer();
+        Dictionary::from_owned(words, len)
+    }
+
+    /// .hsd ファイルに書き出す
+    ///
+    /// 同じディレクトリの一時ファイルに書いてから rename で差し替えるので、書き出しに失敗しても
+    /// 元のファイルは壊れない。`progress(確定したキー数, キーの総数)` は trie の構築中に呼ばれる。
+    pub fn write_hsd<P: AsRef<Path>>(
+        &self,
+        path: P,
+        opts: &WriteOptions,
+        progress: impl FnMut(usize, usize),
+    ) -> Result<WriteStats, DictError> {
+        let mut sections = writer::build_sections(&self.source(), opts, progress)?;
+        sections.write_file(path.as_ref())?;
+        Ok(sections.stats.clone())
+    }
+}
+
+/// 全エントリを MeCab 形式の CSV（13 列）で書き出す
+///
+/// 列は `表層形,左文脈ID,右文脈ID,コスト,品詞1..4,活用型,活用形,原形,読み,発音`。
+/// 品詞が 4 要素に満たないときは `*` で埋め、5 要素以上なら 4 列目に残りをまとめる
+/// （`DictBuilder::add_csv` で読み戻すと同じ品詞文字列になる）。
+///
+/// Returns: 書き出したエントリ数
+pub fn write_lexicon_csv<W: std::io::Write>(dict: &Dictionary, writer: W) -> io::Result<usize> {
+    let mut wtr = csv::WriterBuilder::new()
+        .has_headers(false)
+        .flexible(true)
+        .from_writer(writer);
+    let mut count = 0;
+    let mut io_error: Option<io::Error> = None;
+    let result = dict.for_each_entry(|e| {
+        let mut parts = e.pos.splitn(4, ',');
+        let pos_cols: [&str; 4] = std::array::from_fn(|_| parts.next().unwrap_or("*"));
+        let (left_id, right_id, cost) = (
+            e.left_id.to_string(),
+            e.right_id.to_string(),
+            e.cost.to_string(),
+        );
+        wtr.write_record([
+            &*e.surface,
+            &left_id,
+            &right_id,
+            &cost,
+            pos_cols[0],
+            pos_cols[1],
+            pos_cols[2],
+            pos_cols[3],
+            &e.conj_type,
+            &e.conj_form,
+            &e.base_form,
+            &e.reading,
+            &e.pronunciation,
+        ])
+        .map_err(|err| {
+            // 書き込み先の io エラーは種類 (BrokenPipe 等) を保ったまま返す
+            let err = match err.into_kind() {
+                csv::ErrorKind::Io(err) => err,
+                kind => io::Error::other(format!("{kind:?}")),
+            };
+            let message = err.to_string();
+            io_error = Some(err);
+            DictError::Invalid(message)
+        })?;
+        count += 1;
+        Ok(())
+    });
+    if let Some(e) = io_error {
+        return Err(e);
+    }
+    result?;
+    wtr.flush()?;
+    Ok(count)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_build_and_lookup() {
-        let mut builder = DictBuilder::new();
-        builder.add_entry(DictEntry {
-            surface: "東京".into(),
-            left_id: 1,
-            right_id: 1,
-            cost: 3000,
-            pos: "名詞,固有名詞,地域,一般".into(),
-            base_form: "東京".into(),
-            reading: "トウキョウ".into(),
-            pronunciation: "トーキョー".into(),
-        });
-        builder.add_entry(DictEntry {
-            surface: "都".into(),
-            left_id: 2,
-            right_id: 2,
-            cost: 4000,
-            pos: "名詞,接尾,地域,*".into(),
-            base_form: "都".into(),
-            reading: "ト".into(),
-            pronunciation: "ト".into(),
-        });
+#[test]
+fn test_build_and_lookup() {
+    let mut builder = DictBuilder::new();
+    builder.add_entry(DictEntry {
+        surface: "東京".into(),
+        left_id: 1,
+        right_id: 1,
+        cost: 3000,
+        pos: "名詞,固有名詞,地域,一般".into(),
+        base_form: "東京".into(),
+        reading: "トウキョウ".into(),
+        pronunciation: "トーキョー".into(),
+        ..Default::default()
+    });
+    builder.add_entry(DictEntry {
+        surface: "都".into(),
+        left_id: 2,
+        right_id: 2,
+        cost: 4000,
+        pos: "名詞,接尾,地域,*".into(),
+        base_form: "都".into(),
+        reading: "ト".into(),
+        pronunciation: "ト".into(),
+        ..Default::default()
+    });
 
-        let dict = builder.build();
-        let results = dict.lookup("東京都".as_bytes());
-        assert!(!results.is_empty());
-        assert_eq!(&*results[0].1[0].surface, "東京");
-    }
+    let dict = builder.build().unwrap();
+    let results = dict.lookup("東京都").unwrap();
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].0, "東京".len());
+    assert_eq!(&*results[0].1[0].surface, "東京");
+    assert_eq!(&*results[0].1[0].pronunciation, "トーキョー");
+    assert_eq!(&*results[0].1[0].conj_type, "*");
+}
 
-    // --- 追加テスト ---
+// --- 追加テスト ---
 
-    #[test]
-    fn test_connection_matrix_cost() {
-        let matrix = ConnectionMatrix {
-            left_size: 3,
-            right_size: 3,
-            // 3x3 matrix: costs[right_id * left_size + left_id]
-            costs: vec![0, 1, 2, 3, 4, 5, 6, 7, 8],
-        };
-        assert_eq!(matrix.cost(0, 0), 0);
-        assert_eq!(matrix.cost(0, 1), 1);
-        assert_eq!(matrix.cost(0, 2), 2);
-        assert_eq!(matrix.cost(1, 0), 3);
-        assert_eq!(matrix.cost(2, 2), 8);
-    }
+#[test]
+fn test_connection_matrix_cost() {
+    // 次の語の left_id が 3、前の語の right_id が 2。costs[left_id * num_right + right_id]
+    let matrix = ConnectionMatrix {
+        num_left: 3,
+        num_right: 2,
+        costs: vec![0, 1, 2, 3, 4, 5],
+    };
+    assert_eq!(matrix.cost(0, 0), Some(0));
+    assert_eq!(matrix.cost(1, 0), Some(1));
+    assert_eq!(matrix.cost(0, 1), Some(2));
+    assert_eq!(matrix.cost(1, 2), Some(5));
+}
 
-    #[test]
-    fn test_connection_matrix_row() {
-        let matrix = ConnectionMatrix {
-            left_size: 3,
-            right_size: 2,
-            costs: vec![10, 20, 30, 40, 50, 60],
-        };
-        assert_eq!(matrix.row(0), &[10, 20, 30]);
-        assert_eq!(matrix.row(1), &[40, 50, 60]);
-    }
+#[test]
+fn test_connection_matrix_out_of_bounds() {
+    let matrix = ConnectionMatrix::zeros(2, 2);
+    assert_eq!(matrix.cost(10, 0), None);
+    assert_eq!(matrix.cost(0, 10), None);
+}
 
-    #[test]
-    fn test_connection_matrix_out_of_bounds() {
-        let matrix = ConnectionMatrix {
-            left_size: 2,
-            right_size: 2,
-            costs: vec![0, 1, 2, 3],
-        };
-        // Out of bounds should return 0 or empty
-        assert_eq!(matrix.cost(10, 0), 0);
-        assert!(matrix.row(10).is_empty());
-    }
+#[test]
+fn test_connection_matrix_contains_ids() {
+    // left_id が 3 種類、right_id が 2 種類
+    let matrix = ConnectionMatrix::zeros(3, 2);
+    assert!(matrix.contains_ids(2, 1));
+    assert!(!matrix.contains_ids(3, 0));
+    assert!(!matrix.contains_ids(0, 2));
+}
 
-    #[test]
-    fn test_connection_matrix_contains_ids() {
-        // 列 (left_id) が 3、行 (right_id) が 2
-        let matrix = ConnectionMatrix {
-            left_size: 3,
-            right_size: 2,
-            costs: vec![0; 6],
-        };
-        assert!(matrix.contains_ids(2, 1));
-        assert!(!matrix.contains_ids(3, 0));
-        assert!(!matrix.contains_ids(0, 2));
-    }
+#[test]
+fn test_load_matrix_reads_mecab_orientation() {
+    // 1 行目は「right_id の数 left_id の数」、各行は「right_id left_id コスト」。
+    // 正方でない行列で向きを取り違えないことを確かめる
+    let dir = std::env::temp_dir().join(format!("hasami-matrix-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("matrix.def");
+    std::fs::write(&path, "2 3\n0 0 1\n0 2 3\n1 0 4\n1 2 6\n").unwrap();
+    let mut builder = DictBuilder::new();
+    builder.load_matrix(&path).unwrap();
+    let m = builder.matrix.as_ref().unwrap();
+    assert_eq!((m.num_right, m.num_left), (2, 3));
+    assert_eq!(m.cost(0, 0), Some(1));
+    assert_eq!(m.cost(0, 2), Some(3));
+    assert_eq!(m.cost(1, 0), Some(4));
+    assert_eq!(m.cost(1, 2), Some(6));
+    assert_eq!(m.cost(1, 1), Some(0));
+    std::fs::write(&path, "2 3\n2 0 1\n").unwrap();
+    assert!(builder.load_matrix(&path).is_err());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
 
     #[test]
     fn test_pos_has_prefix_is_element_wise() {
@@ -1424,6 +1501,7 @@ mod tests {
             base_form: "test".into(),
             reading: "".into(),
             pronunciation: "".into(),
+            ..Default::default()
         });
         assert_eq!(builder.entry_count(), 1);
     }
@@ -1441,6 +1519,7 @@ mod tests {
             base_form: "金".into(),
             reading: "キン".into(),
             pronunciation: "キン".into(),
+            ..Default::default()
         });
         builder.add_entry(DictEntry {
             surface: "金".into(),
@@ -1451,10 +1530,11 @@ mod tests {
             base_form: "金".into(),
             reading: "カネ".into(),
             pronunciation: "カネ".into(),
+            ..Default::default()
         });
 
-        let dict = builder.build();
-        let results = dict.lookup("金曜日".as_bytes());
+        let dict = builder.build().unwrap();
+        let results = dict.lookup("金曜日").unwrap();
         assert!(!results.is_empty());
         // Should find both entries for "金"
         let entries_for_gold = &results[0].1;
@@ -1473,9 +1553,10 @@ mod tests {
             base_form: "東京".into(),
             reading: "".into(),
             pronunciation: "".into(),
+            ..Default::default()
         });
-        let dict = builder.build();
-        let results = dict.lookup("大阪".as_bytes());
+        let dict = builder.build().unwrap();
+        let results = dict.lookup("大阪").unwrap();
         assert!(results.is_empty());
     }
 
@@ -1491,25 +1572,28 @@ mod tests {
             base_form: "テスト".into(),
             reading: "テスト".into(),
             pronunciation: "テスト".into(),
+            ..Default::default()
         });
 
-        // Build without setting matrix - should use default
-        let dict = builder.build();
-        assert_eq!(dict.matrix.left_size, 1);
-        assert_eq!(dict.matrix.right_size, 1);
+        // matrix.def なしでは、使われている文脈 ID を覆うゼロ行列を置く
+        let dict = builder.build().unwrap();
+        assert_eq!(dict.matrix_dims(), (1, 1));
+        assert!(dict.connection_matrix().is_none());
     }
 
     #[test]
     fn test_dict_builder_set_matrix() {
         let mut builder = DictBuilder::new();
-        builder.set_matrix(ConnectionMatrix {
-            left_size: 5,
-            right_size: 5,
-            costs: vec![0; 25],
+        builder.set_matrix(ConnectionMatrix::zeros(5, 4));
+        builder.add_entry(DictEntry {
+            surface: "テスト".into(),
+            left_id: 4,
+            right_id: 3,
+            ..Default::default()
         });
-        let dict = builder.build();
-        assert_eq!(dict.matrix.left_size, 5);
-        assert_eq!(dict.matrix.right_size, 5);
+        let dict = builder.build().unwrap();
+        assert_eq!(dict.matrix_dims(), (5, 4));
+        assert!(dict.connection_matrix().is_some());
     }
 
     #[test]
@@ -1556,6 +1640,7 @@ mod tests {
             base_form: "テスト".into(),
             reading: "テスト".into(),
             pronunciation: "テスト".into(),
+            ..Default::default()
         };
         let cloned = entry.clone();
         assert_eq!(&*cloned.surface, "テスト");
