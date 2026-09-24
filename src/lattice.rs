@@ -10,9 +10,8 @@
 //!    累積コストごと入れる。i で終わるノードが無い位置（BOS から辿り着けない位置）は飛ばす
 //! 3. EOS の最良の前ノードから辿って最良パスを求め、トークンを作る
 //!
-//! 同点のときは先に追加した前ノードが勝つ（`<` の先勝ち）。ノードを追加する順序（開始位置の昇順、
-//! trie が報告する順、群の中のエントリの順、未知語は既知語の後）は、ラティスを作り終えてから Viterbi を
-//! 行っていたときと同じなので、同点の扱いも含めて結果は変わらない。
+//! 同点のときは先に追加した前ノードが勝つ（`<` の先勝ち）。ノードは、開始位置の昇順、trie が報告する順
+//! （短い語から）、群の中のエントリの順、未知語は既知語の後（並び全体、続けて短い接頭辞から）に追加する。
 
 use crate::char_class::ALL_CHAR_TYPES;
 use crate::hsd::trie::Trie;
@@ -889,30 +888,22 @@ impl LatticeWorkspace {
                     right_id: unk.right_id,
                     word_cost: unk.cost,
                 };
-                let mut added_single = false;
-                unk.grouping.for_each_unk_len(chars.runs[i], |len| {
-                    if len == 1 {
-                        added_single = true;
-                    }
+                let mut added = false;
+                unk.grouping.for_each_len(chars.runs[i], |len| {
+                    added = true;
                     push(i + len as usize, node);
                 });
-
-                // 1文字未知語がまだなければ追加
-                if !added_single {
+                // 候補が無く、この位置から始まる既知語も無いときだけ 1 文字の未知語（MeCab と同じ）
+                if !added && !has_known {
                     push(i + 1, node);
                 }
             }
         }
 
         // --- EOS（left_id 0）の最良前ノードからトレースバック ---
-        // 位置 n にはいつも辿り着ける（辿り着ける位置からは、既知語か未知語で必ず先へ進める。ノードは
-        // 入力の外で終わらない）。辿り着けなければトークンを出さない（前ノードの無いパスと同じ扱い）
-        let eos_prevs = &lattice.ends[n];
-        debug_assert!(!eos_prevs.is_empty(), "the end of the chunk is unreachable");
-        if eos_prevs.is_empty() {
-            return Ok(());
-        }
-        let (_, last) = best_prev(eos_prevs, view.matrix_row(0));
+        // 位置 n にはいつも辿り着ける（辿り着ける位置からは、既知語・未知語の候補・1 文字の未知語の
+        // どれかで必ず先へ進める。ノードは入力の外で終わらない）
+        let (_, last) = best_prev(&lattice.ends[n], view.matrix_row(0));
         lattice.path.clear();
         let (mut pos, mut idx) = (n, last as usize);
         loop {

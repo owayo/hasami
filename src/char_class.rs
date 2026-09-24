@@ -1,81 +1,63 @@
-//! 文字分類 - Unicode文字種に基づく未知語処理
+//! 文字分類 - char.def による文字種の判定と、未知語の候補の作り方
 
 use std::collections::HashMap;
 
-/// 文字クラス定義
+/// 文字クラス定義（char.def のカテゴリ）
 #[derive(Clone, Debug)]
 pub struct CharClass {
     /// クラス名
     pub name: String,
-    /// invoke: 常に未知語処理を起動するか
+    /// invoke: 既知語があっても未知語処理を起動するか
     pub invoke: bool,
-    /// group: 同一クラスの文字をグルーピングするか
+    /// group: 同じ文字種の並び全体を 1 つの未知語の候補にするか
     pub group: bool,
-    /// length: グルーピング時の最大長（0=無制限）
+    /// length: 1〜length 文字の接頭辞を未知語の候補にする（0 なら作らない）
     pub length: u32,
 }
 
-/// CharType ごとの属性キャッシュ（HashMap 参照を排除するための固定長配列用）
-#[derive(Clone, Copy, Debug)]
-#[allow(dead_code)]
-pub(crate) struct ClassProps {
-    invoke: bool,
+/// 同じ文字種の並びから未知語の候補を作る規則（char.def の group・length。MeCab と同じ意味）
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct UnkGrouping {
     group: bool,
-    max_length: u32,
+    length: u32,
 }
 
-impl Default for ClassProps {
-    fn default() -> Self {
-        // デフォルト: group=true（classes に定義がない場合のフォールバック動作を維持）
-        ClassProps {
-            invoke: false,
-            group: true,
-            max_length: 0,
-        }
-    }
-}
+impl UnkGrouping {
+    /// char.def に定義の無い文字種（並び全体だけを候補にする）
+    const UNDEFINED: UnkGrouping = UnkGrouping {
+        group: true,
+        length: 0,
+    };
 
-impl ClassProps {
-    /// 同じ文字種の文字が `run` 文字（1 以上）続く位置で作る未知語の長さ（文字数）を、作る順に渡す
+    /// 同じ文字種の文字が `run` 文字（1 以上）続く位置で作る未知語の候補の長さ（文字数）を、作る順に渡す
     ///
-    /// [`CharClassifier::group_at_cb`] と同じ長さを、並びを走査せずに出す。
-    /// - group: 並び全体を 1 つ。length が 0 でなければ `max(length, 2)` 文字で打ち切る
-    ///   （2 文字目を足してから上限と比べるので、length が 1 でも 2 文字になる）
-    /// - group でない: 1 文字から `min(run, length)` 文字まで（length が 0 なら 1 文字だけ）
+    /// MeCab の tokenizer と同じ: group なら並び全体（並びが [`MAX_GROUPING_SIZE`] + 1 字まで）を 1 つ、
+    /// 続けて 1〜length 字の接頭辞（並び全体と同じ長さは除く）。候補が 1 つも無く、その位置から始まる
+    /// 既知語も無いときに 1 文字の未知語を足すのは呼び出し側。
     #[inline]
-    pub(crate) fn for_each_unk_len(&self, run: u32, mut cb: impl FnMut(u32)) {
-        if self.group {
-            let len = if self.max_length == 0 {
-                run
-            } else {
-                run.min(self.max_length.max(2))
-            };
-            cb(len);
-        } else {
-            let max = if self.max_length == 0 {
-                1
-            } else {
-                self.max_length
-            };
-            for len in 1..=run.min(max) {
+    pub(crate) fn for_each_len(&self, run: u32, mut cb: impl FnMut(u32)) {
+        if self.group && run - 1 <= MAX_GROUPING_SIZE {
+            cb(run);
+        }
+        for len in 1..=run.min(self.length) {
+            if !(self.group && len == run) {
                 cb(len);
             }
         }
     }
 }
 
-/// CharType の総数
-const NUM_CHAR_TYPES: usize = 9;
+/// MeCab の `max-grouping-size` の既定値。group の文字種の並びは、先頭の後ろがこの文字数以下のときだけ
+/// 1 つの候補にする
+const MAX_GROUPING_SIZE: u32 = 24;
 
 /// 文字分類器
 #[derive(Clone, Debug)]
 pub struct CharClassifier {
     /// 文字クラス定義
     pub classes: HashMap<String, CharClass>,
-    /// Unicode範囲マッピング (start, end, class_name) - ソート済み
+    /// Unicode範囲マッピング (start, end, class_name)。開始位置の昇順（同じ開始位置は char.def の順）
     pub ranges: Vec<(u32, u32, String)>,
-    /// CharType ごとの属性キャッシュ（ホットパス用）
-    props_cache: [ClassProps; NUM_CHAR_TYPES],
 }
 
 /// 文字種（簡易分類）
@@ -147,142 +129,86 @@ impl CharType {
     }
 }
 
-/// classes HashMap から props_cache を構築する
-fn build_props_cache(classes: &HashMap<String, CharClass>) -> [ClassProps; NUM_CHAR_TYPES] {
-    let mut cache = [ClassProps::default(); NUM_CHAR_TYPES];
-    for &ct in &ALL_CHAR_TYPES {
-        let idx = type_index(ct);
-        if let Some(class) = classes.get(ct.class_name()) {
-            cache[idx] = ClassProps {
-                invoke: class.invoke,
-                group: class.group,
-                max_length: class.length,
-            };
-        }
-    }
-    cache
-}
-
 impl CharClassifier {
-    /// デフォルトの日本語文字分類器
+    /// デフォルトの日本語文字分類器（char.def を読まないときに使う）
+    ///
+    /// カテゴリは配布辞書の IPAdic（`scripts/prepare_ipadic.py` で整えた char.def）と同じ。
+    /// 文字種は Unicode のブロックで決める（範囲の定義は持たない）。
     pub fn default_japanese() -> Self {
-        let mut classes = HashMap::new();
-
-        // MeCab互換の文字クラス定義
-        let defs = vec![
+        let defs = [
             ("DEFAULT", false, true, 0),
             ("SPACE", false, true, 0),
             ("KANJI", false, false, 2),
-            ("HIRAGANA", false, true, 2),
+            ("SYMBOL", false, false, 0),
+            ("NUMERIC", true, true, 1),
+            ("ALPHA", true, true, 1),
+            ("HIRAGANA", false, false, 2),
             ("KATAKANA", true, true, 2),
-            ("ALPHA", true, true, 0),
-            ("NUMERIC", true, true, 0),
-            ("SYMBOL", true, true, 0),
             ("KANJINUMERIC", true, true, 0),
         ];
-
-        for (name, invoke, group, length) in defs {
-            classes.insert(
-                name.to_string(),
-                CharClass {
+        let classes = defs
+            .into_iter()
+            .map(|(name, invoke, group, length)| {
+                let class = CharClass {
                     name: name.to_string(),
                     invoke,
                     group,
                     length,
-                },
-            );
-        }
-
-        let props_cache = build_props_cache(&classes);
-
+                };
+                (name.to_string(), class)
+            })
+            .collect();
         CharClassifier {
             classes,
             ranges: Vec::new(),
-            props_cache,
         }
     }
 
-    /// char.def の定義から構築
+    /// char.def の定義から構築（範囲は char.def の順に渡す）
     pub fn from_definitions(
         classes: HashMap<String, CharClass>,
         mut ranges: Vec<(u32, u32, String)>,
     ) -> Self {
-        // ranges をソートして二分探索を可能にする
-        ranges.sort_unstable_by_key(|&(start, _, _)| start);
-        let props_cache = build_props_cache(&classes);
-        CharClassifier {
-            classes,
-            ranges,
-            props_cache,
-        }
-    }
-
-    /// props_cache を classes HashMap から再構築する
-    ///
-    /// export_char_classifier 等で classes を直接変更した後に呼ぶこと
-    pub fn rebuild_props_cache(&mut self) {
-        self.props_cache = build_props_cache(&self.classes);
+        // 開始位置の順に並べる。同じ開始位置の範囲は char.def の順のまま（後の行が勝つ）
+        ranges.sort_by_key(|&(start, _, _)| start);
+        CharClassifier { classes, ranges }
     }
 
     /// 文字のCharTypeを判定
-    #[inline]
+    ///
+    /// 文字を含む char.def の範囲のうち、開始位置が最も大きいもの（同じなら char.def の後の行）の文字種。
+    /// どの範囲にも含まれなければ Unicode のブロックによる簡易分類。範囲が重なるとき MeCab は後の行が勝つが、
+    /// hasami は開始位置で決める（IPAdic の「々」は記号の範囲 0x3000..0x303F の中で漢字と定義されている）。
     pub fn classify_char(&self, c: char) -> CharType {
         let cp = c as u32;
-
-        // char.def の範囲マッピングがあればそちらを優先（二分探索）
-        if !self.ranges.is_empty() {
-            // cp を含む可能性のある範囲を二分探索で探す
-            // start <= cp となる最後のエントリを見つける
-            let idx = self.ranges.partition_point(|&(start, _, _)| start <= cp);
-            if idx > 0 {
-                // idx-1 が start <= cp を満たす最後のエントリ
-                // そこから逆方向に、cp がまだ範囲内にある限り探索
-                for i in (0..idx).rev() {
-                    let (start, end, ref class_name) = self.ranges[i];
-                    if start > cp {
-                        continue;
-                    }
-                    if cp <= end {
-                        return char_type_of_class(class_name);
-                    }
-                    // 範囲が重ならない場合は早期終了可能
-                    // ただし char.def は重複範囲を持つ可能性があるので、
-                    // start が cp より大幅に小さければ打ち切る
-                    if end < cp {
-                        break;
-                    }
-                }
-            }
+        let before = self.ranges.partition_point(|&(start, _, _)| start <= cp);
+        match self.ranges[..before]
+            .iter()
+            .rev()
+            .find(|&&(_, end, _)| cp <= end)
+        {
+            Some((_, _, name)) => char_type_of_class(name),
+            None => fallback_char_type(c),
         }
-
-        fallback_char_type(c)
     }
 
     /// U+0000〜U+FFFF の文字種の表（[`type_index`] の値）。[`CharClassifier::classify_char`] と同じ結果を返す
     ///
-    /// 解析の最内側で文字ごとに引く（二分探索とカテゴリ名の照合を毎回しない）。範囲は開始位置の昇順に
-    /// 並んでいる前提（[`CharClassifier::from_definitions`] が並べる）。このとき `classify_char` が見るのは
-    /// 「開始位置が cp 以下の最後の範囲」1 つだけで、それが cp を含まなければ Unicode のブロックによる
-    /// 分類になる。そこで、範囲ごとに「次の範囲の開始位置の手前まで」のうち範囲に含まれる部分を塗る
-    /// （開始位置が同じ範囲は後のものだけが当たる）。
+    /// 解析の最内側で文字ごとに引く（範囲を探さない）。Unicode のブロックによる分類の上に、char.def の範囲を
+    /// 開始位置の順に塗るので、重なる文字には開始位置が最も大きい範囲（同じなら後の行）が残る。
     pub(crate) fn bmp_type_table(&self) -> Box<[u8]> {
         let mut table = vec![type_index(CharType::Default) as u8; 0x10000].into_boxed_slice();
-        // Unicode のブロックによる分類。優先度の低い範囲から塗る
-        for &(start, end, t) in FALLBACK_RANGES.iter().rev() {
+        let mut paint = |start: u32, end: u32, t: CharType| {
             if start <= 0xFFFF {
                 table[start as usize..=end.min(0xFFFF) as usize].fill(type_index(t) as u8);
             }
+        };
+        // Unicode のブロックによる分類。優先度の低い範囲から塗る
+        for &(start, end, t) in FALLBACK_RANGES.iter().rev() {
+            paint(start, end, t);
         }
-        for (k, (start, end, name)) in self.ranges.iter().enumerate() {
-            let next = self.ranges.get(k + 1).map_or(u32::MAX, |r| r.0);
-            if next <= *start || *start > 0xFFFF {
-                continue;
-            }
-            let last = (*end).min(next - 1).min(0xFFFF);
-            if last < *start {
-                continue;
-            }
-            table[*start as usize..=last as usize].fill(type_index(char_type_of_class(name)) as u8);
+        for (start, end, name) in &self.ranges {
+            paint(*start, *end, char_type_of_class(name));
         }
         table
     }
@@ -292,10 +218,14 @@ impl CharClassifier {
         self.classes.get(class_name)
     }
 
-    /// CharType に対応する ClassProps を取得（O(1)）
-    #[inline]
-    pub(crate) fn props_for(&self, ct: CharType) -> ClassProps {
-        self.props_cache[type_index(ct)]
+    /// 文字種の未知語の候補の作り方（char.def に定義が無ければ並び全体だけ）
+    pub(crate) fn unk_grouping(&self, ct: CharType) -> UnkGrouping {
+        self.classes
+            .get(ct.class_name())
+            .map_or(UnkGrouping::UNDEFINED, |c| UnkGrouping {
+                group: c.group,
+                length: c.length,
+            })
     }
 }
 
@@ -363,116 +293,6 @@ fn fallback_char_type(c: char) -> CharType {
         .map_or(CharType::Default, |&(_, _, t)| t)
 }
 
-impl CharClassifier {
-    /// テキストの指定位置から、同じ文字種の連続文字列を取得（コールバック方式）
-    #[inline]
-    pub fn group_at_cb(&self, text: &str, byte_pos: usize, mut cb: impl FnMut(usize, CharType)) {
-        let remaining = &text[byte_pos..];
-        let mut chars = remaining.chars();
-
-        let first_char = match chars.next() {
-            Some(c) => c,
-            None => return,
-        };
-        let char_type = self.classify_char(first_char);
-        let props = self.props_for(char_type);
-
-        if props.group {
-            let mut byte_len = first_char.len_utf8();
-            let mut char_count = 1u32;
-
-            for c in chars {
-                if self.classify_char(c) != char_type {
-                    break;
-                }
-                byte_len += c.len_utf8();
-                char_count += 1;
-                if props.max_length > 0 && char_count >= props.max_length {
-                    break;
-                }
-            }
-            cb(byte_len, char_type);
-        } else {
-            let max = if props.max_length == 0 {
-                1
-            } else {
-                props.max_length as usize
-            };
-            let mut byte_offset = 0;
-            let mut count = 0;
-
-            for c in remaining.chars() {
-                if self.classify_char(c) != char_type {
-                    break;
-                }
-                byte_offset += c.len_utf8();
-                count += 1;
-                cb(byte_offset, char_type);
-                if count >= max {
-                    break;
-                }
-            }
-        }
-    }
-
-    /// テキストの指定位置から、同じ文字種の連続文字列を取得
-    /// 戻り値: (バイト長, 文字クラス名)
-    pub fn group_at(&self, text: &str, byte_pos: usize) -> Vec<(usize, CharType)> {
-        let remaining = &text[byte_pos..];
-        let mut chars = remaining.chars();
-
-        let first_char = match chars.next() {
-            Some(c) => c,
-            None => return vec![],
-        };
-        let char_type = self.classify_char(first_char);
-        let props = self.props_for(char_type);
-
-        let mut results = Vec::new();
-
-        if props.group {
-            // 同一文字種をグルーピング
-            let mut byte_len = first_char.len_utf8();
-            let mut char_count = 1u32;
-
-            for c in chars {
-                if self.classify_char(c) != char_type {
-                    break;
-                }
-                byte_len += c.len_utf8();
-                char_count += 1;
-                if props.max_length > 0 && char_count >= props.max_length {
-                    break;
-                }
-            }
-            results.push((byte_len, char_type));
-        } else {
-            // 1文字ずつ
-            let max = if props.max_length == 0 {
-                1
-            } else {
-                props.max_length as usize
-            };
-            let mut byte_offset = 0;
-            let mut count = 0;
-
-            for c in remaining.chars() {
-                if self.classify_char(c) != char_type {
-                    break;
-                }
-                byte_offset += c.len_utf8();
-                count += 1;
-                results.push((byte_offset, char_type));
-                if count >= max {
-                    break;
-                }
-            }
-        }
-
-        results
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -495,45 +315,6 @@ mod tests {
         for c in "〇一二三四五六七八九十百千万億兆".chars() {
             assert_eq!(cc.classify_char(c), CharType::Kanji, "Failed for '{}'", c);
         }
-    }
-
-    #[test]
-    fn test_group() {
-        let cc = CharClassifier::default_japanese();
-        let text = "カタカナhello漢字";
-        let groups = cc.group_at(text, 0);
-        assert!(!groups.is_empty());
-        // KATAKANA length=2 なので最大2文字 = 6バイト
-        assert_eq!(groups[0].0, 6);
-        assert_eq!(groups[0].1, CharType::Katakana);
-    }
-
-    #[test]
-    fn test_props_cache_consistency() {
-        let cc = CharClassifier::default_japanese();
-        // props_cache と HashMap の結果が一致することを確認
-        for ct in ALL_CHAR_TYPES {
-            let props = cc.props_for(ct);
-            let class = cc.classes.get(ct.class_name());
-            let expected_group = class.is_none_or(|c| c.group);
-            let expected_max = class.map_or(0, |c| c.length);
-            assert_eq!(props.group, expected_group, "group mismatch for {:?}", ct);
-            assert_eq!(
-                props.max_length, expected_max,
-                "max_length mismatch for {:?}",
-                ct
-            );
-        }
-    }
-
-    #[test]
-    fn test_rebuild_props_cache() {
-        let mut cc = CharClassifier::default_japanese();
-        // Simulate what export_char_classifier does
-        cc.classes.get_mut("KATAKANA").unwrap().invoke = false;
-        cc.rebuild_props_cache();
-        let props = cc.props_for(CharType::Katakana);
-        assert!(!props.invoke);
     }
 
     // --- 追加テスト: 文字分類の網羅的カバレッジ ---
@@ -635,53 +416,6 @@ mod tests {
     }
 
     #[test]
-    fn test_group_at_empty_string() {
-        let cc = CharClassifier::default_japanese();
-        let groups = cc.group_at("", 0);
-        assert!(groups.is_empty());
-    }
-
-    #[test]
-    fn test_group_at_single_char() {
-        let cc = CharClassifier::default_japanese();
-        let groups = cc.group_at("A", 0);
-        assert_eq!(groups.len(), 1);
-        assert_eq!(groups[0].0, 1);
-        assert_eq!(groups[0].1, CharType::Alpha);
-    }
-
-    #[test]
-    fn test_group_at_mixed_script_boundary() {
-        let cc = CharClassifier::default_japanese();
-        // Alpha group followed by hiragana
-        let groups = cc.group_at("ABCあいう", 0);
-        assert_eq!(groups[0].1, CharType::Alpha);
-        assert_eq!(groups[0].0, 3); // "ABC" = 3 bytes
-    }
-
-    #[test]
-    fn test_group_at_kanji_max_length() {
-        let cc = CharClassifier::default_japanese();
-        // KANJI has group=false, length=2 → should get individual chars up to 2
-        let groups = cc.group_at("漢字列", 0);
-        assert!(groups.len() <= 2);
-        assert_eq!(groups[0].1, CharType::Kanji);
-    }
-
-    #[test]
-    fn test_group_at_cb_consistency() {
-        let cc = CharClassifier::default_japanese();
-        let text = "カタカナabc漢字";
-        let groups = cc.group_at(text, 0);
-
-        let mut cb_results = Vec::new();
-        cc.group_at_cb(text, 0, |len, ct| {
-            cb_results.push((len, ct));
-        });
-        assert_eq!(groups, cb_results);
-    }
-
-    #[test]
     fn test_from_definitions() {
         let mut classes = HashMap::new();
         classes.insert(
@@ -697,9 +431,16 @@ mod tests {
         let cc = CharClassifier::from_definitions(classes, ranges);
 
         assert_eq!(cc.classify_char('あ'), CharType::Hiragana);
-        let props = cc.props_for(CharType::Hiragana);
-        assert!(props.invoke);
-        assert_eq!(props.max_length, 5);
+        assert!(cc.get_class("HIRAGANA").unwrap().invoke);
+        assert_eq!(
+            cc.unk_grouping(CharType::Hiragana),
+            UnkGrouping {
+                group: true,
+                length: 5
+            }
+        );
+        // 定義の無い文字種は並び全体だけ
+        assert_eq!(cc.unk_grouping(CharType::Kanji), UnkGrouping::UNDEFINED);
     }
 
     #[test]
@@ -777,71 +518,6 @@ mod tests {
         )
     }
 
-    /// 範囲の表にする前の判定（`FALLBACK_RANGES` と同じ結果になることを確かめる）
-    fn reference_fallback(c: char) -> CharType {
-        match c as u32 {
-            // 空白
-            0x0020 | 0x3000 | 0x0009..=0x000D => CharType::Space,
-            // ASCII数字
-            0x0030..=0x0039 => CharType::Numeric,
-            // ASCII英字
-            0x0041..=0x005A | 0x0061..=0x007A => CharType::Alpha,
-            // 全角英字
-            0xFF21..=0xFF3A | 0xFF41..=0xFF5A => CharType::Alpha,
-            // 全角数字
-            0xFF10..=0xFF19 => CharType::NumericWide,
-            // ひらがな
-            0x3040..=0x309F => CharType::Hiragana,
-            // カタカナ
-            0x30A0..=0x30FF | 0x31F0..=0x31FF | 0xFF65..=0xFF9F => CharType::Katakana,
-            // CJK統合漢字
-            0x4E00..=0x9FFF | 0x3400..=0x4DBF | 0xF900..=0xFAFF | 0x20000..=0x2A6DF => {
-                CharType::Kanji
-            }
-            // 漢数字（match で判定、文字列探索を排除）
-            _ if matches!(
-                c,
-                '〇' | '一'
-                    | '二'
-                    | '三'
-                    | '四'
-                    | '五'
-                    | '六'
-                    | '七'
-                    | '八'
-                    | '九'
-                    | '十'
-                    | '百'
-                    | '千'
-                    | '万'
-                    | '億'
-                    | '兆'
-            ) =>
-            {
-                CharType::Kanji
-            }
-            // ASCII記号
-            0x0021..=0x002F | 0x003A..=0x0040 | 0x005B..=0x0060 | 0x007B..=0x007E => {
-                CharType::Symbol
-            }
-            // 全角記号・句読点
-            0x3000..=0x303F | 0xFF01..=0xFF0F | 0xFF1A..=0xFF20 => CharType::Symbol,
-            _ => CharType::Default,
-        }
-    }
-
-    #[test]
-    fn test_fallback_ranges_match_the_reference() {
-        for c in (0..=0x10FFFFu32).filter_map(char::from_u32) {
-            assert_eq!(
-                fallback_char_type(c),
-                reference_fallback(c),
-                "U+{:04X}",
-                c as u32
-            );
-        }
-    }
-
     fn assert_table_matches(cc: &CharClassifier) {
         let table = cc.bmp_type_table();
         assert_eq!(table.len(), 0x10000);
@@ -886,37 +562,63 @@ mod tests {
         }
     }
 
+    fn unk_lens(group: bool, length: u32, run: u32) -> Vec<u32> {
+        let mut lens = Vec::new();
+        UnkGrouping { group, length }.for_each_len(run, |len| lens.push(len));
+        lens
+    }
+
     #[test]
-    fn test_unk_lengths_match_group_at_cb() {
-        // 文字種の並びの長さと char.def の group・length の組み合わせごとに、group_at_cb と同じ長さを出す
-        let text = "アイウエオカキクケコ漢字漢字漢字ABCDEFGHIJ123456789あいうえおかき。、！";
-        for group in [false, true] {
-            for length in [0, 1, 2, 3, 5] {
-                let mut cc = overlapping_classifier();
-                for class in cc.classes.values_mut() {
-                    class.group = group;
-                    class.length = length;
-                }
-                cc.rebuild_props_cache();
-                let chars: Vec<(usize, char)> = text.char_indices().collect();
-                for (k, &(pos, c)) in chars.iter().enumerate() {
-                    let ct = cc.classify_char(c);
-                    let run = chars[k..]
-                        .iter()
-                        .take_while(|&&(_, c2)| cc.classify_char(c2) == ct)
-                        .count() as u32;
-                    let mut expected = Vec::new();
-                    cc.group_at_cb(text, pos, |len, _| expected.push(len));
-                    let mut actual = Vec::new();
-                    cc.props_for(ct).for_each_unk_len(run, |len| {
-                        // 文字数をバイト数にする
-                        let end = chars.get(k + len as usize).map_or(text.len(), |&(p, _)| p);
-                        actual.push(end - pos);
-                    });
-                    assert_eq!(actual, expected, "group={group} length={length} at {pos}");
-                }
-            }
-        }
+    fn test_unk_candidates_follow_mecab() {
+        // group: 並び全体、続けて 1〜length 字の接頭辞（並び全体と同じ長さは除く）
+        assert_eq!(unk_lens(true, 2, 1), [1]);
+        assert_eq!(unk_lens(true, 2, 2), [2, 1]);
+        assert_eq!(unk_lens(true, 2, 7), [7, 1, 2]);
+        assert_eq!(unk_lens(true, 1, 3), [3, 1]);
+        assert_eq!(unk_lens(true, 0, 3), [3]);
+        // 並び全体は 25 字まで（先頭の後ろが max-grouping-size = 24 字以下）
+        assert_eq!(unk_lens(true, 0, 25), [25]);
+        assert!(unk_lens(true, 0, 26).is_empty());
+        assert_eq!(unk_lens(true, 2, 26), [1, 2]);
+        // group でない: 1〜length 字
+        assert_eq!(unk_lens(false, 2, 1), [1]);
+        assert_eq!(unk_lens(false, 2, 5), [1, 2]);
+        assert_eq!(unk_lens(false, 3, 2), [1, 2]);
+        assert!(unk_lens(false, 0, 4).is_empty());
+    }
+
+    #[test]
+    fn test_overlapping_ranges_prefer_the_largest_start() {
+        let cc = overlapping_classifier();
+        // 英字の範囲 0x00C0..0x00FF の中に 0x00D0 だけ空白。その後ろの文字も英字（包む範囲に戻る）
+        let latin = CharClassifier::from_definitions(
+            HashMap::new(),
+            vec![
+                (0x00D0, 0x00D0, "SPACE".to_string()),
+                (0x00C0, 0x00FF, "ALPHA".to_string()),
+                (0x00D7, 0x00D7, "SYMBOL".to_string()),
+            ],
+        );
+        assert_eq!(latin.classify_char('\u{00C9}'), CharType::Alpha);
+        assert_eq!(latin.classify_char('\u{00D0}'), CharType::Space);
+        assert_eq!(latin.classify_char('é'), CharType::Alpha);
+        assert_eq!(latin.classify_char('×'), CharType::Symbol);
+        // 記号の範囲の中で漢字と定義した「々」は漢字、その後ろは記号
+        assert_eq!(cc.classify_char('々'), CharType::Kanji);
+        assert_eq!(cc.classify_char('〆'), CharType::Symbol);
+        assert_eq!(cc.classify_char('「'), CharType::Symbol);
+        // 開始位置が同じ範囲は後の行が勝つ
+        let same_start = CharClassifier::from_definitions(
+            HashMap::new(),
+            vec![
+                (0x3007, 0x3007, "KANJI".to_string()),
+                (0x3000, 0x303F, "SYMBOL".to_string()),
+                (0x3007, 0x3007, "HIRAGANA".to_string()),
+            ],
+        );
+        assert_eq!(same_start.classify_char('〇'), CharType::Hiragana);
+        assert_table_matches(&latin);
+        assert_table_matches(&same_start);
     }
 
     #[test]
