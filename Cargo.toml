@@ -4,7 +4,7 @@ resolver = "2"
 
 [package]
 name = "hasami"
-version = "0.1.0"
+version = "26.9.100"
 edition = "2024"
 description = "High-performance Japanese morphological analyzer"
 license = "MIT"
