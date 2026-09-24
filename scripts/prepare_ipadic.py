@@ -131,7 +131,7 @@ def patch_unk_def(text: str) -> str:
     out = [line for line in lines if not line.startswith("SYMBOL,")]
     if len(out) == len(lines):
         sys.exit("unk.def: SYMBOL template not found")
-    # SYMBOL のテンプレートは 1 つにする (hasami は文字種ごとに先頭の 1 つだけを使う)
+    # SYMBOL のテンプレートを 記号,一般 の 1 つにする (IPAdic の SYMBOL のテンプレートも 1 つ)
     return "\n".join([*out, SYMBOL_UNK_DEF]) + "\n"
 
 
