@@ -85,7 +85,9 @@ pub fn parse(bytes: &[u8], what: &str, max_count: usize) -> Result<Vec<Arc<str>>
     for i in 0..count {
         let (start, end) = (offset_at(i), offset_at(i + 1));
         if start > end || end > body.len() {
-            return Err(corrupt(format!("offsets of string {i} are out of order or range")));
+            return Err(corrupt(format!(
+                "offsets of string {i} are out of order or range"
+            )));
         }
         let s = std::str::from_utf8(&body[start..end])
             .map_err(|_| corrupt(format!("string {i} is not valid UTF-8")))?;

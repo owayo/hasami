@@ -2,14 +2,20 @@
 
 use crate::hsd::{DictError, Dictionary};
 use crate::lattice::{LatticeWorkspace, Token};
-use std::path::Path;
+use crate::sentence::{Sentence, SplitOptions, Splitter};
+use std::ffi::OsString;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-/// 文境界文字かどうか判定
-#[inline]
-fn is_sentence_boundary(c: char) -> bool {
-    matches!(c, '。' | '！' | '？' | '!' | '?' | '\n')
-}
+/// 既定の辞書のパスを指す環境変数
+pub const DICT_ENV: &str = "HASAMI_DICT";
+
+/// 既定の辞書のディレクトリで優先して選ぶ辞書（推奨順）
+const PREFERRED_DICTS: [&str; 3] = [
+    "ipadic-neologd-sudachi.hsd",
+    "ipadic-neologd.hsd",
+    "ipadic.hsd",
+];
 
 /// 形態素解析器
 ///
@@ -39,6 +45,8 @@ fn is_sentence_boundary(c: char) -> bool {
 pub struct Analyzer {
     dict: Arc<Dictionary>,
     workspace: LatticeWorkspace,
+    /// 解析の前分割（ラティスを小さく保つための区切り）に使う文分割器
+    splitter: Splitter,
 }
 
 impl Clone for Analyzer {
@@ -49,6 +57,7 @@ impl Clone for Analyzer {
         Analyzer {
             dict: Arc::clone(&self.dict),
             workspace: LatticeWorkspace::new(),
+            splitter: self.splitter.clone(),
         }
     }
 }
@@ -57,6 +66,14 @@ impl Analyzer {
     /// .hsd 辞書ファイルからアナライザーを生成
     pub fn load<P: AsRef<Path>>(dict_path: P) -> Result<Self, DictError> {
         Ok(Self::from_dict(Dictionary::load(dict_path)?))
+    }
+
+    /// 既定の場所の辞書を探して読み込む（探す順は [`default_dict_path`]）
+    ///
+    /// 見つからなければ [`DictError::NotFound`] を返す（探した場所を持つ）。辞書が無くても動く
+    /// 利用者は、このエラーのときだけ辞書なしに切り替えればよい。
+    pub fn load_default() -> Result<Self, DictError> {
+        Self::load(default_dict_path()?)
     }
 
     /// 辞書から生成（`DictBuilder::build` で作ったメモリ上の辞書など）
@@ -69,6 +86,7 @@ impl Analyzer {
         Analyzer {
             dict,
             workspace: LatticeWorkspace::new(),
+            splitter: Splitter::default(),
         }
     }
 
@@ -97,48 +115,65 @@ impl Analyzer {
 
     /// テキストを形態素解析する。辞書に不正な参照を見つけたらエラーを返す
     pub fn try_tokenize(&mut self, input: &str) -> Result<Vec<Token>, DictError> {
-        if input.is_empty() {
-            return Ok(Vec::new());
-        }
-        self.tokenize_sentences(input)
+        let mut tokens = Vec::with_capacity(input.len() / 3);
+        self.tokenize_chunks(input, 0, &mut tokens)?;
+        Ok(tokens)
     }
 
-    /// テキストを文境界で分割して各文を独立に解析
-    fn tokenize_sentences(&mut self, input: &str) -> Result<Vec<Token>, DictError> {
-        let mut all_tokens = Vec::with_capacity(input.len() / 3);
-        let mut seg_start = 0;
-
-        for (i, c) in input.char_indices() {
-            if is_sentence_boundary(c) {
-                let seg_end = i + c.len_utf8();
-                self.push_segment(input, seg_start, seg_end, &mut all_tokens)?;
-                seg_start = seg_end;
-            }
-        }
-
-        // 最後のセグメント
-        if seg_start < input.len() {
-            self.push_segment(input, seg_start, input.len(), &mut all_tokens)?;
-        }
-
-        Ok(all_tokens)
-    }
-
-    /// input[start..end] を解析し、位置を入力全体のバイト位置にずらして足す
-    fn push_segment(
+    /// 入力を文末記号・改行の直後で区間に分け、区間ごとに解析する（ラティスを小さく保つ）
+    ///
+    /// 区切りは [`Splitter::chunk_ends`]。文末記号を含む語（`Hey!Say!JUMP`、`Yahoo!ニュース` など、
+    /// 例外表の語）の内側では区切らないので、辞書の語が前分割で割れない。トークンの位置は
+    /// `offset` を足した入力全体のバイト位置にする。
+    fn tokenize_chunks(
         &mut self,
         input: &str,
-        start: usize,
-        end: usize,
+        offset: usize,
         out: &mut Vec<Token>,
     ) -> Result<(), DictError> {
-        let tokens = self.workspace.tokenize(&input[start..end], &self.dict)?;
-        out.extend(tokens.into_iter().map(|mut t| {
-            t.start += start;
-            t.end += start;
-            t
-        }));
+        let mut start = 0;
+        for end in self.splitter.chunk_ends(input) {
+            let tokens = self.workspace.tokenize(&input[start..end], &self.dict)?;
+            out.extend(tokens.into_iter().map(|mut t| {
+                t.start += offset + start;
+                t.end += offset + start;
+                t
+            }));
+            start = end;
+        }
         Ok(())
+    }
+
+    /// テキストを文に分け（[`crate::sentence`] の規則）、文ごとの範囲とトークン列を返す
+    ///
+    /// トークンの `start` / `end` は入力全体のバイト位置。文の前後の空白は解析しない。
+    ///
+    /// # Panics
+    /// [`Analyzer::tokenize`] と同じ
+    pub fn tokenize_sentences(
+        &mut self,
+        text: &str,
+        options: &SplitOptions<'_>,
+    ) -> Vec<(Sentence, Vec<Token>)> {
+        self.try_tokenize_sentences(text, options)
+            .unwrap_or_else(|e| panic!("hasami: {e}"))
+    }
+
+    /// テキストを文に分けて文ごとに解析する。辞書に不正な参照を見つけたらエラーを返す
+    pub fn try_tokenize_sentences(
+        &mut self,
+        text: &str,
+        options: &SplitOptions<'_>,
+    ) -> Result<Vec<(Sentence, Vec<Token>)>, DictError> {
+        let splitter = Splitter::new(options);
+        let mut out = Vec::new();
+        for sentence in splitter.split(text) {
+            let mut tokens = Vec::new();
+            let range = sentence.range.clone();
+            self.tokenize_chunks(&text[range.clone()], range.start, &mut tokens)?;
+            out.push((sentence, tokens));
+        }
+        Ok(out)
     }
 
     /// 複数テキストをバッチ処理
@@ -156,6 +191,61 @@ impl Analyzer {
             .map(|input| self.try_tokenize(input))
             .collect()
     }
+}
+
+/// 既定の辞書の場所を探す
+///
+/// 1. 環境変数 `HASAMI_DICT`（辞書ファイルのパス）。設定されていて辞書が無ければ、ほかを探さずにエラー
+/// 2. `$XDG_DATA_HOME/hasami/`（未設定なら `~/.local/share/hasami/`）の `*.hsd`。複数あれば推奨順
+///    （ipadic-neologd-sudachi → ipadic-neologd → ipadic → そのほかの名前順）
+///
+/// 見つからなければ、探した場所を並べた [`DictError::NotFound`] を返す。
+pub fn default_dict_path() -> Result<PathBuf, DictError> {
+    let data_home = std::env::var_os("XDG_DATA_HOME")
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("HOME")
+                .filter(|v| !v.is_empty())
+                .map(|home| PathBuf::from(home).join(".local").join("share"))
+        });
+    find_dict(std::env::var_os(DICT_ENV), data_home)
+}
+
+/// [`default_dict_path`] の本体（環境変数の値を受け取る。テストで環境を書き換えずに済むように分ける）
+fn find_dict(env_dict: Option<OsString>, data_home: Option<PathBuf>) -> Result<PathBuf, DictError> {
+    if let Some(path) = env_dict.filter(|v| !v.is_empty()) {
+        let path = PathBuf::from(path);
+        if path.is_file() {
+            return Ok(path);
+        }
+        return Err(DictError::NotFound(vec![format!(
+            "{DICT_ENV}={}",
+            path.display()
+        )]));
+    }
+    let mut searched = vec![format!("{DICT_ENV} (not set)")];
+    if let Some(dir) = data_home.map(|d| d.join("hasami")) {
+        if let Some(path) = PREFERRED_DICTS
+            .iter()
+            .map(|name| dir.join(name))
+            .find(|p| p.is_file())
+        {
+            return Ok(path);
+        }
+        let mut others: Vec<PathBuf> = std::fs::read_dir(&dir)
+            .into_iter()
+            .flatten()
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.extension().is_some_and(|ext| ext == "hsd") && p.is_file())
+            .collect();
+        others.sort();
+        if let Some(path) = others.into_iter().next() {
+            return Ok(path);
+        }
+        searched.push(format!("{}/*.hsd", dir.display()));
+    }
+    Err(DictError::NotFound(searched))
 }
 
 /// MeCab互換の出力フォーマット
@@ -263,16 +353,80 @@ mod tests {
     // --- 追加テスト ---
 
     #[test]
-    fn test_sentence_boundary_detection() {
-        assert!(is_sentence_boundary('。'));
-        assert!(is_sentence_boundary('！'));
-        assert!(is_sentence_boundary('？'));
-        assert!(is_sentence_boundary('!'));
-        assert!(is_sentence_boundary('?'));
-        assert!(is_sentence_boundary('\n'));
-        assert!(!is_sentence_boundary('、'));
-        assert!(!is_sentence_boundary(' '));
-        assert!(!is_sentence_boundary('A'));
+    fn test_chunking_does_not_split_exception_words() {
+        // 文末記号を含む語（例外表の語）は、前分割で割れずに 1 語として引ける
+        let mut builder = DictBuilder::new();
+        for (surface, pos) in [
+            ("Hey!Say!JUMP", "名詞,固有名詞,組織,*"),
+            ("の", "助詞,連体化,*,*"),
+            ("ライブ", "名詞,一般,*,*"),
+        ] {
+            builder.add_entry(DictEntry {
+                surface: surface.into(),
+                cost: 100,
+                pos: pos.into(),
+                base_form: surface.into(),
+                ..Default::default()
+            });
+        }
+        let mut analyzer = Analyzer::from_dict(builder.build().unwrap());
+        let tokens = analyzer.tokenize("Hey!Say!JUMPのライブ。");
+        let surfaces: Vec<&str> = tokens.iter().map(|t| &*t.surface).collect();
+        assert_eq!(surfaces[..3], ["Hey!Say!JUMP", "の", "ライブ"]);
+    }
+
+    #[test]
+    fn test_tokenize_sentences_returns_ranges_and_absolute_positions() {
+        let mut analyzer = make_analyzer();
+        let text = "私は猫です。  「私は猫です？」と私は猫です。";
+        let sentences = analyzer.tokenize_sentences(text, &SplitOptions::default());
+        let ranges: Vec<&str> = sentences.iter().map(|(s, _)| &text[s.range.clone()]).collect();
+        assert_eq!(ranges, ["私は猫です。", "「私は猫です？」と私は猫です。"]);
+        for (sentence, tokens) in &sentences {
+            assert_eq!(tokens.first().unwrap().start, sentence.range.start);
+            assert_eq!(tokens.last().unwrap().end, sentence.range.end);
+            for t in tokens {
+                assert_eq!(&*t.surface, &text[t.start..t.end]);
+            }
+        }
+    }
+
+    #[test]
+    fn test_find_dict_order_and_errors() {
+        let dir = std::env::temp_dir().join(format!("hasami-find-dict-{}", std::process::id()));
+        let hasami = dir.join("hasami");
+        std::fs::create_dir_all(&hasami).unwrap();
+
+        // 何も無ければ、探した場所を並べて NotFound
+        match find_dict(None, Some(dir.clone())) {
+            Err(DictError::NotFound(searched)) => {
+                assert!(searched.iter().any(|s| s.contains("hasami")), "{searched:?}")
+            }
+            other => panic!("{other:?}"),
+        }
+        // 推奨順の辞書が無ければ、ほかの .hsd を名前順で
+        std::fs::write(hasami.join("zzz.hsd"), b"").unwrap();
+        std::fs::write(hasami.join("custom.hsd"), b"").unwrap();
+        assert_eq!(find_dict(None, Some(dir.clone())).unwrap(), hasami.join("custom.hsd"));
+        // 推奨順の辞書が優先
+        std::fs::write(hasami.join("ipadic.hsd"), b"").unwrap();
+        std::fs::write(hasami.join("ipadic-neologd-sudachi.hsd"), b"").unwrap();
+        assert_eq!(
+            find_dict(None, Some(dir.clone())).unwrap(),
+            hasami.join("ipadic-neologd-sudachi.hsd")
+        );
+        // 環境変数が最優先。指した先が無ければ、ほかを探さずにエラー
+        let explicit = hasami.join("custom.hsd");
+        assert_eq!(
+            find_dict(Some(explicit.clone().into()), Some(dir.clone())).unwrap(),
+            explicit
+        );
+        let missing = hasami.join("missing.hsd");
+        assert!(matches!(
+            find_dict(Some(missing.into()), Some(dir.clone())),
+            Err(DictError::NotFound(_))
+        ));
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

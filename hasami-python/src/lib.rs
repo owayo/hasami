@@ -85,8 +85,8 @@ impl Analyzer {
     /// .hsd 辞書ファイルからアナライザーを生成
     #[new]
     fn new(dict_path: &str) -> PyResult<Self> {
-        let analyzer =
-            RustAnalyzer::load(dict_path).map_err(|e| dict_error("Failed to load dictionary", e))?;
+        let analyzer = RustAnalyzer::load(dict_path)
+            .map_err(|e| dict_error("Failed to load dictionary", e))?;
         Ok(Analyzer { inner: analyzer })
     }
 
