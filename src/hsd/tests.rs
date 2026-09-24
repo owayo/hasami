@@ -739,81 +739,207 @@ fn section_range(bytes: &[u8], id: SectionId) -> std::ops::Range<usize> {
     r.offset..r.end()
 }
 
+/// `bytes` を、64 バイト境界から `offset` バイトずらした位置に写した `'static` のスライス
+/// （実行ファイルに埋め込んだ辞書の代わり。テストのあいだ使うので leak する）
+fn leak_at(bytes: &[u8], offset: usize) -> &'static [u8] {
+    let words = vec![0u64; (64 + offset + bytes.len()).div_ceil(8)];
+    let buf: &'static mut [u8] = bytemuck::cast_slice_mut(Box::leak(words.into_boxed_slice()));
+    // 先頭は 8 バイト境界なので、64 バイト境界までの詰め物は 8 の倍数
+    let start = (64 - buf.as_ptr().addr() % 64) % 64 + offset;
+    let placed = &mut buf[start..start + bytes.len()];
+    placed.copy_from_slice(bytes);
+    assert_eq!(placed.as_ptr().addr() % 64, offset % 64);
+    placed
+}
+
+/// 複製して読む `from_bytes` と、複製せずに参照して読む `from_static`（壊れたバイト列の扱いは同じ）
+type Loader = fn(&[u8]) -> Result<Dictionary, DictError>;
+
+fn loaders() -> [(&'static str, Loader); 2] {
+    [
+        ("from_bytes", Dictionary::from_bytes),
+        ("from_static", |bytes| {
+            Dictionary::from_static(leak_at(bytes, 0))
+        }),
+    ]
+}
+
+/// トークンの全フィールド
+fn token_fields(tokens: &[crate::lattice::Token]) -> Vec<String> {
+    tokens.iter().map(|t| format!("{t:?}")).collect()
+}
+
 #[test]
 fn rejects_other_versions_and_files() {
     let bytes = sample_bytes();
     let mut v3 = bytes.clone();
     v3[8..12].copy_from_slice(&3u32.to_le_bytes());
-    let err = Dictionary::from_bytes(&v3).err().unwrap();
-    assert!(matches!(err, DictError::UnsupportedVersion(3)));
-    assert!(err.to_string().contains("build-dict.sh"));
+    for (name, load) in loaders() {
+        let err = load(&v3).err().unwrap();
+        assert!(matches!(err, DictError::UnsupportedVersion(3)), "{name}");
+        assert!(err.to_string().contains("build-dict.sh"), "{name}");
 
-    assert!(matches!(
-        Dictionary::from_bytes(b"hello"),
-        Err(DictError::NotHsd)
-    ));
-    assert!(matches!(
-        Dictionary::from_bytes(&bytes[..bytes.len() - 1]),
-        Err(DictError::Corrupt(_))
-    ));
+        assert!(matches!(load(b"hello"), Err(DictError::NotHsd)), "{name}");
+        assert!(matches!(load(b""), Err(DictError::NotHsd)), "{name}");
+        assert!(
+            matches!(load(&bytes[..bytes.len() - 1]), Err(DictError::Corrupt(_))),
+            "{name}"
+        );
+    }
 }
 
 #[test]
 fn detects_broken_references() {
     let bytes = sample_bytes();
+    for (name, load) in loaders() {
+        // 素性レコードのオフセットを範囲外にする → 解析時にエラー（panic しない）
+        let mut bad = bytes.clone();
+        let offsets = section_range(&bad, SectionId::FeatureOffsets);
+        for chunk in bad[offsets].chunks_mut(4) {
+            chunk.copy_from_slice(&u32::MAX.to_le_bytes());
+        }
+        let dict = load(&bad).unwrap();
+        let mut analyzer = Analyzer::from_dict(dict);
+        assert!(
+            matches!(analyzer.try_tokenize("東京"), Err(DictError::Corrupt(_))),
+            "{name}"
+        );
+        assert!(analyzer.dictionary().verify().is_err(), "{name}");
 
-    // 素性レコードのオフセットを範囲外にする → 解析時にエラー（panic しない）
-    let mut bad = bytes.clone();
-    let offsets = section_range(&bad, SectionId::FeatureOffsets);
-    for chunk in bad[offsets].chunks_mut(4) {
-        chunk.copy_from_slice(&u32::MAX.to_le_bytes());
+        // 群の最後の印を消す → 群が隣と混ざるので verify で見つかる
+        let mut bad = bytes.clone();
+        let entries = section_range(&bad, SectionId::Entries);
+        for rec in bad[entries].chunks_mut(6) {
+            rec[1] &= 0x7F;
+        }
+        let dict = load(&bad).unwrap();
+        assert!(dict.verify().is_err(), "{name}");
+        // 最後の群が配列の外まで続く → 解析時にエラー
+        let mut analyzer = Analyzer::from_dict(dict);
+        assert!(analyzer.try_tokenize("𠮷野家").is_err(), "{name}");
+
+        // 文脈 ID を行列の外にする → 解析時にエラー
+        let mut bad = bytes.clone();
+        let entries = section_range(&bad, SectionId::Entries);
+        for rec in bad[entries].chunks_mut(6) {
+            rec[2..4].copy_from_slice(&999u16.to_le_bytes());
+        }
+        let mut analyzer = Analyzer::from_dict(load(&bad).unwrap());
+        assert!(
+            matches!(analyzer.try_tokenize("東京"), Err(DictError::Corrupt(_))),
+            "{name}"
+        );
+
+        // FEATURE_OFFSETS の件数がエントリと合わない → ロード時にエラー
+        let layout = container::parse(&bytes).unwrap();
+        let r = layout.get(SectionId::FeatureOffsets);
+        let entry_at = (0..17)
+            .map(|i| container::HEADER_LEN + i * container::SECTION_ENTRY_LEN)
+            .find(|&at| {
+                u32::from_le_bytes(bytes[at..at + 4].try_into().unwrap())
+                    == SectionId::FeatureOffsets as u32
+            })
+            .unwrap();
+        let mut bad = bytes.clone();
+        bad[entry_at + 16..entry_at + 24].copy_from_slice(&((r.len - 4) as u64).to_le_bytes());
+        assert!(matches!(load(&bad), Err(DictError::Corrupt(_))), "{name}");
     }
-    let dict = Dictionary::from_bytes(&bad).unwrap();
-    let mut analyzer = Analyzer::from_dict(dict);
+}
+
+#[test]
+fn from_static_reads_the_bytes_in_place() {
+    let bytes = sample_bytes();
+    let copied = Dictionary::from_bytes(&bytes).unwrap();
+    let mut copied = Analyzer::from_dict(copied);
+    let texts = [
+        "東京都に住む",
+        "金曜日の示し",
+        "𠮷野家とSiemens",
+        "ひらがなABC",
+    ];
+    // 64 バイト境界（include_hsd! の置き方）と、8 バイト境界だが 64 の倍数でない位置（求めるのは 8）
+    for offset in [0, 8, 40] {
+        let embedded = leak_at(&bytes, offset);
+        let dict = Dictionary::from_static(embedded).unwrap();
+        assert_eq!(dict.byte_len(), embedded.len());
+        assert_eq!(
+            all_entries(&dict),
+            all_entries(copied.dictionary()),
+            "{offset}"
+        );
+        dict.verify().unwrap();
+
+        // 解析で引くセクションは、渡したバイト列の中をそのまま指す（複製していない）
+        let view = dict.view();
+        let entries = section_range(embedded, SectionId::Entries);
+        assert_eq!(
+            view.entries.as_ptr().cast::<u8>(),
+            embedded[entries].as_ptr()
+        );
+        let matrix = section_range(embedded, SectionId::Matrix);
+        assert_eq!(
+            view.matrix.as_ptr().cast::<u8>(),
+            embedded[matrix.start + 8..].as_ptr()
+        );
+
+        let mut analyzer = Analyzer::from_dict(dict);
+        for text in texts {
+            assert_eq!(
+                token_fields(&analyzer.tokenize(text)),
+                token_fields(&copied.tokenize(text)),
+                "{text}"
+            );
+        }
+    }
+
+    // from_bytes は同じバイト列を複製する
+    let embedded = leak_at(&bytes, 0);
+    let dict = Dictionary::from_bytes(embedded).unwrap();
+    let entries = section_range(embedded, SectionId::Entries);
+    assert_ne!(
+        dict.view().entries.as_ptr().cast::<u8>(),
+        embedded[entries].as_ptr()
+    );
+}
+
+#[test]
+fn from_static_rejects_bytes_off_the_boundary() {
+    let bytes = sample_bytes();
+    for offset in [1, 2, 4, 7, 12] {
+        let embedded = leak_at(&bytes, offset);
+        let err = Dictionary::from_static(embedded).unwrap_err();
+        assert!(matches!(err, DictError::Invalid(_)), "{offset}: {err:?}");
+        let message = err.to_string();
+        assert!(
+            message.contains("8-byte boundary")
+                && message.contains(&format!("address % 8 = {}", offset % 8))
+                && message.contains("include_hsd!"),
+            "{message}"
+        );
+        // 複製する from_bytes なら同じバイト列を読める
+        assert_eq!(
+            Dictionary::from_bytes(embedded).unwrap().entry_count(),
+            sample_entries().len()
+        );
+    }
+
+    // 辞書でないバイト列は、境界より先にそれを知らせる
     assert!(matches!(
-        analyzer.try_tokenize("東京"),
-        Err(DictError::Corrupt(_))
+        Dictionary::from_static(leak_at(b"not a dictionary", 1)),
+        Err(DictError::NotHsd)
     ));
-    assert!(analyzer.dictionary().verify().is_err());
-
-    // 群の最後の印を消す → 群が隣と混ざるので verify で見つかる
-    let mut bad = bytes.clone();
-    let entries = section_range(&bad, SectionId::Entries);
-    for rec in bad[entries].chunks_mut(6) {
-        rec[1] &= 0x7F;
-    }
-    let dict = Dictionary::from_bytes(&bad).unwrap();
-    assert!(dict.verify().is_err());
-    // 最後の群が配列の外まで続く → 解析時にエラー
-    let mut analyzer = Analyzer::from_dict(dict);
-    assert!(analyzer.try_tokenize("𠮷野家").is_err());
-
-    // 文脈 ID を行列の外にする → 解析時にエラー
-    let mut bad = bytes.clone();
-    let entries = section_range(&bad, SectionId::Entries);
-    for rec in bad[entries].chunks_mut(6) {
-        rec[2..4].copy_from_slice(&999u16.to_le_bytes());
-    }
-    let mut analyzer = Analyzer::from_dict(Dictionary::from_bytes(&bad).unwrap());
     assert!(matches!(
-        analyzer.try_tokenize("東京"),
-        Err(DictError::Corrupt(_))
+        Dictionary::from_static(&[]),
+        Err(DictError::NotHsd)
     ));
-
-    // FEATURE_OFFSETS の件数がエントリと合わない → ロード時にエラー
-    let layout = container::parse(&bytes).unwrap();
-    let r = layout.get(SectionId::FeatureOffsets);
-    let entry_at = (0..17)
-        .map(|i| container::HEADER_LEN + i * container::SECTION_ENTRY_LEN)
-        .find(|&at| {
-            u32::from_le_bytes(bytes[at..at + 4].try_into().unwrap())
-                == SectionId::FeatureOffsets as u32
-        })
-        .unwrap();
-    let mut bad = bytes.clone();
-    bad[entry_at + 16..entry_at + 24].copy_from_slice(&((r.len - 4) as u64).to_le_bytes());
+    let mut v3 = bytes.clone();
+    v3[8..12].copy_from_slice(&3u32.to_le_bytes());
     assert!(matches!(
-        Dictionary::from_bytes(&bad),
+        Dictionary::from_static(leak_at(&v3, 3)),
+        Err(DictError::UnsupportedVersion(3))
+    ));
+    assert!(matches!(
+        Dictionary::from_static(leak_at(&bytes[..bytes.len() - 1], 5)),
         Err(DictError::Corrupt(_))
     ));
 }
