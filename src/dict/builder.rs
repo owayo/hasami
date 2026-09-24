@@ -1,5 +1,6 @@
 //! 辞書の構築（`build` feature）: MeCab 形式 CSV・matrix.def・char.def・unk.def の読み込み、repair、書き出し
 
+use super::sentence_like::{self, SentenceLikeReason};
 use super::{ConnectionMatrix, DictEntry, UnkEntry};
 use crate::analyzer::Analyzer;
 use crate::char_class::{CharClass, CharClassifier};
@@ -353,23 +354,30 @@ fn demotion_target(surface: &str, tokens: &[Token]) -> Option<(DemotedPos, &'sta
     after_stem.then(|| (DemotedPos::for_suffix(suffix), suffix))
 }
 
-/// 固有名詞の降格で、参照辞書の解析に使うスレッド数の上限
-const DEMOTION_THREADS_MAX: usize = 16;
+/// 参照辞書で表層形を解析するときのスレッド数の上限
+const ANALYSIS_THREADS_MAX: usize = 16;
 
-/// 表層形を参照辞書で解析し、それぞれの降格先と語末の接尾辞を求める
+/// 表層形をそれぞれ参照辞書で解析し、語の列から `judge` で求めた値を表層形の順に返す
 ///
-/// 推奨辞書では「名詞,固有名詞,一般」の表層形が 140 万あるので、スレッドに分けて解析する。
-fn analyze_demotion_targets(
+/// repair の判定（固有名詞の降格、文や句の名詞の削除）は推奨辞書の表層形を 100 万単位で解析するので、
+/// スレッドに分けて解析する。
+fn analyze_surfaces<T, F>(
     reference: &Arc<Dictionary>,
     surfaces: &[&str],
-) -> Result<Vec<Option<(DemotedPos, &'static str)>>, DictError> {
+    judge: F,
+) -> Result<Vec<T>, DictError>
+where
+    T: Send,
+    F: Fn(&str, &[Token]) -> T + Sync,
+{
     if surfaces.is_empty() {
         return Ok(Vec::new());
     }
     let threads = std::thread::available_parallelism()
         .map_or(1, |n| n.get())
-        .min(DEMOTION_THREADS_MAX);
+        .min(ANALYSIS_THREADS_MAX);
     let chunk = surfaces.len().div_ceil(threads);
+    let judge = &judge;
     std::thread::scope(|scope| {
         let workers: Vec<_> = surfaces
             .chunks(chunk)
@@ -379,7 +387,7 @@ fn analyze_demotion_targets(
                     part.iter()
                         .map(|surface| {
                             let tokens = analyzer.try_tokenize(surface)?;
-                            Ok(demotion_target(surface, &tokens))
+                            Ok(judge(surface, &tokens))
                         })
                         .collect::<Result<Vec<_>, DictError>>()
                 })
@@ -387,7 +395,7 @@ fn analyze_demotion_targets(
             .collect();
         let mut out = Vec::with_capacity(surfaces.len());
         for worker in workers {
-            out.extend(worker.join().expect("demotion worker panicked")?);
+            out.extend(worker.join().expect("analysis worker panicked")?);
         }
         Ok(out)
     })
@@ -419,6 +427,89 @@ pub struct DemotionStats {
     pub by_suffix: Vec<(String, usize)>,
     /// 降格したエントリの先頭の数件（`表層形 (読み) -> 品詞`）
     pub samples: Vec<String>,
+}
+
+/// 文や句の名詞の削除で、ログに出す例の件数（理由ごと）
+const SENTENCE_LIKE_SAMPLE: usize = 3;
+
+/// [`DictBuilder::drop_sentence_like_nouns`] の結果
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SentenceLikeStats {
+    /// 判定したエントリ数（表層形にひらがなか文末記号を含む名詞）
+    pub examined: usize,
+    /// 削除したエントリ数
+    pub dropped: usize,
+    /// 理由ごとの削除件数（[`SentenceLikeReason::ALL`] の順。0 件の理由も含む）
+    pub by_reason: Vec<(SentenceLikeReason, usize)>,
+    /// 削除したエントリの例（理由ごとに先頭の数件、理由の順。`表層形 (読み) [品詞]`）
+    pub samples: Vec<(SentenceLikeReason, String)>,
+}
+
+/// 数と単位の組の名詞の削除で、ログに出す例の件数
+const QUANTITY_SAMPLE: usize = 10;
+
+/// [`DictBuilder::drop_quantity_nouns`] の結果
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct QuantityStats {
+    /// 判定したエントリ数（表層形が数と単位の記号だけの「名詞,固有名詞,一般」）
+    pub examined: usize,
+    /// 削除したエントリ数
+    pub dropped: usize,
+    /// 削除したエントリの先頭の数件（`表層形 (読み) [品詞]`）
+    pub samples: Vec<String>,
+}
+
+/// 数の字（半角・全角の数字）
+fn is_digit(c: char) -> bool {
+    c.is_ascii_digit() || ('０'..='９').contains(&c)
+}
+
+/// 表層形が数と単位の記号だけか（`50%` `0.1℃` `1,000㎞` `30°C`）
+///
+/// 数は数字の並びで、間に小数点・桁区切り（`.` `,` `．` `，`）を挟んでよい。単位の記号は
+/// `scripts/prepare_ipadic.py` が IPAdic に 名詞,接尾,助数詞 の語として足す字（[`crate::pos`] と同じ集合）と、
+/// 2 字の単位 `°C` `°F`。
+fn is_quantity_surface(surface: &str) -> bool {
+    let unit_start = surface
+        .char_indices()
+        .find(|&(_, c)| !(is_digit(c) || matches!(c, '.' | ',' | '．' | '，')))
+        .map_or(surface.len(), |(i, _)| i);
+    let (number, unit) = surface.split_at(unit_start);
+    number.chars().next().is_some_and(is_digit)
+        && number.chars().last().is_some_and(is_digit)
+        && !unit.is_empty()
+        && (unit.chars().all(crate::pos::is_unit_symbol) || matches!(unit, "°C" | "°F"))
+}
+
+/// 参照辞書の解析が、数（名詞,数）と単位（名詞,接尾）だけの並びか（`50` + `%`）
+///
+/// 小数点・桁区切りの記号は数の間に来てよい。IPAdic が単位を接尾辞にしない字なら（配布辞書の IPAdic は
+/// 単位の記号をすべて 名詞,接尾,助数詞 にする）、数と単位に分けても意味が無いので落とさない。
+fn is_quantity_analysis(_surface: &str, tokens: &[Token]) -> bool {
+    let is = |t: &Token, prefix: &[&str]| pos_has_prefix(&t.pos, prefix);
+    tokens.iter().any(|t| is(t, &["名詞", "数"]))
+        && tokens.last().is_some_and(|t| is(t, &["名詞", "接尾"]))
+        && tokens.iter().all(|t| {
+            is(t, &["名詞", "数"])
+                || is(t, &["名詞", "接尾"])
+                || matches!(&*t.surface, "." | "," | "．" | "，")
+        })
+}
+
+/// 参照辞書に同じ表層形・品詞・原形のエントリがあるか
+///
+/// 文や句の名詞の削除は、参照辞書（IPAdic）の語の切り方を正とするので、参照辞書自身の語は落とさない。
+/// 読みは比べない（repair の発音の修復が、IPAdic の小数点「．」(名詞,数) のような仮名でない読みを空にする）。
+fn reference_has_entry(reference: &Dictionary, e: &DictEntry) -> Result<bool, DictError> {
+    Ok(reference
+        .lookup(&e.surface)?
+        .into_iter()
+        .any(|(end, entries)| {
+            end == e.surface.len()
+                && entries
+                    .iter()
+                    .any(|r| r.pos == e.pos && r.base_form == e.base_form)
+        }))
 }
 
 /// 参照辞書にある接尾辞の読み（固有名詞のエントリの読みを除く）
@@ -1031,7 +1122,7 @@ impl DictBuilder {
                 });
             }
         }
-        let targets = analyze_demotion_targets(reference, &surfaces)?;
+        let targets = analyze_surfaces(reference, &surfaces, demotion_target)?;
         let suffix_readings = common_suffix_readings(reference)?;
         let decisions: Vec<(usize, DemotedPos, &str)> = candidates
             .iter()
@@ -1092,6 +1183,133 @@ impl DictBuilder {
             e.left_id = left_id;
             e.right_id = right_id;
         }
+        Ok(stats)
+    }
+
+    /// 文や句を 1 語にした名詞を取り除く
+    ///
+    /// NEologd は曲名・作品名などとして文や句そのもの（「どうでしょう」「作りました」「好きだ。」）を
+    /// 固有名詞 1 語で登録し、表記ゆれの seed は漢字語をかなで書いた語（「ありません」= 有馬線、
+    /// 「回ろう」= 回廊、「および」= お呼び）を作る。これらが文中の動詞・助動詞・助詞の並びに勝つと、
+    /// 文末の品詞や句点の位置が崩れる。
+    ///
+    /// 表層形にひらがなか文末記号を含む名詞を `reference`（IPAdic 単体の辞書）で解析し、文法に合う文や句
+    /// （述語や助詞で終わる並び、機能語だけの並び、感動詞 1 語、記号 + 文末記号 など）になるエントリを
+    /// 落とす。判定の規則は [`SentenceLikeReason`] と `sentence_like` モジュールを参照。
+    /// `reference` 自身が持つエントリ（同じ表層形・品詞・原形）は落とさない。文脈 ID を持ち込まない
+    /// ので、`reference` の接続行列はこの辞書と違ってもよい。
+    pub fn drop_sentence_like_nouns(
+        &mut self,
+        reference: &Arc<Dictionary>,
+    ) -> Result<SentenceLikeStats, DictError> {
+        // 表層形ごとに 1 回だけ解析する（同じ表層形のエントリが複数ある）
+        let mut candidates: Vec<usize> = Vec::new();
+        let mut surface_index: HashMap<&str, usize> = HashMap::new();
+        let mut surfaces: Vec<&str> = Vec::new();
+        for (i, e) in self.entries.iter().enumerate() {
+            if pos_has_prefix(&e.pos, &["名詞"]) && sentence_like::is_candidate_surface(&e.surface)
+            {
+                candidates.push(i);
+                surface_index.entry(&e.surface).or_insert_with(|| {
+                    surfaces.push(&e.surface);
+                    surfaces.len() - 1
+                });
+            }
+        }
+        let verdicts = analyze_surfaces(reference, &surfaces, sentence_like::judge)?;
+
+        let mut stats = SentenceLikeStats {
+            examined: candidates.len(),
+            ..SentenceLikeStats::default()
+        };
+        let mut per_reason: HashMap<SentenceLikeReason, usize> = HashMap::new();
+        let mut doomed = vec![false; self.entries.len()];
+        for &i in &candidates {
+            let e = &self.entries[i];
+            let verdict = &verdicts[surface_index[&*e.surface]];
+            let Some(reason) = verdict.for_entry(&e.pos, &e.surface, &e.base_form) else {
+                continue;
+            };
+            if reference_has_entry(reference, e)? {
+                continue;
+            }
+            doomed[i] = true;
+            let n = per_reason.entry(reason).or_default();
+            *n += 1;
+            if *n <= SENTENCE_LIKE_SAMPLE {
+                stats
+                    .samples
+                    .push((reason, format!("{} ({}) [{}]", e.surface, e.reading, e.pos)));
+            }
+        }
+        drop(surface_index);
+        drop(surfaces);
+
+        stats.dropped = per_reason.values().sum();
+        stats.by_reason = SentenceLikeReason::ALL
+            .iter()
+            .map(|&r| (r, per_reason.get(&r).copied().unwrap_or(0)))
+            .collect();
+        stats
+            .samples
+            .sort_by_key(|(r, _)| SentenceLikeReason::ALL.iter().position(|a| a == r));
+        let mut doomed = doomed.into_iter();
+        self.entries.retain(|_| !doomed.next().unwrap_or(false));
+        Ok(stats)
+    }
+
+    /// 数と単位の記号だけの表層形を 1 語にした固有名詞を取り除く
+    ///
+    /// NEologd は「50%」「0.1℃」「30℃」（原形「30度」）のような数と単位の組を「名詞,固有名詞,一般」で
+    /// 登録している。これが勝つと単位が数から分かれず、単位を 名詞,接尾,助数詞（[`crate::CoarsePos`] の
+    /// NounSuffix）として扱う処理が効かない。
+    ///
+    /// 表層形が数（小数点・桁区切りを含む）と単位の記号だけの「名詞,固有名詞,一般」のエントリを
+    /// `reference`（IPAdic 単体の辞書）で解析し、数（名詞,数）と単位（名詞,接尾）だけの並びに分かれるものを
+    /// 落とす。人名・組織（「100%ORANGE」「4℃」のように名前として登録された語）は対象にしない。
+    /// `reference` 自身が持つエントリは落とさない。文脈 ID を持ち込まないので、接続行列は問わない。
+    pub fn drop_quantity_nouns(
+        &mut self,
+        reference: &Arc<Dictionary>,
+    ) -> Result<QuantityStats, DictError> {
+        let mut candidates: Vec<usize> = Vec::new();
+        let mut surface_index: HashMap<&str, usize> = HashMap::new();
+        let mut surfaces: Vec<&str> = Vec::new();
+        for (i, e) in self.entries.iter().enumerate() {
+            if pos_has_prefix(&e.pos, &["名詞", "固有名詞", "一般"])
+                && is_quantity_surface(&e.surface)
+            {
+                candidates.push(i);
+                surface_index.entry(&e.surface).or_insert_with(|| {
+                    surfaces.push(&e.surface);
+                    surfaces.len() - 1
+                });
+            }
+        }
+        let quantities = analyze_surfaces(reference, &surfaces, is_quantity_analysis)?;
+
+        let mut stats = QuantityStats {
+            examined: candidates.len(),
+            ..QuantityStats::default()
+        };
+        let mut doomed = vec![false; self.entries.len()];
+        for &i in &candidates {
+            let e = &self.entries[i];
+            if !quantities[surface_index[&*e.surface]] || reference_has_entry(reference, e)? {
+                continue;
+            }
+            doomed[i] = true;
+            stats.dropped += 1;
+            if stats.samples.len() < QUANTITY_SAMPLE {
+                stats
+                    .samples
+                    .push(format!("{} ({}) [{}]", e.surface, e.reading, e.pos));
+            }
+        }
+        drop(surface_index);
+        drop(surfaces);
+        let mut doomed = doomed.into_iter();
+        self.entries.retain(|_| !doomed.next().unwrap_or(false));
         Ok(stats)
     }
 
@@ -1782,6 +2000,17 @@ mod tests {
         assert!(!pos_has_prefix(pos, &prefix("名詞,固有名詞,人")));
         assert!(!pos_has_prefix(pos, &prefix("名詞,固有名詞,人名,姓,*")));
         assert!(!pos_has_prefix(pos, &prefix("名詞,一般")));
+    }
+
+    #[test]
+    fn test_is_quantity_surface() {
+        for surface in ["50%", "0.1℃", "1,000㎞", "30°C", "５０％", "4℃", "12.5‰"] {
+            assert!(is_quantity_surface(surface), "{surface}");
+        }
+        // 単位で終わらない・数で始まらない・単位の記号でない字を含む・数が区切りで終わる
+        for surface in ["50", "%50", "100%ORANGE", "50%増", "3D", "50★", "1.%", "℃"] {
+            assert!(!is_quantity_surface(surface), "{surface}");
+        }
     }
 
     #[test]

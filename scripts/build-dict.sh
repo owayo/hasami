@@ -145,13 +145,16 @@ for f in dict/user-remove/*.csv; do
   REMOVE_ARGS+=(--remove "$f")
 done
 # NEologd・SudachiDict を含む辞書に掛ける repair 一式。dict/user の追加語は削除の後に足す。
-# NEologd が固有名詞にした一般語 (成果物・可視化・多角的 等) の降格は、IPAdic 単体の中間辞書で
-# 表層形を解析して決める (中間辞書は同じ接続行列を持つので、文脈 ID をそのまま持ち込める)
+# 文や句を 1 語にした名詞 (どうでしょう・好きだ。・ありません=有馬線 等) と数と単位の組の固有名詞
+# (50%・30℃ 等) の削除、NEologd が固有名詞にした一般語 (成果物・可視化・多角的 等) の降格は、IPAdic 単体の
+# 中間辞書で表層形を解析して決める (中間辞書は同じ接続行列を持つので、降格では文脈 ID をそのまま持ち込める)
 FULL_REPAIR=(
   --drop-invalid-context-ids
   --drop-ortho-variants
   --drop-numeral-misreadings
   "${REMOVE_ARGS[@]}"
+  --drop-sentence-like-nouns "$WORK/ipadic.base.hsd"
+  --drop-quantity-nouns "$WORK/ipadic.base.hsd"
   --demote-common-proper-nouns "$WORK/ipadic.base.hsd"
   --merge dict/user
 )
