@@ -45,11 +45,11 @@
 //! 組み込みの表の索引は build.rs がビルド時に作って埋め込むので、[`Splitter::new`] と最初の分割に
 //! 組み立ての手間はかからない。表の版は [`BUILTIN_EXCEPTIONS_VERSION`] で分かる。
 //!
-//! どの処理も入力の長さにほぼ比例する時間で済む。入力はバイト単位で 1 度だけ走査し、分割に関わらない
-//! 文字は復号せずに読み飛ばす。括弧の対応は 1 パスのスタックで取る。例外語の照合は文末記号を起点に、
-//! 前へは索引の二分探索で 1 字ずつ狭め、後ろも二分探索で調べる。前へ辿る照合が入力の 1 文字の上を
-//! 通る回数は、1 語の中の文末記号の数（組み込みの表では最多 9 個、利用者の語は 16 個まで）で
-//! 抑えられる。
+//! どの処理も入力の長さにほぼ比例する時間で済む。入力は 8 バイトずつの語の演算で 1 度だけ走査し、
+//! 分割に関わらない文字は復号せずに読み飛ばす。括弧の対応は 1 パスのスタックで取る。例外語の照合は
+//! 文末記号を起点に、前へは索引の二分探索で 1 字ずつ狭め、後ろも二分探索で調べる。前へ辿る照合が
+//! 入力の 1 文字の上を通る回数は、1 語の中の文末記号の数（組み込みの表では最多 9 個、利用者の語は
+//! 16 個まで）で抑えられる。
 //!
 //! ```
 //! use hasami::sentence::{self, SplitOptions};
@@ -306,6 +306,15 @@ impl Splitter {
     /// `Yahoo!ニュース` のような語の内側では区切らない。
     pub fn chunk_ends(&self, text: &str) -> Vec<usize> {
         let mut ends = Vec::new();
+        self.chunk_ends_into(text, &mut ends);
+        ends
+    }
+
+    /// [`Splitter::chunk_ends`] と同じ区切りを `ends` に詰める（`ends` は空にしてから詰める）
+    ///
+    /// 何度も呼ぶ側（形態素解析の前分割）が、区切りの列の領域を使い回せるようにする。
+    pub(crate) fn chunk_ends_into(&self, text: &str, ends: &mut Vec<usize>) {
+        ends.clear();
         // 区切る位置が決まっていない文末記号の連続の終わり
         let mut run_end: Option<usize> = None;
         self.scan(text, false, true, |mark| {
@@ -328,81 +337,102 @@ impl Splitter {
         if !text.is_empty() && ends.last() != Some(&text.len()) {
             ends.push(text.len());
         }
-        ends
     }
 
     /// 入力を 1 度だけ走査して、文末記号・括弧・改行の出現を位置の順に `emit` へ渡す
     ///
     /// 文末記号には、規則 4（ASCII の `!` `?`）と例外表で打ち消されずに文末として働くかを記録する。
     /// `brackets` が偽なら括弧を、`line_breaks` が偽なら改行を渡さない。
+    ///
+    /// 64 バイトずつ、分割に関わりうる文字の先頭（[`candidates`]）を 8 バイトの語の演算でまとめて
+    /// 求め（[`block_candidates`]）、その位置の文字だけを復号して調べる（[`Splitter::visit`]）。
+    /// かな・漢字の上では 1 字ずつ止まらない。
     fn scan(&self, text: &str, brackets: bool, line_breaks: bool, mut emit: impl FnMut(Mark)) {
         let bytes = text.as_bytes();
-        let mut i = 0;
-        // 分割に関わりうる先頭バイトまで一気に進める。1 バイトごとの判定が直前の結果に依存しない
-        // ので、文字ごとに長さを引いて進むより速い
-        while let Some(n) = bytes[i..].iter().position(|&b| MAY_BE_MARK[b as usize]) {
-            i += n;
-            let b = bytes[i];
-            if b >= 0x80 && !may_be_mark(b, bytes[i + 1]) {
-                i += if b < 0xE0 { 2 } else { 3 };
-                continue;
-            }
-            let c = text[i..].chars().next().unwrap_or_default();
-            let len = c.len_utf8() as u8;
-            match classify(c) {
-                CharKind::Other => {}
-                CharKind::Ender => {
-                    if !is_decimal_point(text, i, c) {
-                        emit(self.ender_mark(text, i, c, true));
-                    }
-                }
-                CharKind::AsciiEnder => {
-                    // 規則 4: 連続の直後の文字で、連続全体が文末として働くかを決める
-                    let run_end = bytes[i..]
-                        .iter()
-                        .position(|&b| b != b'!' && b != b'?')
-                        .map_or(bytes.len(), |n| i + n);
-                    let active = ascii_run_is_ender(text[run_end..].chars().next());
-                    for (offset, &b) in bytes[i..run_end].iter().enumerate() {
-                        emit(self.ender_mark(text, i + offset, b as char, active));
-                    }
-                    i = run_end;
-                    continue;
-                }
-                CharKind::Open(bracket) => {
-                    if brackets {
-                        emit(Mark {
-                            pos: i,
-                            len,
-                            kind: MarkKind::Open(bracket),
-                        });
-                    }
-                }
-                CharKind::Close(bracket) => {
-                    if brackets {
-                        emit(Mark {
-                            pos: i,
-                            len,
-                            kind: MarkKind::Close {
-                                bracket,
-                                matched: false,
-                            },
-                        });
-                    }
-                }
-                CharKind::LineBreak => {
-                    // CRLF は LF の側で 1 つの改行として数える
-                    if line_breaks && !(c == '\r' && bytes.get(i + 1) == Some(&b'\n')) {
-                        emit(Mark {
-                            pos: i,
-                            len,
-                            kind: MarkKind::LineBreak,
-                        });
-                    }
+        // 次に調べる文字の先頭。これより前の候補は、調べ終えた文字（文末記号の連続）の内側にある
+        let mut next = 0;
+        let mut base = 0;
+        while base < bytes.len() {
+            // ビット k が位置 `base + k` の候補。下位のビット（前の位置）から順に調べる
+            let mut found = block_candidates(bytes, base);
+            while found != 0 {
+                let pos = base + found.trailing_zeros() as usize;
+                found &= found - 1;
+                if pos >= next {
+                    next = self.visit(text, pos, brackets, line_breaks, &mut emit);
                 }
             }
-            i += len as usize;
+            base += 64;
         }
+    }
+
+    /// 位置 `pos`（文字の先頭）の文字が分割に関わるなら印を `emit` へ渡し、次に調べる文字の先頭を返す
+    ///
+    /// ASCII の `!` `?` の連続は連続ごと調べるので、連続の直後を返す。
+    #[inline]
+    fn visit(
+        &self,
+        text: &str,
+        pos: usize,
+        brackets: bool,
+        line_breaks: bool,
+        emit: &mut impl FnMut(Mark),
+    ) -> usize {
+        let bytes = text.as_bytes();
+        let c = text[pos..].chars().next().unwrap_or_default();
+        let len = c.len_utf8() as u8;
+        match classify(c) {
+            CharKind::Other => {}
+            CharKind::Ender => {
+                if !is_decimal_point(text, pos, c) {
+                    emit(self.ender_mark(text, pos, c, true));
+                }
+            }
+            CharKind::AsciiEnder => {
+                // 規則 4: 連続の直後の文字で、連続全体が文末として働くかを決める
+                let run_end = bytes[pos..]
+                    .iter()
+                    .position(|&b| b != b'!' && b != b'?')
+                    .map_or(bytes.len(), |n| pos + n);
+                let active = ascii_run_is_ender(text[run_end..].chars().next());
+                for (offset, &b) in bytes[pos..run_end].iter().enumerate() {
+                    emit(self.ender_mark(text, pos + offset, b as char, active));
+                }
+                return run_end;
+            }
+            CharKind::Open(bracket) => {
+                if brackets {
+                    emit(Mark {
+                        pos,
+                        len,
+                        kind: MarkKind::Open(bracket),
+                    });
+                }
+            }
+            CharKind::Close(bracket) => {
+                if brackets {
+                    emit(Mark {
+                        pos,
+                        len,
+                        kind: MarkKind::Close {
+                            bracket,
+                            matched: false,
+                        },
+                    });
+                }
+            }
+            CharKind::LineBreak => {
+                // CRLF は LF の側で 1 つの改行として数える
+                if line_breaks && !(c == '\r' && bytes.get(pos + 1) == Some(&b'\n')) {
+                    emit(Mark {
+                        pos,
+                        len,
+                        kind: MarkKind::LineBreak,
+                    });
+                }
+            }
+        }
+        pos + len as usize
     }
 
     /// 文末記号の印を作る。規則 4 で文末として働くなら、例外表の語に守られていないかも調べる
@@ -576,50 +606,106 @@ fn is_decimal_point(text: &str, pos: usize, c: char) -> bool {
             .is_some_and(is_digit)
 }
 
-/// 分割に関わりうる文字の先頭バイトか
+/// 位置 `base` からの 64 バイト（入力の終わりまで）のうち、分割に関わりうる文字の先頭のビットを
+/// 立てた語（ビット k が位置 `base + k`。候補は [`candidates`]）
 ///
-/// ASCII の `!` `?` `()[]{}`・改行と、2 バイト目で絞り込む多バイト文字（[`may_be_mark`]）の
-/// 先頭バイトが該当する。どれも UTF-8 の継続バイト（0x80〜0xBF）ではないので、バイト単位で
-/// 探しても文字の途中には止まらない。
-static MAY_BE_MARK: [bool; 256] = {
-    let mut table = [false; 256];
-    let mut b = 0;
-    while b < 256 {
-        table[b] = matches!(
-            b as u8,
-            b'\n'
-                | b'\r'
-                | b'!'
-                | b'?'
-                | b'('
-                | b')'
-                | b'['
-                | b']'
-                | b'{'
-                | b'}'
-                | 0xC2
-                | 0xE2
-                | 0xE3
-                | 0xEF
-        );
-        b += 1;
+/// 候補の文字を調べる処理（[`Splitter::visit`]）とは別の関数にして、語の演算の定数をレジスタに
+/// 置いたまま 8 語を回す。
+#[inline(never)]
+fn block_candidates(bytes: &[u8], base: usize) -> u64 {
+    let mut found = 0;
+    for k in 0..8 {
+        let at = base + 8 * k;
+        if at >= bytes.len() {
+            break;
+        }
+        // 各バイトの最上位ビットを下位 8 ビットに集める（掛け算の部分積はどのビットでも重ならない）
+        let bits =
+            ((candidates(words_at(bytes, at)) >> 7).wrapping_mul(0x0102_0408_1020_4080)) >> 56;
+        found |= bits << (8 * k);
     }
-    table
-};
+    found
+}
 
-/// 先頭バイト `b0`（MAY_BE_MARK が真の多バイト文字）と 2 バイト目 `b1` から、分割に関わりうる文字か
+/// 各バイトが `b` の語
+const fn splat(b: u8) -> u64 {
+    u64::from_ne_bytes([b; 8])
+}
+
+/// 各バイトの最上位ビット
+const HIGH_BITS: u64 = splat(0x80);
+/// 各バイトの下位 7 ビット
+const LOW_BITS: u64 = splat(0x7F);
+
+/// [`words_at`] の 8 バイトのうち、分割に関わりうる文字の先頭のバイトの最上位ビットだけを立てた語
 ///
-/// 対象の文字は `«»`（U+00AB・U+00BB）、一般句読点（U+2000〜U+207F）、CJK の記号と句読点
-/// （U+3000〜U+303F）、全角形（U+FF00〜U+FF7F）のどれかにある。
-#[inline]
-fn may_be_mark(b0: u8, b1: u8) -> bool {
-    match b0 {
-        0xC2 => b1 == 0xAB || b1 == 0xBB,
-        0xE2 => b1 == 0x80 || b1 == 0x81,
-        0xE3 => b1 == 0x80,
-        0xEF => b1 == 0xBC || b1 == 0xBD,
-        _ => true,
+/// 候補は ASCII の `!` `?` `()[]{}`・改行と、先頭の 2〜3 バイトで絞り込んだ多バイト文字（`«»` の
+/// U+00AB・U+00BB、一般句読点の U+2000〜U+207F、全角空白 U+3000 と `、` U+3001 を除く CJK の記号と
+/// 句読点 U+3002〜U+303F、全角形の U+FF00〜U+FF7F）の先頭。規則に関わる字はどれかに入る
+/// （[`classify`] が `Other` でない字は候補。候補でも `Other` の字は調べても何も起きない）。どれの
+/// 先頭バイトも UTF-8 の継続バイト（0x80〜0xBF）ではないので、文字の途中は候補にならない。
+///
+/// バイトごとの比較は、最上位ビットを落とした値どうしの排他的論理和に 0x7F を足して 8 バイトまとめて
+/// 行う（違えばそのバイトの最上位ビットが立つ。和は 0xFE を超えないので、桁上がりは隣のバイトに
+/// 及ばない）。最上位ビット（ASCII か、多バイト文字の先頭と 2 バイト目か）は最後に確かめる。
+#[inline(always)]
+fn candidates([word, following, third]: [u64; 3]) -> u64 {
+    // `low7` のバイト（最上位ビットは 0）が `c` と違えば最上位ビットが立つ
+    let differs = |low7: u64, c: u8| (low7 ^ splat(c)) + LOW_BITS;
+    let low = word & LOW_BITS;
+    // ASCII: `(` `)` は最下位ビットだけ、`[` `{` と `]` `}` は 0x20 だけ違う
+    let not_ascii_mark = differs(low, b'\n')
+        & differs(low, b'\r')
+        & differs(low, b'!')
+        & differs(low, b'?')
+        & differs(low & splat(0x7E), b'(')
+        & differs(low | splat(0x20), b'{')
+        & differs(low | splat(0x20), b'}');
+    let ascii = !(not_ascii_mark | word);
+    // 多バイト文字: 先頭の下位 7 ビットと、2 バイト目の下位 7 ビット（違いを許すビットを落とす）の組
+    let next = following & LOW_BITS;
+    let pair_differs = |lead: u8, second: u64| ((low ^ splat(lead & 0x7F)) | second) + LOW_BITS;
+    // E3 80 のうち、3 バイト目が 80・81（全角空白・`、`）でないもの
+    let cjk = !pair_differs(0xE3, next) & ((third & splat(0x7E)) + LOW_BITS);
+    let not_other_mark = pair_differs(0xE2, next & splat(0x7E)) // E2 80・E2 81
+        & pair_differs(0xEF, (next & splat(0x7E)) ^ splat(0xBC & 0x7F)) // EF BC・EF BD
+        & pair_differs(0xC2, (next | splat(0x10)) ^ splat(0xBB & 0x7F)); // C2 AB・C2 BB
+    let multibyte = (cjk | !not_other_mark) & word & following;
+    (ascii | multibyte) & HIGH_BITS
+}
+
+/// 位置 `base` からの 8 バイト、それぞれの次のバイト、次の次のバイトをリトルエンディアンで読んだ 3 語
+///
+/// どの語も 1 番目のバイト（`base` の位置の並び）が最下位のバイトになる。入力の終わりの先は 0 で
+/// 埋める（多バイト文字は途中で終わらないので、埋めたバイトを文字の一部として読むことはない）。
+#[inline(always)]
+fn words_at(bytes: &[u8], base: usize) -> [u64; 3] {
+    match bytes.get(base..base + 10) {
+        Some(window) => [0, 1, 2].map(|k| le_word(&window[k..k + 8])),
+        None => [0, 1, 2].map(|k| tail_word(bytes, base + k)),
     }
+}
+
+/// 位置 `at` からの 8 バイト（入力の終わりの先は 0）。入力の終わりの近くでも写しを作らずに読む
+#[inline(always)]
+fn tail_word(bytes: &[u8], at: usize) -> u64 {
+    let end = bytes.len();
+    match bytes.get(at..at + 8) {
+        Some(word) => le_word(word),
+        None if at >= end => 0,
+        // 最後の 8 バイトを読んで、`at` より前の分をずらして落とす（ずらす量は 1〜7 バイト）
+        None if end >= 8 => le_word(&bytes[end - 8..]) >> (8 * (at + 8 - end)),
+        None => bytes[at..]
+            .iter()
+            .rev()
+            .fold(0, |word, &b| (word << 8) | u64::from(b)),
+    }
+}
+
+/// 8 バイトをリトルエンディアンで読んだ語（1 バイト目が最下位のバイトになる）
+#[inline(always)]
+fn le_word(bytes: &[u8]) -> u64 {
+    u64::from_le_bytes(bytes.try_into().expect("8 バイト"))
 }
 
 /// 分割に関わる文字の種類
@@ -1501,6 +1587,150 @@ mod tests {
             builtin_exceptions().count()
         );
         assert_eq!(hash.len(), 16);
+    }
+
+    // --- 走査（候補の絞り込み） ---
+
+    /// 乱数（xorshift）
+    fn rng(mut seed: u64) -> impl FnMut() -> u64 {
+        move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        }
+    }
+
+    /// [`candidates`] がバイトごとに求めるもの（先頭 `b0`・2 バイト目 `b1`・3 バイト目 `b2`）
+    fn is_candidate(b0: u8, b1: u8, b2: u8) -> bool {
+        match (b0, b1) {
+            (b'\n' | b'\r' | b'!' | b'?' | b'(' | b')' | b'[' | b']' | b'{' | b'}', _) => true,
+            (0xC2, 0xAB | 0xBB) | (0xE2, 0x80 | 0x81) | (0xEF, 0xBC | 0xBD) => true,
+            // 3 バイト目（継続バイト）が 0x80・0x81 でないこと。最上位ビットは見ない
+            (0xE3, 0x80) => b2 & 0x7E != 0,
+            _ => false,
+        }
+    }
+
+    /// 位置の順にすべての文字を調べたときの印（候補の絞り込みを使わない）
+    fn marks_visiting_every_char(splitter: &Splitter, text: &str) -> Vec<(usize, u8, MarkKind)> {
+        let mut marks = Vec::new();
+        let mut next = 0;
+        for (pos, _) in text.char_indices() {
+            if pos >= next {
+                next = splitter.visit(text, pos, true, true, &mut |m: Mark| {
+                    marks.push((m.pos, m.len, m.kind))
+                });
+            }
+        }
+        marks
+    }
+
+    #[test]
+    fn test_candidates_match_the_byte_rule() {
+        // ほかのバイトを乱数で埋めて、バイトごとの判定が隣のバイトに影響されないことも確かめる
+        let mut random = rng(0x9E37_79B9_7F4A_7C15);
+        for b0 in 0..=255u8 {
+            for b1 in 0..=255u8 {
+                for b2 in [0x00, 0x01, 0x7F, 0x80, 0x81, 0x82, 0xBF, 0xFF] {
+                    let lane = usize::from(b0 ^ b1 ^ b2) % 8;
+                    let mut words = [random(), random(), random()];
+                    for (word, b) in words.iter_mut().zip([b0, b1, b2]) {
+                        *word = (*word & !(0xFF << (8 * lane))) | (u64::from(b) << (8 * lane));
+                    }
+                    let expected = (0..8).fold(0, |found, k| {
+                        let [w, f, t] = words.map(|word| (word >> (8 * k)) as u8);
+                        found | (u64::from(is_candidate(w, f, t)) << (8 * k + 7))
+                    });
+                    assert_eq!(candidates(words), expected, "{b0:#x} {b1:#x} {b2:#x}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_every_mark_character_is_a_candidate() {
+        // 規則に関わる字（classify が Other でない字）は、64 バイトの塊のどの位置にあっても候補になる
+        let marks = (0..=0x10FFFF)
+            .filter_map(char::from_u32)
+            .filter(|&c| classify(c) != CharKind::Other);
+        for c in marks {
+            let mut buf = [0; 4];
+            let bytes = c.encode_utf8(&mut buf).as_bytes();
+            let byte = |k: usize| bytes.get(k).copied().unwrap_or(0);
+            assert!(is_candidate(byte(0), byte(1), byte(2)), "{c:?}");
+            for pad in 0..64 {
+                let text = format!("{}{c}あ", "a".repeat(pad));
+                assert_eq!(
+                    block_candidates(text.as_bytes(), 0),
+                    1 << pad,
+                    "{c:?} {pad}"
+                );
+            }
+        }
+        // 全角空白と `、` は候補にしない（調べても何も起きない字）
+        assert_eq!(block_candidates("\u{3000}、あ。".as_bytes(), 0), 1 << 9);
+    }
+
+    #[test]
+    fn test_scan_agrees_with_visiting_every_character() {
+        // 塊（64 バイト）と語（8 バイト）の境界・入力の終わりをまたぐ長さの入力で、候補だけを調べた
+        // 走査と、すべての文字を調べた走査の印が一致する
+        let alphabet = [
+            'a', '!', '?', '。', '、', '\u{3000}', '「', '」', '\n', '\r', '\u{2028}', '‼', '⁉',
+            '．', '｡', '３', 'Ａ', '（', '）', '(', ']', '{', '«', '»', '“', '’', '…', '々', '〜',
+            'あ', 'ア', 'ｱ', '漢', '𠮷', '\u{00A0}', '\u{FF5E}', '\u{0}',
+        ];
+        let splitter = Splitter::default();
+        let mut random = rng(0x2545_F491_4F6C_DD1D);
+        let mut texts: Vec<String> = (0..20_000)
+            .map(|k| {
+                let len = random() as usize % if k % 10 == 0 { 300 } else { 40 };
+                (0..len)
+                    .map(|_| alphabet[random() as usize % alphabet.len()])
+                    .collect()
+            })
+            .collect();
+        // 塊をまたぐ `!` `?` の連続と、塊の終わりにかかる多バイト文字
+        for pad in 0..70 {
+            let pre = "a".repeat(pad);
+            texts.push(format!("{pre}{}x", "!?".repeat(40)));
+            texts.push(format!("{pre}{}", "?".repeat(70)));
+            texts.push(format!("{pre}。」\r\n\u{2029}Yahoo!ニュース"));
+        }
+        for text in &texts {
+            let mut marks = Vec::new();
+            splitter.scan(text, true, true, |m| marks.push((m.pos, m.len, m.kind)));
+            assert_eq!(
+                marks,
+                marks_visiting_every_char(&splitter, text),
+                "{text:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_tail_word_reads_up_to_the_end() {
+        let data: Vec<u8> = (1..=20).collect();
+        for end in 0..=data.len() {
+            let bytes = &data[..end];
+            for at in 0..end + 3 {
+                let expected = (0..8).fold(0, |word, k| {
+                    word | (u64::from(bytes.get(at + k).copied().unwrap_or(0)) << (8 * k))
+                });
+                assert_eq!(tail_word(bytes, at), expected, "end={end} at={at}");
+            }
+        }
+    }
+
+    #[test]
+    fn test_chunk_ends_into_clears_the_buffer() {
+        let splitter = Splitter::default();
+        let mut ends = vec![1, 2, 3];
+        for text in ["文。次の文！\n末尾", "", "区切りなし"] {
+            splitter.chunk_ends_into(text, &mut ends);
+            assert_eq!(ends, splitter.chunk_ends(text), "{text}");
+        }
     }
 
     // --- 計算量 ---

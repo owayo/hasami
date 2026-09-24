@@ -47,6 +47,8 @@ pub struct Analyzer {
     workspace: LatticeWorkspace,
     /// 解析の前分割（ラティスを小さく保つための区切り）に使う文分割器
     splitter: Splitter,
+    /// 前分割の区切りの列（解析のたびに確保し直さない）
+    chunk_ends: Vec<usize>,
 }
 
 impl Clone for Analyzer {
@@ -58,6 +60,7 @@ impl Clone for Analyzer {
             dict: Arc::clone(&self.dict),
             workspace: LatticeWorkspace::new(),
             splitter: self.splitter.clone(),
+            chunk_ends: Vec::new(),
         }
     }
 }
@@ -87,6 +90,7 @@ impl Analyzer {
             dict,
             workspace: LatticeWorkspace::new(),
             splitter: Splitter::default(),
+            chunk_ends: Vec::new(),
         }
     }
 
@@ -131,13 +135,21 @@ impl Analyzer {
         offset: usize,
         out: &mut Vec<Token>,
     ) -> Result<(), DictError> {
+        let mut ends = std::mem::take(&mut self.chunk_ends);
+        self.splitter.chunk_ends_into(input, &mut ends);
         let mut start = 0;
-        for end in self.splitter.chunk_ends(input) {
-            self.workspace
-                .tokenize_into(&input[start..end], &self.dict, offset + start, out)?;
+        let mut result = Ok(());
+        for &end in &ends {
+            result =
+                self.workspace
+                    .tokenize_into(&input[start..end], &self.dict, offset + start, out);
+            if result.is_err() {
+                break;
+            }
             start = end;
         }
-        Ok(())
+        self.chunk_ends = ends;
+        result
     }
 
     /// テキストを文に分け（[`crate::sentence`] の規則）、文ごとの範囲とトークン列を返す
