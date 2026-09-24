@@ -522,7 +522,7 @@ fn cmd_tokenize(
         match std::str::from_utf8(&pending[..end]) {
             Ok(block) => processor.process(block, &mut out)?,
             Err(e) => {
-                // 壊れた UTF-8 を含む行の手前までは解析して出す（行ごとに読んでいたときと同じ）
+                // 壊れた UTF-8 を含む行の手前までは解析して出してから、エラーにする
                 let valid = &pending[..e.valid_up_to()];
                 let cut = valid.iter().rposition(|&b| b == b'\n').map_or(0, |p| p + 1);
                 let block = std::str::from_utf8(&valid[..cut]).map_err(io::Error::other)?;
