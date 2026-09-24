@@ -19,17 +19,20 @@ name = "hasami"
 path = "src/main.rs"
 required-features = ["cli"]
 
-# ライブラリとして解析だけに使うなら default-features = false（依存は memmap2 と bytemuck だけ）
+# ライブラリとして使うなら default-features = false。文分割（hasami::sentence）は feature なしで使え、
+# 依存は無い。解析も使うなら features = ["analyzer"]（依存は memmap2 と bytemuck だけ）
 [features]
 default = ["cli"]
+# 形態素解析（Analyzer・Dictionary・Token・品詞の正規化・C FFI）
+analyzer = ["dep:memmap2", "dep:bytemuck"]
 # 辞書の構築・修復・書き出し（DictBuilder、MeCab 形式 CSV の読み書き、EUC-JP の変換）
-build = ["dep:csv", "dep:encoding_rs", "dep:glob"]
+build = ["analyzer", "dep:csv", "dep:encoding_rs", "dep:glob"]
 # hasami コマンド
 cli = ["build", "dep:clap", "dep:indicatif", "dep:serde_json"]
 
 [dependencies]
-memmap2 = "0.9.11"
-bytemuck = { version = "1.25.2", features = ["derive"] }
+memmap2 = { version = "0.9.11", optional = true }
+bytemuck = { version = "1.25.2", features = ["derive"], optional = true }
 csv = { version = "1.4.0", optional = true }
 encoding_rs = { version = "0.8.35", optional = true }
 glob = { version = "0.3.4", optional = true }
