@@ -63,8 +63,11 @@ jobs:
           # Only replace the first occurrence (package version, not dependency versions)
           sed -i "0,/^version = \"[^\"]*\"/s//version = \"${NEW_VERSION}\"/" Cargo.toml
 
+          # Sync only the package's own version into Cargo.lock. `cargo generate-lockfile`
+          # would re-resolve every dependency to its newest release, shipping versions CI
+          # never tested. Cargo.lock is committed, so the builds also pass --locked.
           if [ -f "Cargo.lock" ]; then
-            cargo generate-lockfile 2>/dev/null || true
+            cargo update --workspace
           fi
 
           echo "version=${NEW_VERSION}" >> "$GITHUB_OUTPUT"
@@ -145,11 +148,11 @@ jobs:
         if: matrix.cross
         run: |
           cargo install cross --git https://github.com/cross-rs/cross
-          cross build --release --target ${{ matrix.target }}
+          cross build --release --locked --target ${{ matrix.target }}
 
       - name: Build
         if: "!matrix.cross"
-        run: cargo build --release --target ${{ matrix.target }}
+        run: cargo build --release --locked --target ${{ matrix.target }}
 
       - name: Package (Unix)
         if: runner.os != 'Windows'
