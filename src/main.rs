@@ -458,7 +458,7 @@ fn cmd_merge(
 }
 
 /// 標準入力を 1 回の read で読むバイト数の上限（ファイルを流し込むと毎回この大きさのブロックになる）
-const READ_CHUNK: usize = 1 << 20;
+const READ_CHUNK: usize = 1 << 18;
 /// 標準出力のバッファの大きさ
 const WRITE_BUFFER: usize = 1 << 16;
 /// これより短いブロックは並列に解析しない（スレッドを立てる費用の方が大きい）
@@ -481,15 +481,16 @@ fn cmd_tokenize(
 
     let stdout = io::stdout();
     let mut out = io::BufWriter::with_capacity(WRITE_BUFFER, stdout.lock());
-    let mut workers = vec![Worker::new(analyzer)];
 
     if let Some(text) = text {
-        let worker = &mut workers[0];
+        let mut worker = Worker::new(analyzer);
+        let mut buf = Vec::new();
         let tokens = worker.analyzer.try_tokenize(&text)?;
-        write_output(&mut worker.out, &mut worker.line, &tokens, format);
-        out.write_all(&worker.out)?;
+        write_output(&mut buf, &mut worker.line, &tokens, format);
+        out.write_all(&buf)?;
         return out.flush();
     }
+    let mut processor = BlockProcessor::new(analyzer, threads, format);
 
     // 標準入力を完結した行のブロックごとに解析する。読み込みは待つことがあるので、その前にそれまでの
     // 出力を書き出す（行を送って結果を待つ相手とも詰まらない。大量の入力では読むたびに 1 回だけ書く）
@@ -519,13 +520,13 @@ fn cmd_tokenize(
             }
         };
         match std::str::from_utf8(&pending[..end]) {
-            Ok(block) => process_block(block, &mut workers, threads, format, &mut out)?,
+            Ok(block) => processor.process(block, &mut out)?,
             Err(e) => {
                 // 壊れた UTF-8 を含む行の手前までは解析して出す（行ごとに読んでいたときと同じ）
                 let valid = &pending[..e.valid_up_to()];
                 let cut = valid.iter().rposition(|&b| b == b'\n').map_or(0, |p| p + 1);
                 let block = std::str::from_utf8(&valid[..cut]).map_err(io::Error::other)?;
-                process_block(block, &mut workers, threads, format, &mut out)?;
+                processor.process(block, &mut out)?;
                 out.flush()?;
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
@@ -534,6 +535,10 @@ fn cmd_tokenize(
             }
         }
         pending.drain(..end);
+        // とても長い行を読んだあとに大きな確保を持ち続けない
+        if pending.capacity() > 4 * READ_CHUNK {
+            pending.shrink_to(2 * READ_CHUNK);
+        }
         if eof {
             break;
         }
@@ -541,11 +546,9 @@ fn cmd_tokenize(
     out.flush()
 }
 
-/// 解析と書式化を受け持つワーカー（解析器と出力のバッファ）
+/// 解析と書式化を受け持つワーカー
 struct Worker {
     analyzer: Analyzer,
-    /// 書式化した出力
-    out: Vec<u8>,
     /// 1 行分を書式化する作業用の文字列
     line: String,
 }
@@ -554,7 +557,6 @@ impl Worker {
     fn new(analyzer: Analyzer) -> Self {
         Worker {
             analyzer,
-            out: Vec::new(),
             line: String::new(),
         }
     }
@@ -562,81 +564,121 @@ impl Worker {
     /// 行を順に解析して `out` に書く。空行（空白だけの行を含む）は飛ばす
     ///
     /// エラーのときは、それまでの行の出力を `out` に残して返す
-    fn process(&mut self, lines: &[&str], format: OutputFormat) -> io::Result<()> {
+    fn process(
+        &mut self,
+        lines: &[&str],
+        format: OutputFormat,
+        out: &mut Vec<u8>,
+    ) -> io::Result<()> {
         for line in lines {
             let text = line.trim();
             if text.is_empty() {
                 continue;
             }
             let tokens = self.analyzer.try_tokenize(text)?;
-            write_output(&mut self.out, &mut self.line, &tokens, format);
+            write_output(out, &mut self.line, &tokens, format);
         }
         Ok(())
     }
 }
 
-/// 完結した行のブロックを解析して `out` に書く
-///
-/// ブロックが大きく `threads` が 2 以上なら、行を連続したまとまり（[`PIECE_BYTES`] ほど）に分け、
-/// スレッドが空いた順にまとまりを取って解析する（P コアと E コアのように速さの違うコアが混ざっても
-/// 遅いスレッドを待たない）。出力は入力の順に書く。エラーは入力の順で最初のものを返し、その手前の行の
-/// 出力だけを書く（1 行ずつ順に解析したときと同じ出力とエラーになる）。
-fn process_block(
-    block: &str,
-    workers: &mut Vec<Worker>,
-    threads: usize,
-    format: OutputFormat,
-    out: &mut impl Write,
-) -> io::Result<()> {
-    let lines: Vec<&str> = block.lines().collect();
-    if threads < 2 || block.len() < PARALLEL_MIN_BYTES {
-        let worker = &mut workers[0];
-        let result = worker.process(&lines, format);
-        out.write_all(&worker.out)?;
-        worker.out.clear();
-        return result;
-    }
-    let pieces = split_pieces(&lines, PIECE_BYTES);
-    let threads = threads.min(pieces.len());
-    while workers.len() < threads {
-        let analyzer = workers[0].analyzer.clone();
-        workers.push(Worker::new(analyzer));
-    }
-    let next = AtomicUsize::new(0);
-    let done: Vec<Mutex<Option<PieceResult>>> = pieces.iter().map(|_| Mutex::new(None)).collect();
-    let run = |worker: &mut Worker| {
-        loop {
-            let k = next.fetch_add(1, Ordering::Relaxed);
-            let Some(range) = pieces.get(k) else {
-                break;
-            };
-            let result = worker.process(&lines[range.clone()], format);
-            let output = std::mem::take(&mut worker.out);
-            *done[k].lock().unwrap_or_else(PoisonError::into_inner) = Some((output, result));
-        }
-    };
-    std::thread::scope(|s| {
-        let (first, rest) = workers[..threads]
-            .split_first_mut()
-            .expect("at least one worker");
-        for worker in rest {
-            s.spawn(move || run(worker));
-        }
-        run(first);
-    });
-    for slot in done {
-        let (output, result) = slot
-            .into_inner()
-            .unwrap_or_else(PoisonError::into_inner)
-            .expect("every piece is processed");
-        out.write_all(&output)?;
-        result?;
-    }
-    Ok(())
+/// 行のまとまり 1 つ分の出力（ブロックをまたいで確保を使い回す）
+#[derive(Default)]
+struct Piece {
+    out: Vec<u8>,
+    error: Option<io::Error>,
 }
 
-/// 並列に解析した行のまとまりの結果（書式化した出力と、解析のエラー）
-type PieceResult = (Vec<u8>, io::Result<()>);
+/// 完結した行のブロックを解析して書式化する（ワーカーと出力の確保を使い回す）
+struct BlockProcessor {
+    workers: Vec<Worker>,
+    pieces: Vec<Mutex<Piece>>,
+    threads: usize,
+    format: OutputFormat,
+}
+
+impl BlockProcessor {
+    fn new(analyzer: Analyzer, threads: usize, format: OutputFormat) -> Self {
+        BlockProcessor {
+            workers: vec![Worker::new(analyzer)],
+            pieces: Vec::new(),
+            threads,
+            format,
+        }
+    }
+
+    /// ブロックを解析して `out` に書く
+    ///
+    /// 行を連続したまとまり（[`PIECE_BYTES`] ほど）に分ける。ブロックが大きく `threads` が 2 以上なら、
+    /// スレッドが空いた順にまとまりを取って解析する（P コアと E コアのように速さの違うコアが混ざっても
+    /// 遅いスレッドを待たない）。出力は入力の順に、まとまりごとに書く。エラーは入力の順で最初のものを
+    /// 返し、その手前の行の出力だけを書く（1 行ずつ順に解析したときと同じ出力とエラーになる）。
+    fn process(&mut self, block: &str, out: &mut impl Write) -> io::Result<()> {
+        let lines: Vec<&str> = block.lines().collect();
+        let ranges = split_pieces(&lines, PIECE_BYTES);
+        if self.pieces.len() < ranges.len() {
+            self.pieces.resize_with(ranges.len(), Default::default);
+        }
+        let format = self.format;
+        if self.threads < 2 || block.len() < PARALLEL_MIN_BYTES {
+            let piece = self.pieces[0]
+                .get_mut()
+                .unwrap_or_else(PoisonError::into_inner);
+            let worker = &mut self.workers[0];
+            for range in ranges {
+                let result = worker.process(&lines[range], format, &mut piece.out);
+                out.write_all(&piece.out)?;
+                piece.out.clear();
+                result?;
+            }
+            return Ok(());
+        }
+
+        let threads = self.threads.min(ranges.len());
+        while self.workers.len() < threads {
+            let analyzer = self.workers[0].analyzer.clone();
+            self.workers.push(Worker::new(analyzer));
+        }
+        let next = AtomicUsize::new(0);
+        let pieces = &self.pieces[..ranges.len()];
+        let run = |worker: &mut Worker| {
+            loop {
+                let k = next.fetch_add(1, Ordering::Relaxed);
+                let Some(range) = ranges.get(k) else {
+                    break;
+                };
+                let mut piece = pieces[k].lock().unwrap_or_else(PoisonError::into_inner);
+                let piece = &mut *piece;
+                piece.error = worker
+                    .process(&lines[range.clone()], format, &mut piece.out)
+                    .err();
+            }
+        };
+        std::thread::scope(|s| {
+            let (first, rest) = self.workers[..threads]
+                .split_first_mut()
+                .expect("at least one worker");
+            for worker in rest {
+                s.spawn(move || run(worker));
+            }
+            run(first);
+        });
+
+        let mut result = Ok(());
+        for piece in &mut self.pieces[..ranges.len()] {
+            let piece = piece.get_mut().unwrap_or_else(PoisonError::into_inner);
+            let error = piece.error.take();
+            if result.is_ok() {
+                out.write_all(&piece.out)?;
+                if let Some(e) = error {
+                    result = Err(e);
+                }
+            }
+            piece.out.clear();
+        }
+        result
+    }
+}
 
 /// 行を、先頭から順に `piece_bytes` バイトほどずつの連続した区間に分ける
 fn split_pieces(lines: &[&str], piece_bytes: usize) -> Vec<std::ops::Range<usize>> {
@@ -1185,15 +1227,22 @@ mod tests {
             OutputFormat::Json,
         ] {
             let mut expected = Vec::new();
-            let mut workers = vec![Worker::new(base.clone())];
-            process_block(&block, &mut workers, 1, format, &mut expected).unwrap();
+            BlockProcessor::new(base.clone(), 1, format)
+                .process(&block, &mut expected)
+                .unwrap();
             assert!(!expected.is_empty());
             for threads in [2, 3, 8] {
-                let mut out = Vec::new();
-                let mut workers = vec![Worker::new(base.clone())];
-                process_block(&block, &mut workers, threads, format, &mut out).unwrap();
-                assert!(workers.len() > 1, "block is large enough to split");
-                assert_eq!(out, expected, "threads={threads}");
+                let mut processor = BlockProcessor::new(base.clone(), threads, format);
+                // 同じ処理器でブロックを続けて処理しても（出力の確保を使い回しても）同じ出力
+                for _ in 0..2 {
+                    let mut out = Vec::new();
+                    processor.process(&block, &mut out).unwrap();
+                    assert!(
+                        processor.workers.len() > 1,
+                        "block is large enough to split"
+                    );
+                    assert_eq!(out, expected, "threads={threads}");
+                }
             }
         }
     }
