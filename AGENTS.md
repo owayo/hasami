@@ -98,7 +98,9 @@ hasami/
   で作り直す（字幅を畳み、抽出規則を満たすことをテストが確かめる）。索引は build.rs が作るので手で作らない
 - `Token::coarse_pos()` / `is_negation()` / `mora_count()` - 品詞の正規化・否定・モーラ数（`src/pos.rs`）
 - `Token` - `surface`, `start`, `end`, `pos`, `conj_type`, `conj_form`, `base_form`, `reading`, `pronunciation`,
-  `word_cost`, `is_known`（活用型・活用形が無い語は空文字列）
+  `word_cost`, `is_known`（活用型・活用形が無い語は空文字列）。半角空白・タブ・改行（char.def の SPACE）は
+  MeCab と同じく読み飛ばしてトークンにしない（前後の語を直接つなぐ。`Node::start` はつなぐ位置で、表層は
+  `ChunkChars::skip_spaces` の位置から）
 - `Dictionary::load(path)` / `Dictionary::verify()` / `Dictionary::for_each_entry(cb)` / `Dictionary::lookup(text)`
 - `Dictionary::from_static(bytes)` / `hasami::include_hsd!(path)` - 実行ファイルに埋め込んだ辞書を複製せずに読む（`Storage::Static`）。
   先頭は 8 バイト境界（型付きスライスが要るのは 4 だが `from_bytes` の所有バッファにそろえた）。マクロは 64 にそろえる
@@ -176,6 +178,7 @@ target/release/hasami bench --dict dict/ipadic.hsd --file corpus.txt  # 1 行 1 
 | NEologd | 規則で拾えない一般語が固有名詞・人名になっている（ステークホルダー、原形が「ANGAGEMENT」「Youth case」の人名もあるエンゲージメント・ユースケース、爆速） | 同上 | `dict/user-remove/common-words-as-proper-nouns.csv` で固有名詞のエントリを落とし、`dict/user/common-word-fixes.csv` で一般名詞を足す |
 | IPAdic / NEologd | 「深掘り」「深堀り」「腹落ち」が 1 語にならない | 「深(形容詞) / 掘り(動詞)」「深堀(人名) / り」「腹 / 落ち(接尾)」 | `dict/user/common-word-fixes.csv`（名詞,サ変接続。「深堀り」の原形は「深掘り」） |
 | NEologd `neologd-adjective-std-dict-seed` | 形容詞・イ段の 143 語で、ガル接続のエントリの表層形が基本形のまま（「うそ寂しい」がガル接続） | 原形は正しい。このエントリが選ばれると活用形がガル接続になる（「くどくどしい説明」の「くどくどしい」） | 対処なし（原形の修復は不要。活用語で「活用形が基本形でも `*` でもなく原形 = 表層形」の 173 件は、この 143 件と IPAdic の「乞う(連用タ接続)」「あり(ラ変連用形)」など原形と同形の活用形だけ） |
+| IPAdic | char.def が SPACE に `0x00D0`（Ð）を入れている（復帰 `0x000D` の書き間違い） | 空白は読み飛ばすので「Ð」が解析結果から消える | `scripts/prepare_ipadic.py` が `0x000D` に直す |
 | NEologd / SudachiDict | 漢字の 1 字をカタカナにした表記ゆれ（「公キ」原形「公器」、「神キ」「王シ」「娘シ」「ト場」） | カタカナの並びの境界をまたぐので、境界をまたぐ既知語を手掛かりにする規則が誤作動する（「主人公キャリー」→「主人 / 公キ / ャリー」） | 対処なし。カタカナの並びの規則（下の「カタカナの未知語」）は 3 字以上の語だけを数え、並び全体を覆えるときだけ効くので、2 字のこれらの語では誤作動しない |
 
 
