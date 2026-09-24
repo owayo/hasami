@@ -34,6 +34,11 @@
 //!    （`３．１４`、`第３．２節`、`Ｎｏ．１`、`Ｖｏｌ．６`）。`…を述べる．３章では…` のように直前が
 //!    英数字でなければ文末にする
 //!
+//! 一文の長さを測るときのように、括弧の中の文も分けたいなら [`Splitter::split_fragments`] を使う。
+//! 文を括弧の内側の文末記号でさらに区切った断片を返す（`彼は「今日は休む。明日は行く。」と言った。` は
+//! `彼は「今日は休む。` / `明日は行く。」` / `と言った。`）。どの記号が文末として働くか・改行・空白の
+//! 扱いは文と同じで、断片は文の境界をまたがない。
+//!
 //! 規則で使う字の集合は、[`is_sentence_ender`]・[`ascii_run_is_ender`]・[`closing_bracket`]・
 //! [`is_closing_bracket`] で同じ基準のまま判定できる。
 //!
@@ -110,12 +115,12 @@ impl Default for SplitOptions<'_> {
     }
 }
 
-/// 分割した 1 文
+/// 分割した 1 文（[`Splitter::split_fragments`] では 1 つの断片）
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Sentence {
     /// 入力上のバイト範囲（前後の空白を除く、文末記号を含む）
     pub range: Range<usize>,
-    /// 括弧の内側に文末記号があり、括弧ごと 1 文にしたか
+    /// 括弧の内側に文末記号があり、括弧ごと 1 文にしたか（断片では常に偽）
     pub embedded_enders: bool,
     /// この文を終わらせたもの
     pub end: SentenceEnd,
@@ -124,7 +129,7 @@ pub struct Sentence {
 /// 文を終わらせたもの
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SentenceEnd {
-    /// 文末記号（直後の対応しない閉じ括弧を含む）
+    /// 文末記号（直後に続く閉じ括弧を含む）。断片では括弧の内側の文末記号も
     Ender,
     /// 改行（[`LineBreaks::Split`] のときだけ）
     LineBreak,
@@ -190,7 +195,7 @@ impl Splitter {
 
     /// テキストを文に分割する（[`split`] と同じ）
     pub fn split(&self, text: &str) -> Vec<Sentence> {
-        self.split_at_breaks(text, &[])
+        self.split_at_breaks::<false>(text, &[])
     }
 
     /// 改行とみなす位置を別に渡して、テキストを文に分割する
@@ -204,21 +209,65 @@ impl Splitter {
     ///
     /// `breaks` の位置が `text` の文字の境界でない（長さを超える場合を含む）とき。
     pub fn split_with_breaks(&self, text: &str, breaks: &[usize]) -> Vec<Sentence> {
-        let mut breaks = breaks.to_vec();
-        breaks.sort_unstable();
-        breaks.dedup();
-        for &pos in &breaks {
-            assert!(
-                text.is_char_boundary(pos),
-                "改行とみなす位置 {pos} が入力の文字の境界でない（入力は {} バイト）",
-                text.len()
-            );
-        }
-        self.split_at_breaks(text, &breaks)
+        self.split_at_breaks::<false>(text, &sorted_breaks(text, breaks))
     }
 
-    /// 昇順の `breaks` の位置に幅 0 の改行を足して分割する
-    fn split_at_breaks(&self, text: &str, breaks: &[usize]) -> Vec<Sentence> {
+    /// テキストを、括弧の内側の文末記号でも区切った断片に分ける
+    ///
+    /// 一文の長さを測るときなど、括弧ごとの文（[`Splitter::split`]）ではなく括弧の中の文も分けたいときに
+    /// 使う。断片は [`Splitter::split`] の文を、括弧の内側で文末として働く文末記号の後ろでさらに区切った
+    /// もので、文の境界をまたがない（どの断片もどれか 1 つの文に収まり、文の始まりと終わりは断片の境界に
+    /// なる）。括弧の内側に文末記号のない文（[`Sentence::embedded_enders`] が偽の文）は、そのまま 1 つの
+    /// 断片になる。
+    ///
+    /// - どの文末記号が文末として働くか（規則 1・4・8・9）は文と同じ。例外表の語・URL の `?`・小数点では
+    ///   区切らない
+    /// - 括弧の内側で区切るときは、文末記号に隙間なく続く文末記号と閉じ括弧（対応の有無を問わない）を
+    ///   前の断片に含める（`明日は行く。」` / `と言った。`、`「はい。」。` は 1 つの断片）。ただし文の
+    ///   終わりは越えない
+    /// - 改行は文と同じく、括弧の内側では区切らない
+    /// - 前後の空白は範囲から除き、空白だけの区間は断片にしない。文末記号と閉じ括弧だけの区間は、同じ文の
+    ///   前の断片に含める（`「はい。」 。` は 1 つの断片）
+    /// - 断片の [`Sentence::embedded_enders`] は常に偽。括弧の内側の文末記号で終わった断片の
+    ///   [`Sentence::end`] は [`SentenceEnd::Ender`]
+    ///
+    /// ```
+    /// use hasami::sentence::Splitter;
+    ///
+    /// let text = "彼は「今日は休む。明日は行く。」と言った。「はい。」。";
+    /// let fragments: Vec<&str> = Splitter::default()
+    ///     .split_fragments(text)
+    ///     .into_iter()
+    ///     .map(|s| &text[s.range])
+    ///     .collect();
+    /// assert_eq!(
+    ///     fragments,
+    ///     ["彼は「今日は休む。", "明日は行く。」", "と言った。", "「はい。」。"]
+    /// );
+    /// ```
+    pub fn split_fragments(&self, text: &str) -> Vec<Sentence> {
+        self.split_at_breaks::<true>(text, &[])
+    }
+
+    /// 改行とみなす位置を別に渡して、テキストを断片に分ける
+    ///
+    /// [`Splitter::split_fragments`] の断片を、[`Splitter::split_with_breaks`] の文から作る。渡した位置も
+    /// 括弧の内側では区切らない。
+    ///
+    /// # Panics
+    ///
+    /// `breaks` の位置が `text` の文字の境界でない（長さを超える場合を含む）とき。
+    pub fn split_fragments_with_breaks(&self, text: &str, breaks: &[usize]) -> Vec<Sentence> {
+        self.split_at_breaks::<true>(text, &sorted_breaks(text, breaks))
+    }
+
+    /// 昇順の `breaks` の位置に幅 0 の改行を足して分割する。`FRAGMENTS` なら断片を返す
+    /// （[`Splitter::split_fragments`]）
+    fn split_at_breaks<const FRAGMENTS: bool>(
+        &self,
+        text: &str,
+        breaks: &[usize],
+    ) -> Vec<Sentence> {
         let line_break = |pos| Mark {
             pos,
             len: 0,
@@ -239,6 +288,8 @@ impl Splitter {
         let mut sentences = Vec::new();
         let mut start = 0;
         let mut embedded_enders = false;
+        // いまの文の最初の断片の、`sentences` の上の位置（断片を返すときだけ使う）
+        let mut first = 0;
         let mut b = 0;
         let mut i = 0;
         while let Some(&mark) = marks.get(i) {
@@ -246,33 +297,49 @@ impl Splitter {
                 b += 1;
             }
             if brackets.get(b).is_some_and(|r| mark.is_inside(r)) {
+                let active = mark.kind == MarkKind::Ender { active: true };
+                if FRAGMENTS && active {
+                    // 断片は括弧の内側の文末記号でも区切る
+                    let (end, next, closes) = inner_run_end(&marks, i, &brackets[b..]);
+                    push_fragment(text, start..end, SentenceEnd::Ender, first, &mut sentences);
+                    if closes {
+                        first = sentences.len();
+                    }
+                    start = end;
+                    i = next;
+                    continue;
+                }
                 // 対応の取れた括弧の内側では分割しない
-                embedded_enders |= mark.kind == MarkKind::Ender { active: true };
+                embedded_enders |= active;
                 i += 1;
                 continue;
             }
             match mark.kind {
                 MarkKind::Ender { active: true } => {
                     let (end, next) = ender_run_end(&marks, i);
-                    push_sentence(
+                    push_piece::<FRAGMENTS>(
                         text,
                         start..end,
                         embedded_enders,
                         SentenceEnd::Ender,
+                        first,
                         &mut sentences,
                     );
+                    first = sentences.len();
                     start = end;
                     embedded_enders = false;
                     i = next;
                 }
                 MarkKind::LineBreak => {
-                    push_sentence(
+                    push_piece::<FRAGMENTS>(
                         text,
                         start..mark.pos,
                         embedded_enders,
                         SentenceEnd::LineBreak,
+                        first,
                         &mut sentences,
                     );
+                    first = sentences.len();
                     start = mark.end();
                     embedded_enders = false;
                     i += 1;
@@ -281,11 +348,12 @@ impl Splitter {
             }
         }
         if start < text.len() {
-            push_sentence(
+            push_piece::<FRAGMENTS>(
                 text,
                 start..text.len(),
                 embedded_enders,
                 SentenceEnd::EndOfText,
+                first,
                 &mut sentences,
             );
         }
@@ -553,6 +621,38 @@ fn ender_run_end(marks: &[Mark], mut i: usize) -> (usize, usize) {
     (end, i)
 }
 
+/// 括弧の内側の `marks[i]`（文末として働く文末記号）から始まる断片の終わり（[`Splitter::split_fragments`]）
+///
+/// 断片の終わりのバイト位置、その次の marks 上の位置、断片の終わりが文の終わりでもあるかを返す。
+/// 文末記号と閉じ括弧（対応の有無を問わない）が隙間なく続く限り断片に含める。括弧の外側の文末記号に
+/// 届いたら、そこからは文の終わりと同じ規則（[`ender_run_end`]）で止めるので、文の終わりを越えない。
+/// `brackets` は `marks[i]` を含む括弧の範囲から始まる、外側の括弧の範囲の列。
+fn inner_run_end(marks: &[Mark], mut i: usize, brackets: &[Range<usize>]) -> (usize, usize, bool) {
+    let mut end = marks[i].pos;
+    let mut b = 0;
+    while let Some(mark) = marks.get(i) {
+        if mark.pos != end {
+            break;
+        }
+        match mark.kind {
+            MarkKind::Ender { active: true } => {
+                while brackets.get(b).is_some_and(|r| r.end <= mark.pos) {
+                    b += 1;
+                }
+                if !brackets.get(b).is_some_and(|r| mark.is_inside(r)) {
+                    let (end, next) = ender_run_end(marks, i);
+                    return (end, next, true);
+                }
+            }
+            MarkKind::Close { .. } => {}
+            _ => break,
+        }
+        end = mark.end();
+        i += 1;
+    }
+    (end, i, false)
+}
+
 /// 前後の空白を除いた文を加える（空白だけなら加えない）
 fn push_sentence(
     text: &str,
@@ -571,6 +671,74 @@ fn push_sentence(
         embedded_enders,
         end,
     });
+}
+
+/// `FRAGMENTS` なら断片（[`push_fragment`]）を、そうでなければ文（[`push_sentence`]）を加える
+#[inline(always)]
+fn push_piece<const FRAGMENTS: bool>(
+    text: &str,
+    range: Range<usize>,
+    embedded_enders: bool,
+    end: SentenceEnd,
+    first: usize,
+    out: &mut Vec<Sentence>,
+) {
+    if FRAGMENTS {
+        push_fragment(text, range, end, first, out);
+    } else {
+        push_sentence(text, range, embedded_enders, end, out);
+    }
+}
+
+/// 前後の空白を除いた断片を加える（空白だけなら加えない）
+///
+/// 文末記号と閉じ括弧だけの区間は断片にせず、同じ文の前の断片（`out[first..]` にあれば）に含める。
+fn push_fragment(
+    text: &str,
+    range: Range<usize>,
+    end: SentenceEnd,
+    first: usize,
+    out: &mut Vec<Sentence>,
+) {
+    let body = text[range.clone()].trim_start();
+    if body.is_empty() {
+        return;
+    }
+    let start = range.end - body.len();
+    let range = start..start + body.trim_end().len();
+    let only_marks = text[range.clone()]
+        .chars()
+        .all(|c| c.is_whitespace() || is_sentence_ender(c) || is_closing_bracket(c));
+    if only_marks && out.len() > first {
+        let last = out.last_mut().expect("同じ文の前の断片");
+        last.range.end = range.end;
+        last.end = end;
+    } else {
+        out.push(Sentence {
+            range,
+            embedded_enders: false,
+            end,
+        });
+    }
+}
+
+/// `breaks` を昇順に並べて重複を除く
+///
+/// # Panics
+///
+/// `breaks` の位置が `text` の文字の境界でない（長さを超える場合を含む）とき。
+fn sorted_breaks(text: &str, breaks: &[usize]) -> Vec<usize> {
+    let mut breaks = breaks.to_vec();
+    breaks.sort_unstable();
+    breaks.dedup();
+    for &pos in &breaks {
+        assert!(
+            text.is_char_boundary(pos),
+            "改行とみなす位置 {pos} が入力の文字の境界でない（入力は {} バイト）",
+            text.len()
+        );
+    }
+    breaks
 }
 
 /// ASCII の `!` `?` の連続が、直後の文字 `next` のもとで文末として働くか（規則 4）
@@ -845,6 +1013,69 @@ mod tests {
             .into_iter()
             .map(|s| &text[s.range])
             .collect()
+    }
+
+    /// 既定の設定で分けた断片の文字列（断片が文をさらに区切ったものになっていることも確かめる）
+    fn fragments(text: &str) -> Vec<&str> {
+        fragments_with(text, &SplitOptions::default())
+    }
+
+    fn fragments_with<'t>(text: &'t str, options: &SplitOptions<'_>) -> Vec<&'t str> {
+        let splitter = Splitter::new(options);
+        let fragments = splitter.split_fragments(text);
+        assert_fragments_subdivide(text, &splitter.split(text), &fragments);
+        fragments.into_iter().map(|s| &text[s.range]).collect()
+    }
+
+    /// 断片 `fragments` が文 `sentences` をさらに区切ったものか確かめる
+    ///
+    /// - どの断片もどれか 1 つの文に収まり、文の始まりと終わりは断片の境界になる。断片の間は空白だけ
+    /// - 文の中の区切りは、文末記号か閉じ括弧の直後にある。文の 2 番目以降の断片は文末記号と閉じ括弧
+    ///   だけにならない
+    /// - 括弧の内側に文末記号のない文は、文と同じ 1 つの断片になる。断片の embedded_enders は偽
+    fn assert_fragments_subdivide(text: &str, sentences: &[Sentence], fragments: &[Sentence]) {
+        let is_mark = |c: char| is_sentence_ender(c) || is_closing_bracket(c);
+        let mut rest = fragments;
+        for s in sentences {
+            let n = rest
+                .iter()
+                .take_while(|f| f.range.end <= s.range.end)
+                .count();
+            let (inside, after) = rest.split_at(n);
+            assert!(n > 0, "{text:?}: 文 {s:?} に断片がない");
+            assert_eq!(inside[0].range.start, s.range.start, "{text:?}: {s:?}");
+            assert_eq!(inside[n - 1].range.end, s.range.end, "{text:?}: {s:?}");
+            for f in inside {
+                assert!(f.range.start < f.range.end, "{text:?}: {f:?}");
+                assert!(!f.embedded_enders, "{text:?}: {f:?}");
+            }
+            for pair in inside.windows(2) {
+                let (prev, next) = (&pair[0], &pair[1]);
+                assert!(prev.range.end <= next.range.start, "{text:?}: {pair:?}");
+                assert!(
+                    text[prev.range.end..next.range.start].trim().is_empty(),
+                    "{text:?}: {pair:?}"
+                );
+                assert!(
+                    text[..prev.range.end]
+                        .chars()
+                        .next_back()
+                        .is_some_and(is_mark),
+                    "{text:?}: {pair:?}"
+                );
+                assert!(
+                    !text[next.range.clone()]
+                        .chars()
+                        .all(|c| c.is_whitespace() || is_mark(c)),
+                    "{text:?}: {pair:?}"
+                );
+            }
+            if !s.embedded_enders {
+                assert_eq!(inside, std::slice::from_ref(s), "{text:?}");
+            }
+            rest = after;
+        }
+        assert!(rest.is_empty(), "{text:?}: 文の外の断片 {rest:?}");
     }
 
     /// chunk_ends の区間の文字列
@@ -1575,6 +1806,313 @@ mod tests {
     #[should_panic(expected = "文字の境界でない")]
     fn test_split_with_breaks_rejects_positions_inside_characters() {
         Splitter::default().split_with_breaks("一二", &[1]);
+    }
+
+    // --- 断片（括弧の中の文末でも区切る。Issue #9） ---
+
+    #[test]
+    fn test_fragments_split_at_enders_inside_brackets() {
+        assert_eq!(
+            fragments("彼は「今日は休む。明日は行く。」と言った。"),
+            ["彼は「今日は休む。", "明日は行く。」", "と言った。"]
+        );
+        // 会話の 1 行
+        assert_eq!(
+            fragments("「駅に集まる。点呼を取る。バスで向かう。」"),
+            ["「駅に集まる。", "点呼を取る。", "バスで向かう。」"]
+        );
+        assert_eq!(
+            fragments("注意（詳細は後述。）を読む。"),
+            ["注意（詳細は後述。）", "を読む。"]
+        );
+        // 括弧の外側の文末は文と同じ
+        let text = "これが最初の文。「これは二番目の文」。対応しない」閉じ括弧。";
+        assert_eq!(fragments(text), texts(text));
+        // 括弧の内側に文末記号のない文はそのまま
+        assert_eq!(
+            fragments("「こんにちは」と言った。"),
+            ["「こんにちは」と言った。"]
+        );
+        assert!(fragments("").is_empty());
+        assert!(fragments(" \n ").is_empty());
+    }
+
+    #[test]
+    fn test_fragments_in_nested_brackets() {
+        assert_eq!(
+            fragments("彼は『本当？「嘘だ！」』と言った。次。"),
+            ["彼は『本当？", "「嘘だ！」』", "と言った。", "次。"]
+        );
+        assert_eq!(
+            fragments("『「一。二。」三。』四。"),
+            ["『「一。", "二。」", "三。』", "四。"]
+        );
+        // 入れ子の崩れ（「 と 」 が対応し、間の（ は対応なし）・閉じ忘れは文と同じ対応の取り方
+        assert_eq!(
+            fragments("「前（中。」後。次の文。"),
+            ["「前（中。」", "後。", "次の文。"]
+        );
+        assert_eq!(
+            fragments("1) 手順を読む。「閉じ忘れ。次の文。"),
+            ["1) 手順を読む。", "「閉じ忘れ。", "次の文。"]
+        );
+    }
+
+    #[test]
+    fn test_fragments_keep_following_closing_brackets_and_enders() {
+        // 閉じ括弧の連続
+        assert_eq!(fragments("「あ『い。』」う。"), ["「あ『い。』」", "う。"]);
+        // 閉じ括弧の後ろの文末記号も、文の終わりまで前の断片に含める
+        assert_eq!(fragments("「はい。」。次。"), ["「はい。」。", "次。"]);
+        assert_eq!(
+            fragments("（「はい。」。）後。"),
+            ["（「はい。」。）", "後。"]
+        );
+        assert_eq!(fragments("「本当？！」！？次"), ["「本当？！」！？", "次"]);
+        // 文末記号と閉じ括弧だけの区間は、同じ文の前の断片に含める
+        assert_eq!(fragments("「はい。」 。次。"), ["「はい。」 。", "次。"]);
+        assert_eq!(fragments("「はい。」\u{3000}」"), ["「はい。」\u{3000}」"]);
+        // 文の終わりは越えない（文でも `。` は 1 文になる）
+        assert_eq!(texts("「はい。」。」。次"), ["「はい。」。」", "。", "次"]);
+        assert_eq!(
+            fragments("「はい。」。」。次"),
+            ["「はい。」。」", "。", "次"]
+        );
+        // 空白を挟んだ閉じ括弧は次の断片に入る（文の規則 5 と同じく隙間なく続くものだけ）
+        assert_eq!(
+            fragments("「今日は休む。 」と言った。"),
+            ["「今日は休む。", "」と言った。"]
+        );
+    }
+
+    #[test]
+    fn test_fragments_do_not_split_exception_words() {
+        assert_eq!(
+            fragments("彼は「Yahoo!ニュースを見た。モーニング娘。のライブにも行った。」と言った。"),
+            [
+                "彼は「Yahoo!ニュースを見た。",
+                "モーニング娘。のライブにも行った。」",
+                "と言った。"
+            ]
+        );
+        assert_eq!(
+            fragments("（Hey!Say!JUMPのライブ。けいおん!の話。）"),
+            ["（Hey!Say!JUMPのライブ。", "けいおん!の話。）"]
+        );
+        // 語の末尾の文末記号の直後が閉じ括弧なら、文の判定（embedded_enders）と同じく文末として働く
+        let text = "「モーニング娘。」が好きだ。";
+        assert!(split(text, &SplitOptions::default())[0].embedded_enders);
+        assert_eq!(fragments(text), ["「モーニング娘。」", "が好きだ。"]);
+        // 利用者が加える語
+        let options = SplitOptions {
+            extra_exceptions: &["テスト語！"],
+            use_builtin_exceptions: false,
+            ..SplitOptions::default()
+        };
+        assert_eq!(
+            fragments_with("「テスト語！の続き。次。」", &options),
+            ["「テスト語！の続き。", "次。」"]
+        );
+    }
+
+    #[test]
+    fn test_fragments_use_the_same_enders_as_sentences() {
+        // URL の ?・小数点では区切らない
+        assert_eq!(
+            fragments("（https://example.com/?q=1 を参照。円周率は３．１４。）次。"),
+            [
+                "（https://example.com/?q=1 を参照。",
+                "円周率は３．１４。）",
+                "次。"
+            ]
+        );
+        // 規則 4 は括弧の内側でも直後の字で決める
+        assert_eq!(fragments("(本当?) 次。"), ["(本当?)", "次。"]);
+        assert_eq!(fragments("「what?!x と書く。」"), ["「what?!x と書く。」"]);
+        assert_eq!(fragments("「本当?!次」"), ["「本当?!", "次」"]);
+    }
+
+    #[test]
+    fn test_fragments_follow_line_breaks_of_sentences() {
+        // 既定では改行で区切らない
+        assert_eq!(
+            fragments("「一行目。\n二行目」と書いた\n次の行。"),
+            ["「一行目。", "二行目」と書いた\n次の行。"]
+        );
+        // LineBreaks::Split でも括弧の内側の改行では区切らない。CRLF は 1 つの改行
+        let options = SplitOptions {
+            line_breaks: LineBreaks::Split,
+            ..SplitOptions::default()
+        };
+        assert_eq!(
+            fragments_with("「一行目。\n二行目\n三行目。」と書いた\n次の行", &options),
+            ["「一行目。", "二行目\n三行目。」", "と書いた", "次の行"]
+        );
+        assert_eq!(
+            fragments_with("「一。二。」\r\n\r\n次", &options),
+            ["「一。", "二。」", "次"]
+        );
+        let ends: Vec<SentenceEnd> = Splitter::new(&options)
+            .split_fragments("「一。二。」と\n三")
+            .into_iter()
+            .map(|s| s.end)
+            .collect();
+        assert_eq!(
+            ends,
+            [
+                SentenceEnd::Ender,
+                SentenceEnd::Ender,
+                SentenceEnd::LineBreak,
+                SentenceEnd::EndOfText
+            ]
+        );
+    }
+
+    #[test]
+    fn test_fragment_ranges_exclude_surrounding_whitespace() {
+        let text = "  「一。 \u{3000}二。」\n\tと言った。  ";
+        let fragments = Splitter::default().split_fragments(text);
+        let strs: Vec<&str> = fragments.iter().map(|s| &text[s.range.clone()]).collect();
+        assert_eq!(strs, ["「一。", "二。」", "と言った。"]);
+        assert_eq!(fragments[0].range, 2..2 + "「一。".len());
+        assert_fragments_subdivide(text, &Splitter::default().split(text), &fragments);
+    }
+
+    #[test]
+    fn test_split_fragments_with_breaks() {
+        let splitter = Splitter::default();
+        let with = |text: &str, breaks: &[usize]| -> Vec<String> {
+            let fragments = splitter.split_fragments_with_breaks(text, breaks);
+            let sentences = splitter.split_with_breaks(text, breaks);
+            assert_fragments_subdivide(text, &sentences, &fragments);
+            fragments
+                .into_iter()
+                .map(|s| text[s.range].to_string())
+                .collect()
+        };
+        // 括弧の内側の位置では区切らず、外側の位置では区切る
+        let text = "「一行目。二行目」と書いた次の行";
+        assert_eq!(
+            with(
+                text,
+                &["「一行目".len(), "「一行目。二行目」と書いた".len()]
+            ),
+            ["「一行目。", "二行目」と書いた", "次の行"]
+        );
+        // 開き括弧の直前は括弧の外側。順不同・重複してもよい
+        let text = "前「中。中」後";
+        assert_eq!(
+            with(text, &["前".len(), text.len(), "前".len()]),
+            ["前", "「中。", "中」後"]
+        );
+    }
+
+    #[test]
+    fn test_split_fragments_with_breaks_matches_line_break_characters() {
+        // 改行の字を取り除いて位置を渡した断片は、改行の字を残して LineBreaks::Split で分けた断片と
+        // 同じになる（範囲は取り除いた分だけずれる）
+        let options = SplitOptions {
+            line_breaks: LineBreaks::Split,
+            ..SplitOptions::default()
+        };
+        let splitter = Splitter::default();
+        for text in [
+            "「一行目の途中で\n続く文。二文目」\n「括弧の\n内側。」の後\n末尾",
+            "\n「先頭の改行\n\n空行。」Yahoo!\nニュース",
+            "「休む。\n」と言った。「はい。」\n。",
+        ] {
+            let expected: Vec<String> = fragments_with(text, &options)
+                .into_iter()
+                .map(|s| s.replace('\n', ""))
+                .collect();
+            let joined: String = text.split('\n').collect();
+            let mut breaks = Vec::new();
+            let mut pos = 0;
+            for line in text.split('\n') {
+                pos += line.len();
+                breaks.push(pos);
+            }
+            breaks.pop();
+            let got: Vec<&str> = splitter
+                .split_fragments_with_breaks(&joined, &breaks)
+                .into_iter()
+                .map(|s| &joined[s.range])
+                .collect();
+            assert_eq!(got, expected, "{text:?}");
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "文字の境界でない")]
+    fn test_split_fragments_with_breaks_rejects_positions_inside_characters() {
+        Splitter::default().split_fragments_with_breaks("一二", &[1]);
+    }
+
+    #[test]
+    fn test_fragments_subdivide_sentences_of_random_text() {
+        // 文と同じ字の集合（括弧・文末記号・改行・空白・例外語）を並べた入力で、どの設定でも断片が文を
+        // さらに区切ったものになる
+        let alphabet = [
+            "あ",
+            "a",
+            "。",
+            "！",
+            "？",
+            "!",
+            "?",
+            "．",
+            "３",
+            "「",
+            "」",
+            "『",
+            "』",
+            "（",
+            "）",
+            "(",
+            ")",
+            "〝",
+            "〞",
+            "\n",
+            "\r\n",
+            " ",
+            "\u{3000}",
+            "Yahoo!",
+            "モーニング娘。",
+            "の",
+            "テスト語！",
+        ];
+        let options = [
+            SplitOptions::default(),
+            SplitOptions {
+                line_breaks: LineBreaks::Split,
+                ..SplitOptions::default()
+            },
+            SplitOptions {
+                extra_exceptions: &["テスト語！", "語！。語"],
+                use_builtin_exceptions: false,
+                ..SplitOptions::default()
+            },
+        ];
+        let splitters = options.each_ref().map(Splitter::new);
+        let mut random = rng(0x1234_5678_9ABC_DEF1);
+        for _ in 0..4_000 {
+            let len = random() as usize % 30;
+            let text: String = (0..len)
+                .map(|_| alphabet[random() as usize % alphabet.len()])
+                .collect();
+            // 位置を渡す改行は文字の境界から選ぶ
+            let bounds: Vec<usize> = text.char_indices().map(|(i, _)| i).collect();
+            for splitter in &splitters {
+                let fragments = splitter.split_fragments(&text);
+                assert_fragments_subdivide(&text, &splitter.split(&text), &fragments);
+                let breaks: Vec<usize> = (0..random() % 3)
+                    .filter_map(|_| bounds.get(random() as usize % bounds.len().max(1)).copied())
+                    .collect();
+                let fragments = splitter.split_fragments_with_breaks(&text, &breaks);
+                let sentences = splitter.split_with_breaks(&text, &breaks);
+                assert_fragments_subdivide(&text, &sentences, &fragments);
+            }
+        }
     }
 
     // --- 要望書 H20: 例外表の版の識別子 ---
