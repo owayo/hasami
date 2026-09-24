@@ -1,10 +1,7 @@
 //! アナライザー - 形態素解析の高レベルAPI
 
-use crate::char_class::CharClassifier;
-use crate::dict::Dictionary;
+use crate::hsd::{DictError, Dictionary};
 use crate::lattice::{LatticeWorkspace, Token};
-use crate::mmap_dict::MmapDictionary;
-use std::io;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -12,21 +9,6 @@ use std::sync::Arc;
 #[inline]
 fn is_sentence_boundary(c: char) -> bool {
     matches!(c, '。' | '！' | '？' | '!' | '?' | '\n')
-}
-
-/// mmap辞書バックエンドの共有データ（Arc で複数 Analyzer から共有可能）
-pub struct SharedMmapBackend {
-    pub dict: MmapDictionary,
-    pub classifier: CharClassifier,
-}
-
-/// 辞書バックエンド
-#[derive(Clone)]
-enum DictBackend {
-    /// mmap辞書（本番用、ゼロコピー高速）。Arc共有で複数スレッドからアクセス可能
-    Mmap(Arc<SharedMmapBackend>),
-    /// インメモリ辞書（テスト用）
-    InMemory(Arc<Dictionary>),
 }
 
 /// 形態素解析器
@@ -49,8 +31,13 @@ enum DictBackend {
 ///     }
 /// });
 /// ```
+///
+/// # 辞書ファイルの扱い
+/// 辞書は mmap で読み込む。読み込み中の辞書ファイルを書き換えたり切り詰めたりしてはいけない
+/// （未定義動作になりうる）。辞書を更新するときは別名で書いてから rename で差し替える
+/// （`hasami build` / `merge` / `repair` の出力はそうしている）。
 pub struct Analyzer {
-    backend: DictBackend,
+    dict: Arc<Dictionary>,
     workspace: LatticeWorkspace,
 }
 
@@ -60,7 +47,7 @@ impl Clone for Analyzer {
     /// 辞書は `Arc` 共有のためゼロコピー。ワークスペースのみ新規確保される。
     fn clone(&self) -> Self {
         Analyzer {
-            backend: self.backend.clone(),
+            dict: Arc::clone(&self.dict),
             workspace: LatticeWorkspace::new(),
         }
     }
@@ -68,93 +55,106 @@ impl Clone for Analyzer {
 
 impl Analyzer {
     /// .hsd 辞書ファイルからアナライザーを生成
-    pub fn load<P: AsRef<Path>>(dict_path: P) -> io::Result<Self> {
-        let dict = MmapDictionary::load(dict_path)?;
-        let classifier = dict.build_classifier();
-        Ok(Analyzer {
-            backend: DictBackend::Mmap(Arc::new(SharedMmapBackend { dict, classifier })),
-            workspace: LatticeWorkspace::new(),
-        })
+    pub fn load<P: AsRef<Path>>(dict_path: P) -> Result<Self, DictError> {
+        Ok(Self::from_dict(Dictionary::load(dict_path)?))
     }
 
-    /// 辞書オブジェクトから直接生成（テスト用）
+    /// 辞書から生成（`DictBuilder::build` で作ったメモリ上の辞書など）
     pub fn from_dict(dict: Dictionary) -> Self {
+        Self::from_shared(Arc::new(dict))
+    }
+
+    /// 共有の辞書から生成
+    pub fn from_shared(dict: Arc<Dictionary>) -> Self {
         Analyzer {
-            backend: DictBackend::InMemory(Arc::new(dict)),
+            dict,
             workspace: LatticeWorkspace::new(),
         }
     }
 
-    /// mmap 辞書の Arc<str> キャッシュを事前構築する
+    /// 使っている辞書
+    pub fn dictionary(&self) -> &Arc<Dictionary> {
+        &self.dict
+    }
+
+    /// 解析で最初に触れる辞書のページを先に読み込む
     ///
-    /// 並行解析で複数スレッドから同時にアクセスする場合、初回のキャッシュ構築が
-    /// 1スレッドにシリアライズされてしまう。事前にキャッシュを温めることで
-    /// 初回並列リクエストのレイテンシスパイクを回避できる。
-    ///
-    /// インメモリ辞書の場合は何もしない。
+    /// mmap した辞書は触れたページから読み込まれるので、起動直後の最初の解析が遅くなる。
+    /// 待ち時間を先に払っておきたいとき（サーバーの起動時など）に呼ぶ。
     pub fn prewarm(&self) {
-        if let DictBackend::Mmap(shared) = &self.backend {
-            shared.dict.prewarm_arc_cache();
-        }
+        self.dict.prewarm();
     }
 
     /// テキストを形態素解析（文分割で高速化）
+    ///
+    /// # Panics
+    /// 辞書に不正な参照を見つけたとき（壊れた辞書）。`hasami info --verify` で検証済みの辞書では
+    /// 起きない。検証していない辞書を扱うなら [`Analyzer::try_tokenize`] を使う。
     pub fn tokenize(&mut self, input: &str) -> Vec<Token> {
+        self.try_tokenize(input)
+            .unwrap_or_else(|e| panic!("hasami: {e}"))
+    }
+
+    /// テキストを形態素解析する。辞書に不正な参照を見つけたらエラーを返す
+    pub fn try_tokenize(&mut self, input: &str) -> Result<Vec<Token>, DictError> {
         if input.is_empty() {
-            return vec![];
+            return Ok(Vec::new());
         }
         self.tokenize_sentences(input)
     }
 
     /// テキストを文境界で分割して各文を独立に解析
-    fn tokenize_sentences(&mut self, input: &str) -> Vec<Token> {
+    fn tokenize_sentences(&mut self, input: &str) -> Result<Vec<Token>, DictError> {
         let mut all_tokens = Vec::with_capacity(input.len() / 3);
         let mut seg_start = 0;
 
         for (i, c) in input.char_indices() {
             if is_sentence_boundary(c) {
                 let seg_end = i + c.len_utf8();
-                let segment = &input[seg_start..seg_end];
-                if !segment.is_empty() {
-                    let tokens = self.tokenize_segment(segment);
-                    for mut t in tokens {
-                        t.start += seg_start;
-                        t.end += seg_start;
-                        all_tokens.push(t);
-                    }
-                }
+                self.push_segment(input, seg_start, seg_end, &mut all_tokens)?;
                 seg_start = seg_end;
             }
         }
 
         // 最後のセグメント
         if seg_start < input.len() {
-            let segment = &input[seg_start..];
-            let tokens = self.tokenize_segment(segment);
-            for mut t in tokens {
-                t.start += seg_start;
-                t.end += seg_start;
-                all_tokens.push(t);
-            }
+            self.push_segment(input, seg_start, input.len(), &mut all_tokens)?;
         }
 
-        all_tokens
+        Ok(all_tokens)
     }
 
-    #[inline]
-    fn tokenize_segment(&mut self, segment: &str) -> Vec<Token> {
-        match &self.backend {
-            DictBackend::Mmap(shared) => {
-                self.workspace
-                    .tokenize_v2(segment, &shared.dict, &shared.classifier)
-            }
-            DictBackend::InMemory(dict) => self.workspace.tokenize(segment, dict),
-        }
+    /// input[start..end] を解析し、位置を入力全体のバイト位置にずらして足す
+    fn push_segment(
+        &mut self,
+        input: &str,
+        start: usize,
+        end: usize,
+        out: &mut Vec<Token>,
+    ) -> Result<(), DictError> {
+        let tokens = self.workspace.tokenize(&input[start..end], &self.dict)?;
+        out.extend(tokens.into_iter().map(|mut t| {
+            t.start += start;
+            t.end += start;
+            t
+        }));
+        Ok(())
     }
 
     /// 複数テキストをバッチ処理
+    ///
+    /// # Panics
+    /// [`Analyzer::tokenize`] と同じ
     pub fn tokenize_batch(&mut self, inputs: &[&str]) -> Vec<Vec<Token>> {
         inputs.iter().map(|input| self.tokenize(input)).collect()
+    }
+
+    /// 複数テキストをバッチ処理する。辞書に不正な参照を見つけたらエラーを返す
+    pub fn try_tokenize_batch(&mut self, inputs: &[&str]) -> Result<Vec<Vec<Token>>, DictError> {
+        inputs
+            .iter()
+            .map(|input| self.try_tokenize(input))
+            .collect()
     }
 }
 
@@ -219,10 +219,11 @@ mod tests {
                 base_form: surface.into(),
                 reading: reading.into(),
                 pronunciation: reading.into(),
+                ..Default::default()
             });
         }
 
-        Analyzer::from_dict(builder.build())
+        Analyzer::from_dict(builder.build().unwrap())
     }
 
     #[test]

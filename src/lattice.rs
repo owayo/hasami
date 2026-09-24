@@ -1,7 +1,7 @@
 //! ラティス構築 + Viterbi デコーディング（最適化版）
 
-use crate::char_class::{ALL_CHAR_TYPES, CharType, type_index};
-use crate::dict::Dictionary;
+use crate::char_class::{CharType, type_index};
+use crate::hsd::{DictError, Dictionary};
 use std::sync::{Arc, LazyLock};
 
 /// トークン（形態素解析結果の1単位）
@@ -13,8 +13,12 @@ pub struct Token {
     pub start: usize,
     /// 終了バイト位置
     pub end: usize,
-    /// 品詞情報
+    /// 品詞情報（品詞と細分類 3 つをカンマでつないだもの。無い細分類は `*`）
     pub pos: Arc<str>,
+    /// 活用型（MeCab 形式 CSV の 9 列目。「五段・ラ行」など）。活用しない語・未知語は空文字列
+    pub conj_type: Arc<str>,
+    /// 活用形（MeCab 形式 CSV の 10 列目。「連用形」など）。活用しない語・未知語は空文字列
+    pub conj_form: Arc<str>,
     /// 原形
     pub base_form: Arc<str>,
     /// 読み
@@ -27,14 +31,6 @@ pub struct Token {
     pub is_known: bool,
 }
 
-/// 未知語品詞のグローバルArc（一度だけ生成、以降はArc::clone）
-static UNK_POS_NOUN_GENERAL: LazyLock<Arc<str>> = LazyLock::new(|| Arc::from("名詞,一般,*,*"));
-static UNK_POS_NOUN_PROPER_ORG: LazyLock<Arc<str>> =
-    LazyLock::new(|| Arc::from("名詞,固有名詞,組織,*"));
-static UNK_POS_NOUN_NUMBER: LazyLock<Arc<str>> = LazyLock::new(|| Arc::from("名詞,数,*,*"));
-static UNK_POS_SYMBOL_GENERAL: LazyLock<Arc<str>> = LazyLock::new(|| Arc::from("記号,一般,*,*"));
-static UNK_POS_SYMBOL_SPACE: LazyLock<Arc<str>> = LazyLock::new(|| Arc::from("記号,空白,*,*"));
-static UNK_POS_NOUN_SAHEN: LazyLock<Arc<str>> = LazyLock::new(|| Arc::from("名詞,サ変接続,*,*"));
 static EMPTY_ARC: LazyLock<Arc<str>> = LazyLock::new(|| Arc::from(""));
 
 /// アルファベット1文字のカタカナ読みを返す
@@ -404,14 +400,12 @@ fn alphabet_reading(surface: &str) -> Option<Arc<str>> {
 struct LatticeNode {
     start: u32,
     end: u32,
-    /// 辞書エントリID。BOUNDARY_ID = BOS/EOS、UNK_FLAG付き = 未知語
+    /// 辞書エントリの番号。BOUNDARY_ID = BOS/EOS、UNK_FLAG付き = 未知語
     entry_id: u32,
     left_id: u16,
     right_id: u16,
     word_cost: i16,
     char_type: CharType,
-    /// 未知語テンプレートインデックス（unk_table内のインデックス）
-    unk_template_idx: u8,
 }
 
 const BOUNDARY_ID: u32 = u32::MAX;
@@ -430,66 +424,6 @@ impl LatticeNode {
     }
 }
 
-/// CharType ごとの未知語パラメータ（事前計算テーブル用）
-#[derive(Clone)]
-struct UnkParams {
-    left_id: u16,
-    right_id: u16,
-    cost: i16,
-    pos: Arc<str>,
-}
-
-/// CharType ごとの未知語テンプレート一覧＋invokeフラグ
-#[derive(Clone)]
-struct UnkTemplates {
-    templates: Vec<UnkParams>,
-    invoke: bool,
-}
-
-const NUM_CHAR_TYPES: usize = 9;
-
-/// 辞書から未知語パラメータの事前計算テーブルを構築（全テンプレートを保持）
-fn build_unk_table(dict: &Dictionary) -> Vec<UnkTemplates> {
-    let mut table: Vec<UnkTemplates> = (0..NUM_CHAR_TYPES)
-        .map(|_| UnkTemplates {
-            templates: Vec::new(),
-            invoke: false,
-        })
-        .collect();
-
-    for &ct in &ALL_CHAR_TYPES {
-        let idx = type_index(ct);
-        let class_name = ct.class_name();
-        let invoke = dict
-            .char_classifier
-            .get_class(class_name)
-            .is_some_and(|cl| cl.invoke);
-
-        let templates = if let Some(unk_entries) = dict.unk_entries.get(class_name) {
-            unk_entries
-                .iter()
-                .map(|unk| UnkParams {
-                    left_id: unk.left_id,
-                    right_id: unk.right_id,
-                    cost: unk.cost,
-                    pos: Arc::from(unk.pos.as_str()),
-                })
-                .collect()
-        } else {
-            // フォールバック: デフォルトコスト＋デフォルトPOSで1テンプレート
-            vec![UnkParams {
-                left_id: 0,
-                right_id: 0,
-                cost: LatticeWorkspace::default_unk_cost(ct),
-                pos: LatticeWorkspace::unk_pos_arc(ct),
-            }]
-        };
-
-        table[idx] = UnkTemplates { templates, invoke };
-    }
-    table
-}
-
 /// 再利用可能なラティスワークスペース
 pub struct LatticeWorkspace {
     nodes: Vec<LatticeNode>,
@@ -499,8 +433,6 @@ pub struct LatticeWorkspace {
     prevs: Vec<u32>,
     /// end_nodes[byte_pos] = そのバイト位置で終了するノードインデックスのリスト
     end_nodes: Vec<Vec<u32>>,
-    /// 未知語パラメータの事前計算テーブル（辞書ロード後に初期化、全テンプレート保持）
-    unk_table: Option<Vec<UnkTemplates>>,
 }
 
 impl LatticeWorkspace {
@@ -510,7 +442,6 @@ impl LatticeWorkspace {
             costs: Vec::with_capacity(4096),
             prevs: Vec::with_capacity(4096),
             end_nodes: Vec::with_capacity(1024),
-            unk_table: None,
         }
     }
 
@@ -538,15 +469,17 @@ impl LatticeWorkspace {
         self.end_nodes[end_pos].push(idx);
     }
 
-    /// ラティスを構築してViterbiで最適パスを探索
-    pub fn tokenize(&mut self, input: &str, dict: &Dictionary) -> Vec<Token> {
+    /// ラティスを構築して Viterbi で最良パスを求める
+    ///
+    /// 辞書の不正な参照（範囲外の群・文脈 ID・素性レコード、壊れた trie）を見つけたら
+    /// [`DictError::Corrupt`] を返す。検証済みの辞書（`hasami info --verify`）では起きない。
+    pub fn tokenize(&mut self, input: &str, dict: &Dictionary) -> Result<Vec<Token>, DictError> {
         if input.is_empty() {
-            return vec![];
+            return Ok(Vec::new());
         }
-
+        let view = dict.view();
+        let classifier = dict.classifier();
         let byte_len = input.len();
-        let bytes = input.as_bytes();
-
         self.clear(byte_len);
 
         // BOS ノード
@@ -560,408 +493,116 @@ impl LatticeWorkspace {
                 right_id: 0,
                 word_cost: 0,
                 char_type: CharType::Default,
-                unk_template_idx: 0,
             },
-            0, // BOS total_cost = 0
+            0,
         );
-
-        // 未知語テーブルを初期化（初回のみ、以降はキャッシュ）
-        // take() で一時的に所有権を移し、借用の競合を回避
-        if self.unk_table.is_none() {
-            self.unk_table = Some(build_unk_table(dict));
-        }
-        let unk_table = self.unk_table.take().unwrap();
 
         // 各文字位置から辞書引き + 未知語生成
         for (byte_pos, c) in input.char_indices() {
             let mut has_known = false;
+            let mut corrupt: Option<DictError> = None;
 
-            // 辞書引き（コールバック方式、ゼロアロケーション）
-            dict.trie
-                .common_prefix_search_cb(&bytes[byte_pos..], |match_len, entry_ids| {
-                    let end = byte_pos + match_len;
-                    for &eid in entry_ids {
-                        let entry = &dict.entries[eid as usize];
+            // 群 = trie の値が指すエントリから、群の最後の印が立つエントリまで
+            view.trie
+                .common_prefix_search(input, byte_pos, |end, group| {
+                    if corrupt.is_some() {
+                        return;
+                    }
+                    let mut id = group as usize;
+                    loop {
+                        let Some(e) = view.entries.get(id) else {
+                            corrupt = Some(DictError::corrupt(format!(
+                                "group at {group} runs past the last entry"
+                            )));
+                            return;
+                        };
+                        let (left_id, right_id) = (e.left_id(), e.right_id);
+                        if left_id as usize >= view.num_left || right_id as usize >= view.num_right
+                        {
+                            corrupt = Some(DictError::corrupt(format!(
+                                "entry {id} has context IDs outside the matrix"
+                            )));
+                            return;
+                        }
                         self.add_node(
                             end,
                             LatticeNode {
                                 start: byte_pos as u32,
                                 end: end as u32,
-                                entry_id: eid,
-                                left_id: entry.left_id,
-                                right_id: entry.right_id,
-                                word_cost: entry.cost,
+                                entry_id: id as u32,
+                                left_id,
+                                right_id,
+                                word_cost: e.cost,
                                 char_type: CharType::Default,
-                                unk_template_idx: 0,
                             },
                             i64::MAX,
                         );
                         has_known = true;
+                        if e.is_last() {
+                            break;
+                        }
+                        id += 1;
                     }
-                });
+                })?;
+            if let Some(e) = corrupt {
+                return Err(e);
+            }
 
-            // 未知語処理（事前計算テーブルで O(1) ルックアップ、全テンプレート展開）
-            let char_type = dict.char_classifier.classify_char(c);
-            let unk_templates = &unk_table[type_index(char_type)];
-
-            if unk_templates.invoke || !has_known {
+            // 未知語処理（文字種ごとの先頭のテンプレートだけを使う）
+            let char_type = classifier.classify_char(c);
+            let unk = dict.unk_info(type_index(char_type));
+            if unk.invoke || !has_known {
                 let single_len = c.len_utf8();
-
-                // 最もコストの低いテンプレート1つだけ使用（速度優先）
-                let tmpl = &unk_templates.templates[0];
-                let left_id = tmpl.left_id;
-                let right_id = tmpl.right_id;
-                let cost = tmpl.cost;
-
-                let mut added_single = false;
+                let (left_id, right_id, cost) = (unk.left_id, unk.right_id, unk.cost);
+                let unk_node = |end: usize| LatticeNode {
+                    start: byte_pos as u32,
+                    end: end as u32,
+                    entry_id: UNK_FLAG,
+                    left_id,
+                    right_id,
+                    word_cost: cost,
+                    char_type,
+                };
 
                 // コールバックで直接ノード追加（Vec アロケーション排除）
-                dict.char_classifier
-                    .group_at_cb(input, byte_pos, |group_len, _| {
-                        let end = byte_pos + group_len;
-                        if group_len == single_len {
-                            added_single = true;
-                        }
-                        self.add_node(
-                            end,
-                            LatticeNode {
-                                start: byte_pos as u32,
-                                end: end as u32,
-                                entry_id: UNK_FLAG,
-                                left_id,
-                                right_id,
-                                word_cost: cost,
-                                char_type,
-                                unk_template_idx: 0,
-                            },
-                            i64::MAX,
-                        );
-                    });
-
-                // 1文字未知語がまだなければ追加
-                if !added_single {
-                    let single_end = byte_pos + single_len;
-                    self.add_node(
-                        single_end,
-                        LatticeNode {
-                            start: byte_pos as u32,
-                            end: single_end as u32,
-                            entry_id: UNK_FLAG,
-                            left_id,
-                            right_id,
-                            word_cost: cost,
-                            char_type,
-                            unk_template_idx: 0,
-                        },
-                        i64::MAX,
-                    );
-                }
-            }
-        }
-
-        // 未知語テーブルを戻す（次回再利用のため）
-        self.unk_table = Some(unk_table);
-
-        // --- Viterbi forward pass (separate costs/prevs arrays for cache locality) ---
-        for end_pos in 1..=byte_len {
-            let num_nodes = self.end_nodes[end_pos].len();
-            if num_nodes == 0 {
-                continue;
-            }
-            for ni_idx in 0..num_nodes {
-                let node_idx = self.end_nodes[end_pos][ni_idx] as usize;
-                let node_start = self.nodes[node_idx].start as usize;
-                let node_left_id = self.nodes[node_idx].left_id as usize;
-                let node_word_cost = self.nodes[node_idx].word_cost as i64;
-
-                let mut best_cost = i64::MAX;
-                let mut best_prev = NO_PREV;
-
-                let num_prev = self.end_nodes[node_start].len();
-                for pi_idx in 0..num_prev {
-                    let prev_idx = self.end_nodes[node_start][pi_idx] as usize;
-                    let prev_total = self.costs[prev_idx];
-                    if prev_total == i64::MAX {
-                        continue;
-                    }
-
-                    let prev_right_id = self.nodes[prev_idx].right_id;
-                    let row = dict.matrix.row(prev_right_id);
-                    let conn_cost = if node_left_id < row.len() {
-                        unsafe { *row.get_unchecked(node_left_id) as i64 }
-                    } else {
-                        0i64
-                    };
-                    let total = prev_total + conn_cost + node_word_cost;
-
-                    if total < best_cost {
-                        best_cost = total;
-                        best_prev = prev_idx as u32;
-                    }
-                }
-
-                self.costs[node_idx] = best_cost;
-                self.prevs[node_idx] = best_prev;
-            }
-        }
-
-        // --- EOS 最良前ノード決定 ---
-        let num_last = self.end_nodes[byte_len].len();
-        let mut best_cost = i64::MAX;
-        let mut best_last = NO_PREV;
-
-        for pi_idx in 0..num_last {
-            let prev_idx = self.end_nodes[byte_len][pi_idx] as usize;
-            let prev_total = self.costs[prev_idx];
-            if prev_total == i64::MAX {
-                continue;
-            }
-            let prev_right_id = self.nodes[prev_idx].right_id;
-            let row = dict.matrix.row(prev_right_id);
-            let conn_cost = if !row.is_empty() { row[0] as i64 } else { 0i64 };
-            let total = prev_total + conn_cost;
-
-            if total < best_cost {
-                best_cost = total;
-                best_last = prev_idx as u32;
-            }
-        }
-
-        // --- トレースバック ---
-        let mut path = Vec::with_capacity(32);
-        let mut current = best_last;
-
-        while current != NO_PREV {
-            let ci = current as usize;
-            if self.nodes[ci].is_boundary() {
-                break;
-            }
-            path.push(current);
-            current = self.prevs[ci];
-        }
-
-        path.reverse();
-
-        // --- トークン生成 ---
-        let empty = Arc::clone(&EMPTY_ARC);
-        let mut tokens: Vec<Token> = path
-            .iter()
-            .map(|&idx| {
-                let node = &self.nodes[idx as usize];
-
-                if node.is_known() {
-                    let entry = &dict.entries[node.entry_id as usize];
-                    Token {
-                        surface: Arc::clone(&entry.surface),
-                        start: node.start as usize,
-                        end: node.end as usize,
-                        pos: Arc::clone(&entry.pos),
-                        base_form: Arc::clone(&entry.base_form),
-                        reading: Arc::clone(&entry.reading),
-                        pronunciation: Arc::clone(&entry.pronunciation),
-                        word_cost: node.word_cost,
-                        is_known: true,
-                    }
-                } else {
-                    let surface: Arc<str> =
-                        Arc::from(&input[node.start as usize..node.end as usize]);
-                    let unk_pos = if let Some(ref unk_tbl) = self.unk_table {
-                        let ct_idx = type_index(node.char_type);
-                        let tmpl_idx = node.unk_template_idx as usize;
-                        if ct_idx < unk_tbl.len() && tmpl_idx < unk_tbl[ct_idx].templates.len() {
-                            Arc::clone(&unk_tbl[ct_idx].templates[tmpl_idx].pos)
-                        } else {
-                            Self::unk_pos_arc(node.char_type)
-                        }
-                    } else {
-                        Self::unk_pos_arc(node.char_type)
-                    };
-                    Token {
-                        start: node.start as usize,
-                        end: node.end as usize,
-                        pos: unk_pos,
-                        base_form: Arc::clone(&surface),
-                        reading: Arc::clone(&empty),
-                        pronunciation: Arc::clone(&empty),
-                        surface,
-                        word_cost: node.word_cost,
-                        is_known: false,
-                    }
-                }
-            })
-            .collect();
-        apply_contextual_readings(&mut tokens);
-        tokens
-    }
-
-    fn default_unk_cost(char_type: CharType) -> i16 {
-        match char_type {
-            CharType::Kanji => 7000,
-            CharType::Hiragana => 8000,
-            CharType::Katakana => 5000,
-            CharType::Alpha => 6000,
-            CharType::Numeric | CharType::NumericWide => 6000,
-            CharType::Symbol => 9000,
-            CharType::Space => 3000,
-            CharType::Default => 10000,
-        }
-    }
-
-    fn unk_pos_arc(char_type: CharType) -> Arc<str> {
-        Arc::clone(match char_type {
-            CharType::Kanji | CharType::Hiragana | CharType::Katakana => &UNK_POS_NOUN_GENERAL,
-            CharType::Alpha => &UNK_POS_NOUN_PROPER_ORG,
-            CharType::Numeric | CharType::NumericWide => &UNK_POS_NOUN_NUMBER,
-            CharType::Symbol => &UNK_POS_SYMBOL_GENERAL,
-            CharType::Space => &UNK_POS_SYMBOL_SPACE,
-            CharType::Default => &UNK_POS_NOUN_SAHEN,
-        })
-    }
-
-    /// v2 mmap辞書でラティス構築+Viterbi（ゼロコピー）
-    pub fn tokenize_v2(
-        &mut self,
-        input: &str,
-        dict: &crate::mmap_dict::MmapDictionary,
-        classifier: &crate::char_class::CharClassifier,
-    ) -> Vec<Token> {
-        if input.is_empty() {
-            return vec![];
-        }
-
-        let byte_len = input.len();
-        let bytes = input.as_bytes();
-        self.clear(byte_len);
-
-        // BOS ノード
-        self.add_node(
-            0,
-            LatticeNode {
-                start: 0,
-                end: 0,
-                entry_id: BOUNDARY_ID,
-                left_id: 0,
-                right_id: 0,
-                word_cost: 0,
-                char_type: CharType::Default,
-                unk_template_idx: 0,
-            },
-            0,
-        );
-
-        // 各文字位置から辞書引き + 未知語生成
-        for (byte_pos, c) in input.char_indices() {
-            let mut has_known = false;
-
-            // 辞書引き（v2 mmap辞書のTrie直接参照）
-            dict.common_prefix_search_cb(&bytes[byte_pos..], |match_len, entry_ids| {
-                let end = byte_pos + match_len;
-                for &eid in entry_ids {
-                    let (left_id, right_id, cost) = dict.entry_cost_info(eid);
-                    self.add_node(
-                        end,
-                        LatticeNode {
-                            start: byte_pos as u32,
-                            end: end as u32,
-                            entry_id: eid,
-                            left_id,
-                            right_id,
-                            word_cost: cost,
-                            char_type: CharType::Default,
-                            unk_template_idx: 0,
-                        },
-                        i64::MAX,
-                    );
-                    has_known = true;
-                }
-            });
-
-            // 未知語処理
-            let char_type = classifier.classify_char(c);
-            let ct_idx = type_index(char_type);
-            let invoke = dict.unk_invoke(ct_idx);
-
-            if invoke || !has_known {
-                let single_len = c.len_utf8();
-                let (left_id, right_id, cost) = dict.unk_first_template(ct_idx);
-
                 let mut added_single = false;
                 classifier.group_at_cb(input, byte_pos, |group_len, _| {
                     let end = byte_pos + group_len;
                     if group_len == single_len {
                         added_single = true;
                     }
-                    self.add_node(
-                        end,
-                        LatticeNode {
-                            start: byte_pos as u32,
-                            end: end as u32,
-                            entry_id: UNK_FLAG,
-                            left_id,
-                            right_id,
-                            word_cost: cost,
-                            char_type,
-                            unk_template_idx: 0,
-                        },
-                        i64::MAX,
-                    );
+                    self.add_node(end, unk_node(end), i64::MAX);
                 });
 
+                // 1文字未知語がまだなければ追加
                 if !added_single {
                     let single_end = byte_pos + single_len;
-                    self.add_node(
-                        single_end,
-                        LatticeNode {
-                            start: byte_pos as u32,
-                            end: single_end as u32,
-                            entry_id: UNK_FLAG,
-                            left_id,
-                            right_id,
-                            word_cost: cost,
-                            char_type,
-                            unk_template_idx: 0,
-                        },
-                        i64::MAX,
-                    );
+                    self.add_node(single_end, unk_node(single_end), i64::MAX);
                 }
             }
         }
 
-        // --- Viterbi forward pass ---
+        // --- Viterbi forward pass (separate costs/prevs arrays for cache locality) ---
         for end_pos in 1..=byte_len {
-            let num_nodes = self.end_nodes[end_pos].len();
-            if num_nodes == 0 {
-                continue;
-            }
-            for ni_idx in 0..num_nodes {
+            for ni_idx in 0..self.end_nodes[end_pos].len() {
                 let node_idx = self.end_nodes[end_pos][ni_idx] as usize;
-                let node_start = self.nodes[node_idx].start as usize;
-                let node_left_id = self.nodes[node_idx].left_id as usize;
-                let node_word_cost = self.nodes[node_idx].word_cost as i64;
+                let node = self.nodes[node_idx];
+                // 転置した行列の、この語の left_id の行を前の語の right_id で引く
+                let row = view.matrix_row(node.left_id);
+                let node_word_cost = node.word_cost as i64;
 
                 let mut best_cost = i64::MAX;
                 let mut best_prev = NO_PREV;
-
-                let num_prev = self.end_nodes[node_start].len();
-                for pi_idx in 0..num_prev {
-                    let prev_idx = self.end_nodes[node_start][pi_idx] as usize;
-                    let prev_total = self.costs[prev_idx];
+                for &prev_idx in &self.end_nodes[node.start as usize] {
+                    let prev_total = self.costs[prev_idx as usize];
                     if prev_total == i64::MAX {
                         continue;
                     }
-
-                    let prev_right_id = self.nodes[prev_idx].right_id;
-                    let row = dict.matrix_row(prev_right_id);
-                    let conn_cost = if node_left_id < row.len() {
-                        unsafe { *row.get_unchecked(node_left_id) as i64 }
-                    } else {
-                        0i64
-                    };
+                    let conn_cost = row[self.nodes[prev_idx as usize].right_id as usize] as i64;
                     let total = prev_total + conn_cost + node_word_cost;
-
                     if total < best_cost {
                         best_cost = total;
-                        best_prev = prev_idx as u32;
+                        best_prev = prev_idx;
                     }
                 }
 
@@ -970,24 +611,20 @@ impl LatticeWorkspace {
             }
         }
 
-        // --- EOS ---
-        let num_last = self.end_nodes[byte_len].len();
+        // --- EOS（left_id 0）の最良前ノード決定 ---
+        let eos_row = view.matrix_row(0);
         let mut best_cost = i64::MAX;
         let mut best_last = NO_PREV;
-
-        for pi_idx in 0..num_last {
-            let prev_idx = self.end_nodes[byte_len][pi_idx] as usize;
-            let prev_total = self.costs[prev_idx];
+        for &prev_idx in &self.end_nodes[byte_len] {
+            let prev_total = self.costs[prev_idx as usize];
             if prev_total == i64::MAX {
                 continue;
             }
-            let prev_right_id = self.nodes[prev_idx].right_id;
-            let row = dict.matrix_row(prev_right_id);
-            let conn_cost = if !row.is_empty() { row[0] as i64 } else { 0i64 };
+            let conn_cost = eos_row[self.nodes[prev_idx as usize].right_id as usize] as i64;
             let total = prev_total + conn_cost;
             if total < best_cost {
                 best_cost = total;
-                best_last = prev_idx as u32;
+                best_last = prev_idx;
             }
         }
 
@@ -1004,45 +641,39 @@ impl LatticeWorkspace {
         }
         path.reverse();
 
-        // --- トークン生成（v2: Arcキャッシュから Arc::clone で取得） ---
-        let empty = Arc::clone(&EMPTY_ARC);
-        let mut tokens: Vec<Token> = path
-            .iter()
-            .map(|&idx| {
-                let node = &self.nodes[idx as usize];
-                if node.is_known() {
-                    let arcs = dict.entry_arcs(node.entry_id);
-                    Token {
-                        surface: arcs.surface,
-                        start: node.start as usize,
-                        end: node.end as usize,
-                        pos: arcs.pos,
-                        base_form: arcs.base_form,
-                        reading: arcs.reading,
-                        pronunciation: arcs.pronunciation,
-                        word_cost: node.word_cost,
-                        is_known: true,
-                    }
-                } else {
-                    let surface: Arc<str> =
-                        Arc::from(&input[node.start as usize..node.end as usize]);
-                    let unk_pos = dict.unk_pos_arc(type_index(node.char_type));
-                    Token {
-                        start: node.start as usize,
-                        end: node.end as usize,
-                        pos: unk_pos,
-                        base_form: Arc::clone(&surface),
-                        reading: Arc::clone(&empty),
-                        pronunciation: Arc::clone(&empty),
-                        surface,
-                        word_cost: node.word_cost,
-                        is_known: false,
-                    }
-                }
-            })
-            .collect();
+        // --- トークン生成（表層形は入力の部分文字列から作る） ---
+        let mut tokens: Vec<Token> = Vec::with_capacity(path.len());
+        for &idx in &path {
+            let node = self.nodes[idx as usize];
+            let (start, end) = (node.start as usize, node.end as usize);
+            let surface = &input[start..end];
+            if node.is_known() {
+                tokens.push(dict.known_token(
+                    node.entry_id,
+                    surface,
+                    start,
+                    end,
+                    node.word_cost,
+                )?);
+            } else {
+                let surface: Arc<str> = Arc::from(surface);
+                tokens.push(Token {
+                    start,
+                    end,
+                    pos: Arc::clone(&dict.unk_info(type_index(node.char_type)).pos),
+                    conj_type: Arc::clone(&EMPTY_ARC),
+                    conj_form: Arc::clone(&EMPTY_ARC),
+                    base_form: Arc::clone(&surface),
+                    reading: Arc::clone(&EMPTY_ARC),
+                    pronunciation: Arc::clone(&EMPTY_ARC),
+                    surface,
+                    word_cost: node.word_cost,
+                    is_known: false,
+                });
+            }
+        }
         apply_contextual_readings(&mut tokens);
-        tokens
+        Ok(tokens)
     }
 }
 
@@ -1080,17 +711,18 @@ mod tests {
                 base_form: surface.into(),
                 reading: "".into(),
                 pronunciation: "".into(),
+                ..Default::default()
             });
         }
 
-        builder.build()
+        builder.build().unwrap()
     }
 
     #[test]
     fn test_lattice_tokenize() {
         let dict = make_test_dict();
         let mut ws = LatticeWorkspace::new();
-        let tokens = ws.tokenize("東京都に住んでいる", &dict);
+        let tokens = ws.tokenize("東京都に住んでいる", &dict).unwrap();
 
         assert!(!tokens.is_empty());
         let reconstructed: String = tokens.iter().map(|t| &*t.surface).collect();
@@ -1102,8 +734,8 @@ mod tests {
         let dict = make_test_dict();
         let mut ws = LatticeWorkspace::new();
 
-        let t1 = ws.tokenize("東京都", &dict);
-        let t2 = ws.tokenize("東京都に住んでいる", &dict);
+        let t1 = ws.tokenize("東京都", &dict).unwrap();
+        let t2 = ws.tokenize("東京都に住んでいる", &dict).unwrap();
 
         assert!(!t1.is_empty());
         assert!(!t2.is_empty());
@@ -1115,7 +747,7 @@ mod tests {
     fn test_empty_input() {
         let dict = make_test_dict();
         let mut ws = LatticeWorkspace::new();
-        let tokens = ws.tokenize("", &dict);
+        let tokens = ws.tokenize("", &dict).unwrap();
         assert!(tokens.is_empty());
     }
 
@@ -1123,7 +755,7 @@ mod tests {
     fn test_single_known_word() {
         let dict = make_test_dict();
         let mut ws = LatticeWorkspace::new();
-        let tokens = ws.tokenize("東京", &dict);
+        let tokens = ws.tokenize("東京", &dict).unwrap();
         assert_eq!(tokens.len(), 1);
         assert_eq!(&*tokens[0].surface, "東京");
         assert!(tokens[0].is_known);
@@ -1134,7 +766,7 @@ mod tests {
         let dict = make_test_dict();
         let mut ws = LatticeWorkspace::new();
         // "大阪" is not in the dictionary
-        let tokens = ws.tokenize("大阪", &dict);
+        let tokens = ws.tokenize("大阪", &dict).unwrap();
         assert!(!tokens.is_empty());
         // All tokens should be unknown
         for t in &tokens {
@@ -1148,7 +780,7 @@ mod tests {
         let mut ws = LatticeWorkspace::new();
         let inputs = ["東京都", "東京都に住んでいる", "に", "いる"];
         for input in inputs {
-            let tokens = ws.tokenize(input, &dict);
+            let tokens = ws.tokenize(input, &dict).unwrap();
             let reconstructed: String = tokens.iter().map(|t| &*t.surface).collect();
             assert_eq!(
                 reconstructed, input,
@@ -1163,7 +795,7 @@ mod tests {
         // "東京都" (cost 2000) should be preferred over "東京" (3000) + "都" (5000)
         let dict = make_test_dict();
         let mut ws = LatticeWorkspace::new();
-        let tokens = ws.tokenize("東京都", &dict);
+        let tokens = ws.tokenize("東京都", &dict).unwrap();
 
         // With zero connection costs, "東京都" (2000) < "東京" (3000) + "都" (5000) = 8000
         let surfaces: Vec<&str> = tokens.iter().map(|t| &*t.surface).collect();
@@ -1174,7 +806,7 @@ mod tests {
     fn test_word_cost_preserved() {
         let dict = make_test_dict();
         let mut ws = LatticeWorkspace::new();
-        let tokens = ws.tokenize("東京都", &dict);
+        let tokens = ws.tokenize("東京都", &dict).unwrap();
         assert_eq!(tokens[0].word_cost, 2000);
     }
 
@@ -1182,7 +814,7 @@ mod tests {
     fn test_pos_preserved() {
         let dict = make_test_dict();
         let mut ws = LatticeWorkspace::new();
-        let tokens = ws.tokenize("に", &dict);
+        let tokens = ws.tokenize("に", &dict).unwrap();
         assert_eq!(tokens.len(), 1);
         assert_eq!(&*tokens[0].pos, "助詞,格助詞,一般,*");
     }
@@ -1194,7 +826,7 @@ mod tests {
 
         // Multiple calls should all work correctly
         for _ in 0..10 {
-            let tokens = ws.tokenize("東京都", &dict);
+            let tokens = ws.tokenize("東京都", &dict).unwrap();
             assert!(!tokens.is_empty());
             let reconstructed: String = tokens.iter().map(|t| &*t.surface).collect();
             assert_eq!(reconstructed, "東京都");
@@ -1205,7 +837,7 @@ mod tests {
     fn test_unknown_word_has_pos() {
         let dict = make_test_dict();
         let mut ws = LatticeWorkspace::new();
-        let tokens = ws.tokenize("XYZ", &dict);
+        let tokens = ws.tokenize("XYZ", &dict).unwrap();
         // Unknown words should still have POS assigned
         for t in &tokens {
             assert!(!t.pos.is_empty(), "Unknown word should have POS");
@@ -1224,7 +856,7 @@ mod tests {
         let mut ws = LatticeWorkspace::new();
         // Repeat known text many times
         let input = "東京都に住んでいる".repeat(50);
-        let tokens = ws.tokenize(&input, &dict);
+        let tokens = ws.tokenize(&input, &dict).unwrap();
         let reconstructed: String = tokens.iter().map(|t| &*t.surface).collect();
         assert_eq!(reconstructed, input);
     }
@@ -1233,7 +865,7 @@ mod tests {
     fn test_single_char_unknown() {
         let dict = make_test_dict();
         let mut ws = LatticeWorkspace::new();
-        let tokens = ws.tokenize("X", &dict);
+        let tokens = ws.tokenize("X", &dict).unwrap();
         assert_eq!(tokens.len(), 1);
         assert_eq!(&*tokens[0].surface, "X");
         assert!(!tokens[0].is_known);
@@ -1244,7 +876,7 @@ mod tests {
         let dict = make_test_dict();
         let mut ws = LatticeWorkspace::new();
         // "東京" is known, "ABC" is unknown, "に" is known
-        let tokens = ws.tokenize("東京ABCに", &dict);
+        let tokens = ws.tokenize("東京ABCに", &dict).unwrap();
         let reconstructed: String = tokens.iter().map(|t| &*t.surface).collect();
         assert_eq!(reconstructed, "東京ABCに");
     }
@@ -1255,6 +887,8 @@ mod tests {
             start: 0,
             end: surface.len(),
             pos: pos.into(),
+            conj_type: "".into(),
+            conj_form: "".into(),
             base_form: surface.into(),
             reading: reading.into(),
             pronunciation: reading.into(),

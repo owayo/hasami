@@ -86,7 +86,8 @@ dict-unidic-cwj: release dict-download-unidic-cwj ## Build UniDic CWJ (書き言
 	@cp $(UNIDIC_CWJ_DIR)/matrix.def $(DICT_SRC)/unidic-cwj-converted/
 	@cp $(UNIDIC_CWJ_DIR)/char.def   $(DICT_SRC)/unidic-cwj-converted/
 	@cp $(UNIDIC_CWJ_DIR)/unk.def    $(DICT_SRC)/unidic-cwj-converted/
-	$(HASAMI) build --input $(DICT_SRC)/unidic-cwj-converted --output $(DICT_OUT)/unidic-cwj.hsd
+	$(HASAMI) build --input $(DICT_SRC)/unidic-cwj-converted --output $(DICT_OUT)/unidic-cwj.hsd \
+		--meta name=unidic-cwj --meta pos_scheme=unidic --meta sources=unidic-cwj@$(UNIDIC_VERSION)
 
 dict-unidic-csj: release dict-download-unidic-csj ## Build UniDic CSJ (話し言葉) dictionary
 	@mkdir -p $(DICT_SRC)/unidic-csj-converted $(DICT_OUT)
@@ -94,7 +95,8 @@ dict-unidic-csj: release dict-download-unidic-csj ## Build UniDic CSJ (話し言
 	@cp $(UNIDIC_CSJ_DIR)/matrix.def $(DICT_SRC)/unidic-csj-converted/
 	@cp $(UNIDIC_CSJ_DIR)/char.def   $(DICT_SRC)/unidic-csj-converted/
 	@cp $(UNIDIC_CSJ_DIR)/unk.def    $(DICT_SRC)/unidic-csj-converted/
-	$(HASAMI) build --input $(DICT_SRC)/unidic-csj-converted --output $(DICT_OUT)/unidic-csj.hsd
+	$(HASAMI) build --input $(DICT_SRC)/unidic-csj-converted --output $(DICT_OUT)/unidic-csj.hsd \
+		--meta name=unidic-csj --meta pos_scheme=unidic --meta sources=unidic-csj@$(UNIDIC_VERSION)
 
 dict-download-unidic-cwj:
 	@if [ ! -d "$(UNIDIC_CWJ_DIR)" ]; then \

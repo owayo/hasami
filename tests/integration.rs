@@ -1,11 +1,23 @@
 //! インテグレーションテスト: 辞書構築→解析→出力の一貫性検証
 
 use hasami::analyzer::{Analyzer, format_mecab, format_wakachi};
+use hasami::Dictionary;
 use hasami::dict::{DictBuilder, DictEntry};
-use hasami::mmap_dict::{MmapDictBuilder, MmapDictionary};
+
+/// ビルダーを .hsd に書き出す
+fn write_hsd(builder: &DictBuilder, path: &std::path::Path) {
+    builder
+        .write_hsd(path, &builder.write_options(), |_, _| {})
+        .unwrap();
+}
 
 /// テスト用の辞書を構築するヘルパー
-fn build_test_dictionary() -> hasami::dict::Dictionary {
+fn build_test_dictionary() -> Dictionary {
+    test_builder().build().unwrap()
+}
+
+/// テスト用の辞書のビルダー
+fn test_builder() -> DictBuilder {
     let mut builder = DictBuilder::new();
     let words = vec![
         ("私", 1, 1, 3000, "名詞,代名詞,一般,*", "ワタシ", "ワタシ"),
@@ -51,10 +63,11 @@ fn build_test_dictionary() -> hasami::dict::Dictionary {
             base_form: surface.into(),
             reading: reading.into(),
             pronunciation: pronunciation.into(),
+            ..Default::default()
         });
     }
 
-    builder.build()
+    builder
 }
 
 // ==========================================================================
@@ -101,11 +114,8 @@ fn test_end_to_end_wakachi_format() {
 
 #[test]
 fn test_mmap_roundtrip_full_pipeline() {
-    let dict = build_test_dictionary();
-    let builder = MmapDictBuilder::from_dictionary(&dict);
-
     let tmp = std::env::temp_dir().join("hasami_integration_test.hsd");
-    builder.write(&tmp).unwrap();
+    write_hsd(&test_builder(), &tmp);
 
     // Load and tokenize via mmap path
     let mut analyzer = Analyzer::load(&tmp).unwrap();
@@ -119,23 +129,21 @@ fn test_mmap_roundtrip_full_pipeline() {
 
 #[test]
 fn test_mmap_roundtrip_preserves_metadata() {
-    let dict = build_test_dictionary();
-    let builder = MmapDictBuilder::from_dictionary(&dict);
-
     let tmp = std::env::temp_dir().join("hasami_integration_meta.hsd");
-    builder.write(&tmp).unwrap();
-    let loaded = MmapDictionary::load(&tmp).unwrap();
+    write_hsd(&test_builder(), &tmp);
+    let loaded = Dictionary::load(&tmp).unwrap();
 
     // Verify all entries survive roundtrip
-    assert_eq!(loaded.entry_count() as usize, dict.entries.len());
+    assert_eq!(loaded.entry_count(), test_builder().entry_count());
 
     // Verify specific entry data
-    for i in 0..loaded.entry_count() {
-        let surface = loaded.entry_surface(i);
-        let pos = loaded.entry_pos(i);
-        assert!(!surface.is_empty(), "Entry {} has empty surface", i);
-        assert!(!pos.is_empty(), "Entry {} has empty POS", i);
-    }
+    loaded
+        .for_each_entry(|e| {
+            assert!(!e.surface.is_empty(), "Entry has empty surface");
+            assert!(!e.pos.is_empty(), "Entry {} has empty POS", e.surface);
+            Ok(())
+        })
+        .unwrap();
 
     let _ = std::fs::remove_file(&tmp);
 }
@@ -400,11 +408,10 @@ fn test_dict_merge_roundtrip() {
         base_form: "猫".into(),
         reading: "ネコ".into(),
         pronunciation: "ネコ".into(),
+        ..Default::default()
     });
-    let dict1 = builder1.build();
-    let mmap_builder = MmapDictBuilder::from_dictionary(&dict1);
     let tmp1 = std::env::temp_dir().join("hasami_merge_base.hsd");
-    mmap_builder.write(&tmp1).unwrap();
+    write_hsd(&builder1, &tmp1);
 
     // Load and merge with new entry
     let mut builder2 = DictBuilder::new();
@@ -418,15 +425,14 @@ fn test_dict_merge_roundtrip() {
         base_form: "犬".into(),
         reading: "イヌ".into(),
         pronunciation: "イヌ".into(),
+        ..Default::default()
     });
     assert_eq!(builder2.entry_count(), 2);
 
-    let merged_dict = builder2.build();
-    let merged_builder = MmapDictBuilder::from_dictionary(&merged_dict);
     let tmp2 = std::env::temp_dir().join("hasami_merge_result.hsd");
-    merged_builder.write(&tmp2).unwrap();
+    write_hsd(&builder2, &tmp2);
 
-    let loaded = MmapDictionary::load(&tmp2).unwrap();
+    let loaded = Dictionary::load(&tmp2).unwrap();
     assert_eq!(loaded.entry_count(), 2);
 
     let _ = std::fs::remove_file(&tmp1);
@@ -565,7 +571,7 @@ fn test_iteration_mark_repeats_previous_reading() {
     builder.add_entry(entry("前", "名詞,一般,*,*", "前", "ゼン", "ゼン"));
     builder.add_entry(entry("々", "記号,一般,*,*", "々", "", ""));
     builder.add_entry(entry("項", "名詞,一般,*,*", "項", "コウ", "コー"));
-    let mut analyzer = Analyzer::from_dict(builder.build());
+    let mut analyzer = Analyzer::from_dict(builder.build().unwrap());
 
     let tokens = analyzer.tokenize("前々項");
     let mark = tokens
@@ -610,10 +616,8 @@ fn test_unknown_non_alpha_token_empty_reading() {
 
 #[test]
 fn test_analyzer_clone_shares_dict_and_isolates_workspace() {
-    let dict = build_test_dictionary();
-    let builder = MmapDictBuilder::from_dictionary(&dict);
     let tmp = std::env::temp_dir().join("hasami_clone_share.hsd");
-    builder.write(&tmp).unwrap();
+    write_hsd(&test_builder(), &tmp);
 
     let mut a = Analyzer::load(&tmp).unwrap();
     let mut b = a.clone();
@@ -637,13 +641,11 @@ fn test_analyzer_clone_shares_dict_and_isolates_workspace() {
 
 #[test]
 fn test_concurrent_tokenize_across_threads() {
-    let dict = build_test_dictionary();
-    let builder = MmapDictBuilder::from_dictionary(&dict);
     let tmp = std::env::temp_dir().join("hasami_concurrent.hsd");
-    builder.write(&tmp).unwrap();
+    write_hsd(&test_builder(), &tmp);
 
     let analyzer = Analyzer::load(&tmp).unwrap();
-    analyzer.prewarm(); // 並列前にArcキャッシュ温める
+    analyzer.prewarm(); // 並列前に辞書のページを読み込んでおく
 
     let inputs = [
         "私は猫です",
@@ -692,10 +694,8 @@ fn test_analyzer_send_and_sync() {
 
 #[test]
 fn test_prewarm_idempotent() {
-    let dict = build_test_dictionary();
-    let builder = MmapDictBuilder::from_dictionary(&dict);
     let tmp = std::env::temp_dir().join("hasami_prewarm.hsd");
-    builder.write(&tmp).unwrap();
+    write_hsd(&test_builder(), &tmp);
 
     let analyzer = Analyzer::load(&tmp).unwrap();
     // 複数回呼んでも問題ない
@@ -711,30 +711,26 @@ fn test_prewarm_idempotent() {
 // ==========================================================================
 
 #[test]
-fn test_v2_backward_compat_load() {
-    // v3 ファイルを書き出した後、version バイト (offset=8..12) を 2 に書き換えて
-    // v2 後方互換パスで読めるかを検証する。
-    let dict = build_test_dictionary();
-    let builder = MmapDictBuilder::from_dictionary(&dict);
-    let tmp = std::env::temp_dir().join("hasami_v2_compat.hsd");
-    builder.write(&tmp).unwrap();
+fn test_old_format_versions_are_rejected_with_rebuild_hint() {
+    // v4 のファイルの version (offset=8..12) を旧形式の番号に書き換えると、
+    // 作り直しを案内するエラーで拒否する
+    let tmp = std::env::temp_dir().join(format!("hasami_{}_old_version.hsd", std::process::id()));
+    write_hsd(&test_builder(), &tmp);
+    let original = std::fs::read(&tmp).unwrap();
 
-    let mut bytes = std::fs::read(&tmp).unwrap();
-    // version バイト書き換え（little-endian u32）
-    bytes[8..12].copy_from_slice(&2u32.to_le_bytes());
-    std::fs::write(&tmp, &bytes).unwrap();
-
-    // v2 として読めることを確認
-    let mut analyzer = Analyzer::load(&tmp).unwrap();
-    let tokens = analyzer.tokenize("私は猫です");
-    let surfaces: Vec<&str> = tokens.iter().map(|t| &*t.surface).collect();
-    assert_eq!(surfaces, vec!["私", "は", "猫", "です"]);
+    for version in [2u32, 3] {
+        let mut bytes = original.clone();
+        bytes[8..12].copy_from_slice(&version.to_le_bytes());
+        std::fs::write(&tmp, &bytes).unwrap();
+        let err = Analyzer::load(&tmp).err().unwrap().to_string();
+        assert!(err.contains("build-dict.sh"), "{err}");
+    }
 
     let _ = std::fs::remove_file(&tmp);
 }
 
 #[test]
-fn test_char_def_roundtrip_v3() {
+fn test_char_def_roundtrip() {
     use hasami::char_class::{CharClass, CharClassifier, CharType};
     use std::collections::HashMap;
 
@@ -774,16 +770,15 @@ fn test_char_def_roundtrip_v3() {
         base_form: "猫".into(),
         reading: "ネコ".into(),
         pronunciation: "ネコ".into(),
+        ..Default::default()
     });
     builder.set_char_classifier(custom_classifier);
-    let dict = builder.build();
 
-    let mmap_builder = MmapDictBuilder::from_dictionary(&dict);
-    let tmp = std::env::temp_dir().join("hasami_char_def_v3.hsd");
-    mmap_builder.write(&tmp).unwrap();
+    let tmp = std::env::temp_dir().join("hasami_char_def_v4.hsd");
+    write_hsd(&builder, &tmp);
 
-    let loaded = MmapDictionary::load(&tmp).unwrap();
-    let restored = loaded.build_classifier();
+    let loaded = Dictionary::load(&tmp).unwrap();
+    let restored = loaded.char_classifier();
 
     // カスタム length が復元されているか
     let h = restored.get_class("HIRAGANA").expect("HIRAGANA missing");
@@ -823,6 +818,7 @@ fn entry(
         base_form: base_form.into(),
         reading: reading.into(),
         pronunciation: pronunciation.into(),
+        ..Default::default()
     }
 }
 
@@ -1081,7 +1077,7 @@ fn test_short_alpha_ignores_dict_reading() {
         "ナサ",
     ));
 
-    let mut analyzer = Analyzer::from_dict(builder.build());
+    let mut analyzer = Analyzer::from_dict(builder.build().unwrap());
 
     let tokens = analyzer.tokenize("A");
     assert_eq!(&*tokens[0].reading, "エー");
@@ -1105,7 +1101,7 @@ fn test_broken_dict_reading_falls_back_to_spellout() {
         "backend",
     ));
 
-    let mut analyzer = Analyzer::from_dict(builder.build());
+    let mut analyzer = Analyzer::from_dict(builder.build().unwrap());
     let tokens = analyzer.tokenize("backend");
     assert_eq!(&*tokens[0].reading, "ビーエーシーケーイーエヌディー");
 }
@@ -1371,13 +1367,9 @@ fn entry_with_ids(surface: &str, left_id: u16, right_id: u16) -> DictEntry {
     }
 }
 
-/// 列 (left_id) が 3、行 (right_id) が 2 の接続行列
+/// left_id が 3 種類、right_id が 2 種類の接続行列
 fn small_matrix() -> hasami::dict::ConnectionMatrix {
-    hasami::dict::ConnectionMatrix {
-        left_size: 3,
-        right_size: 2,
-        costs: vec![0; 6],
-    }
+    hasami::dict::ConnectionMatrix::zeros(3, 2)
 }
 
 #[test]
@@ -1466,8 +1458,12 @@ fn test_export_roundtrip_through_add_csv() {
         },
         // 表層形・品詞に区切り文字を含む語（半角カンマの読点）
         entry(",", "記号,読点,*,*", ",", "、", "、"),
-        // 原形が表層形と違う活用語
-        entry("食べ", "動詞,自立,*,*", "食べる", "タベ", "タベ"),
+        // 原形が表層形と違い、活用型・活用形を持つ語
+        DictEntry {
+            conj_type: "一段".into(),
+            conj_form: "連用形".into(),
+            ..entry("食べ", "動詞,自立,*,*", "食べる", "タベ", "タベ")
+        },
         // 読み・発音が空の語
         entry("backend", "名詞,一般,*,*", "backend", "", ""),
         // 引用符を含む語
@@ -1482,13 +1478,12 @@ fn test_export_roundtrip_through_add_csv() {
     for e in &originals {
         builder.add_entry(e.clone());
     }
-    let dict = builder.build();
     let hsd = std::env::temp_dir().join(format!("hasami_{}_export.hsd", std::process::id()));
-    MmapDictBuilder::from_dictionary(&dict).write(&hsd).unwrap();
+    write_hsd(&builder, &hsd);
 
-    let loaded = MmapDictionary::load(&hsd).unwrap();
+    let loaded = Dictionary::load(&hsd).unwrap();
     let mut buf = Vec::new();
-    assert_eq!(loaded.write_lexicon_csv(&mut buf).unwrap(), 5);
+    assert_eq!(hasami::dict::write_lexicon_csv(&loaded, &mut buf).unwrap(), 5);
     let csv = write_temp("export_roundtrip.csv", std::str::from_utf8(&buf).unwrap());
 
     let mut restored = DictBuilder::new();
@@ -1501,11 +1496,22 @@ fn test_export_roundtrip_through_add_csv() {
             e.right_id,
             e.cost,
             e.pos.to_string(),
+            e.conj_type.to_string(),
+            e.conj_form.to_string(),
             e.base_form.to_string(),
             e.reading.to_string(),
             e.pronunciation.to_string(),
         )
     };
+    // 活用型・活用形が無い語は `*` で書き出され、`*` のまま読み戻る
+    let originals: Vec<DictEntry> = originals
+        .into_iter()
+        .map(|e| DictEntry {
+            conj_type: if e.conj_type.is_empty() { "*".into() } else { e.conj_type },
+            conj_form: if e.conj_form.is_empty() { "*".into() } else { e.conj_form },
+            ..e
+        })
+        .collect();
     let mut expected: Vec<_> = originals.iter().map(key).collect();
     let mut actual: Vec<_> = restored.entries().iter().map(key).collect();
     expected.sort();
@@ -1532,13 +1538,10 @@ fn run_cli_repair(name: &str, extra_args: &[&str]) -> Vec<(String, String)> {
         "ハヤシ",
         "ハヤシ",
     ));
-    let dict = builder.build();
     let dir = std::env::temp_dir();
     let input = dir.join(format!("hasami_{}_{name}_in.hsd", std::process::id()));
     let output = dir.join(format!("hasami_{}_{name}_out.hsd", std::process::id()));
-    MmapDictBuilder::from_dictionary(&dict)
-        .write(&input)
-        .unwrap();
+    write_hsd(&builder, &input);
     let list = write_temp(&format!("{name}.csv"), "林,リン,\"名詞,固有名詞,人名\"\n");
 
     let result = std::process::Command::new(env!("CARGO_BIN_EXE_hasami"))
@@ -1558,15 +1561,14 @@ fn run_cli_repair(name: &str, extra_args: &[&str]) -> Vec<(String, String)> {
         String::from_utf8_lossy(&result.stderr)
     );
 
-    let repaired = MmapDictionary::load(&output).unwrap();
-    let entries = (0..repaired.entry_count())
-        .map(|i| {
-            (
-                repaired.entry_surface(i).to_string(),
-                repaired.entry_reading(i).to_string(),
-            )
+    let repaired = Dictionary::load(&output).unwrap();
+    let mut entries = Vec::new();
+    repaired
+        .for_each_entry(|e| {
+            entries.push((e.surface.to_string(), e.reading.to_string()));
+            Ok(())
         })
-        .collect();
+        .unwrap();
     for path in [&input, &output, &list] {
         let _ = std::fs::remove_file(path);
     }
@@ -1602,16 +1604,15 @@ fn test_cli_repair_clears_symbol_readings_by_default() {
     );
 }
 
-/// matrix.def なしで作った辞書 (1x1 の仮の行列) を読み込んでも、文脈 ID の検査で
-/// 全エントリが範囲外にならず、`drop_invalid_context_ids` も何も消さない
+/// matrix.def なしで作った辞書（使われている ID を覆うゼロ行列）を読み込んでも、文脈 ID の
+/// 検査で全エントリが範囲外にならず、`drop_invalid_context_ids` も何も消さない
 #[test]
 fn test_load_hsd_without_matrix_keeps_all_entries() {
     let mut builder = DictBuilder::new();
     builder.add_entry(entry("猫", "名詞,一般,*,*", "猫", "ネコ", "ネコ"));
     builder.add_entry(entry("犬", "名詞,一般,*,*", "犬", "イヌ", "イヌ"));
-    let dict = builder.build();
     let hsd = std::env::temp_dir().join(format!("hasami_{}_no_matrix.hsd", std::process::id()));
-    MmapDictBuilder::from_dictionary(&dict).write(&hsd).unwrap();
+    write_hsd(&builder, &hsd);
 
     let mut loaded = DictBuilder::new();
     loaded.load_hsd(&hsd).unwrap();

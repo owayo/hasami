@@ -2,9 +2,18 @@
 
 use ::hasami::analyzer::{format_mecab, format_wakachi, Analyzer as RustAnalyzer};
 use ::hasami::dict::DictBuilder as RustDictBuilder;
+use ::hasami::hsd::DictError;
 use ::hasami::lattice::Token as RustToken;
 use pyo3::exceptions::{PyIOError, PyValueError};
 use pyo3::prelude::*;
+
+/// 辞書のエラーを Python の例外にする（ファイルの読み書きは IOError、それ以外は ValueError）
+fn dict_error(context: &str, e: DictError) -> PyErr {
+    match e {
+        DictError::Io(e) => PyIOError::new_err(format!("{context}: {e}")),
+        e => PyValueError::new_err(format!("{context}: {e}")),
+    }
+}
 
 /// 形態素解析結果のトークン
 #[pyclass(from_py_object)]
@@ -18,6 +27,12 @@ struct Token {
     end: usize,
     #[pyo3(get)]
     pos: String,
+    /// 活用型（活用しない語・未知語は空文字列）
+    #[pyo3(get)]
+    conj_type: String,
+    /// 活用形（活用しない語・未知語は空文字列）
+    #[pyo3(get)]
+    conj_form: String,
     #[pyo3(get)]
     base_form: String,
     #[pyo3(get)]
@@ -48,6 +63,8 @@ impl From<RustToken> for Token {
             start: t.start,
             end: t.end,
             pos: t.pos.to_string(),
+            conj_type: t.conj_type.to_string(),
+            conj_form: t.conj_form.to_string(),
             base_form: t.base_form.to_string(),
             reading: t.reading.to_string(),
             pronunciation: t.pronunciation.to_string(),
@@ -68,8 +85,8 @@ impl Analyzer {
     /// .hsd 辞書ファイルからアナライザーを生成
     #[new]
     fn new(dict_path: &str) -> PyResult<Self> {
-        let analyzer = RustAnalyzer::load(dict_path)
-            .map_err(|e| PyIOError::new_err(format!("Failed to load dictionary: {}", e)))?;
+        let analyzer =
+            RustAnalyzer::load(dict_path).map_err(|e| dict_error("Failed to load dictionary", e))?;
         Ok(Analyzer { inner: analyzer })
     }
 
@@ -84,47 +101,46 @@ impl Analyzer {
         }
     }
 
-    /// 辞書の Arc<str> キャッシュを事前構築
+    /// 解析で最初に触れる辞書のページを先に読み込む
     ///
-    /// 並行解析する前に呼び出すと、初回並列リクエストのレイテンシスパイクを回避できる。
+    /// 起動直後の最初の解析が遅くなるのを避けたいとき（サーバーの起動時など）に呼ぶ。
     fn prewarm(&self, py: Python<'_>) {
         py.detach(|| self.inner.prewarm());
     }
 
-    /// テキストを形態素解析（GIL を解放して実行）
-    fn tokenize(&mut self, py: Python<'_>, text: &str) -> Vec<Token> {
-        py.detach(|| self.inner.tokenize(text))
-            .into_iter()
-            .map(Token::from)
-            .collect()
+    /// テキストを形態素解析（GIL を解放して実行）。壊れた辞書では ValueError
+    fn tokenize(&mut self, py: Python<'_>, text: &str) -> PyResult<Vec<Token>> {
+        let tokens = py
+            .detach(|| self.inner.try_tokenize(text))
+            .map_err(|e| dict_error("Failed to tokenize", e))?;
+        Ok(tokens.into_iter().map(Token::from).collect())
     }
 
     /// 複数テキストをバッチ処理（GIL を解放して実行）
-    fn tokenize_batch(&mut self, py: Python<'_>, texts: Vec<String>) -> Vec<Vec<Token>> {
-        py.detach(|| {
-            let refs: Vec<&str> = texts.iter().map(|s| s.as_str()).collect();
-            self.inner.tokenize_batch(&refs)
-        })
-        .into_iter()
-        .map(|tokens| tokens.into_iter().map(Token::from).collect())
-        .collect()
+    fn tokenize_batch(&mut self, py: Python<'_>, texts: Vec<String>) -> PyResult<Vec<Vec<Token>>> {
+        let results = py
+            .detach(|| {
+                let refs: Vec<&str> = texts.iter().map(|s| s.as_str()).collect();
+                self.inner.try_tokenize_batch(&refs)
+            })
+            .map_err(|e| dict_error("Failed to tokenize", e))?;
+        Ok(results
+            .into_iter()
+            .map(|tokens| tokens.into_iter().map(Token::from).collect())
+            .collect())
     }
 
     /// MeCab互換形式で出力
     #[allow(clippy::wrong_self_convention)]
-    fn to_mecab(&mut self, py: Python<'_>, text: &str) -> String {
-        py.detach(|| {
-            let tokens = self.inner.tokenize(text);
-            format_mecab(&tokens)
-        })
+    fn to_mecab(&mut self, py: Python<'_>, text: &str) -> PyResult<String> {
+        py.detach(|| self.inner.try_tokenize(text).map(|t| format_mecab(&t)))
+            .map_err(|e| dict_error("Failed to tokenize", e))
     }
 
     /// 分かち書き
-    fn wakachi(&mut self, py: Python<'_>, text: &str) -> String {
-        py.detach(|| {
-            let tokens = self.inner.tokenize(text);
-            format_wakachi(&tokens)
-        })
+    fn wakachi(&mut self, py: Python<'_>, text: &str) -> PyResult<String> {
+        py.detach(|| self.inner.try_tokenize(text).map(|t| format_wakachi(&t)))
+            .map_err(|e| dict_error("Failed to tokenize", e))
     }
 }
 
@@ -149,7 +165,7 @@ impl DictBuilder {
             .as_mut()
             .ok_or_else(|| PyIOError::new_err("Builder already consumed"))?
             .load_hsd(path)
-            .map_err(|e| PyIOError::new_err(format!("Failed to load dictionary: {}", e)))
+            .map_err(|e| dict_error("Failed to load dictionary", e))
     }
 
     /// CSVディレクトリからエントリを追加
@@ -190,22 +206,22 @@ impl DictBuilder {
 
     /// 辞書をビルドして .hsd ファイルに保存
     ///
-    /// 接続行列の範囲外の文脈 ID を持つエントリがあれば、ビルダーを消費せずに例外を送出する。
+    /// 接続行列の範囲外の文脈 ID を持つエントリなど、辞書にできない入力があれば
+    /// ビルダーを消費せずに ValueError を送出する。
     fn build(&mut self, output_path: &str) -> PyResult<()> {
-        self.inner
-            .as_ref()
-            .ok_or_else(|| PyIOError::new_err("Builder already consumed"))?
-            .check_context_ids()
-            .map_err(|e| PyValueError::new_err(format!("Invalid dictionary: {}", e)))?;
         let builder = self
             .inner
-            .take()
+            .as_ref()
             .ok_or_else(|| PyIOError::new_err("Builder already consumed"))?;
-        let dict = builder.build();
-        let mmap_builder = ::hasami::mmap_dict::MmapDictBuilder::from_dictionary(&dict);
-        mmap_builder
-            .write(output_path)
-            .map_err(|e| PyIOError::new_err(format!("Failed to save dictionary: {}", e)))
+        builder
+            .check_context_ids()
+            .map_err(|e| PyValueError::new_err(format!("Invalid dictionary: {}", e)))?;
+        let opts = builder.write_options();
+        builder
+            .write_hsd(output_path, &opts, |_, _| {})
+            .map_err(|e| dict_error("Failed to build dictionary", e))?;
+        self.inner = None;
+        Ok(())
     }
 }
 

@@ -5,10 +5,11 @@ Rust製の日本語形態素解析エンジン。外部エンジン（MeCab等�
 
 ## 技術スタック
 - **言語**: Rust (2024 edition, MSRV 1.85)
-- **辞書**: mmap-native バイナリ形式 (.hsd) + bytemuck Pod 構造体
-- **Trie**: Double-Array Trie（ゼロコピー mmap 参照）
-- **解析アルゴリズム**: ラティス構築 + Viterbi（コスト最小化、文分割最適化）
-- **文字列管理**: StringPool 重複排除 + Arc<str> キャッシュ（ロード時構築）
+- **辞書**: mmap-native バイナリ形式 (.hsd v4) + bytemuck Pod 構造体。ロード時はヘッダと小さな表だけ検査
+- **Trie**: 文字単位 Double-Array Trie（文字を出現頻度順に符号化、単独の末尾は TAIL に圧縮、ゼロコピー mmap 参照）
+- **解析アルゴリズム**: ラティス構築 + Viterbi（コスト最小化、文分割最適化、転置した接続行列）
+- **文字列管理**: 素性レコード（品詞・活用型・活用形の番号と読み・発音・原形）を重複排除して格納。
+  読み・発音のカタカナは 1 字 1 バイトに詰める。最良パスのトークンを作るときだけ復号する
 - **Python バインディング**: PyO3 + maturin
 - **C FFI**: `#[no_mangle] extern "C"`
 
@@ -18,12 +19,21 @@ hasami/
 ├── src/
 │   ├── lib.rs          # ライブラリエントリポイント
 │   ├── main.rs         # CLI (build, merge, repair, export, tokenize, bench, info)
-│   ├── trie.rs         # Double-Array Trie
-│   ├── dict.rs         # Dictionary, DictEntry, DictBuilder（ビルド時中間構造体）
-│   ├── mmap_dict.rs    # mmap-native 辞書 (.hsd) - Pod構造体、StringPool、FeaturePool
+│   ├── dict.rs         # DictEntry, ConnectionMatrix, DictBuilder（CSV 読み込み・repair・書き出し）
+│   ├── hsd/            # 辞書形式 v4 (.hsd)
+│   │   ├── mod.rs      # DictError
+│   │   ├── container.rs  # 64B ヘッダとセクション表（id で引く、64B 境界）
+│   │   ├── trie.rs     # 文字単位 Double-Array Trie（構築・検索・全件検証）
+│   │   ├── records.rs  # ENTRIES（6B）・未知語・文字種の固定長レコード
+│   │   ├── features.rs # 素性レコード（varint、カタカナ詰め、重複排除）
+│   │   ├── strtab.rs   # 品詞・活用型・活用形の文字列表
+│   │   ├── meta.rs     # メタデータ（name, pos_scheme, sources, repairs, ...）
+│   │   ├── writer.rs   # DictBuilder の中身 → セクション（一時ファイル + rename で書き出し）
+│   │   ├── reader.rs   # Dictionary（mmap / 所有バッファ）、ロード時検査、verify、export 用の列挙
+│   │   └── tests.rs    # 往復・再現性・支配エントリの除去・壊れたファイルの拒否
 │   ├── char_class.rs   # 文字分類（未知語処理）
-│   ├── lattice.rs      # ラティス構築 + Viterbi
-│   ├── analyzer.rs     # 高レベルAPI（DictBackend enum: Mmap/InMemory）
+│   ├── lattice.rs      # ラティス構築 + Viterbi、Token
+│   ├── analyzer.rs     # 高レベルAPI（Analyzer: Arc<Dictionary> + ワークスペース）
 │   └── ffi.rs          # C ABI インターフェース
 ├── dict/               # ビルド済み辞書（Git LFS管理）
 │   ├── ipadic.hsd      # IPAdic 単体
@@ -48,15 +58,26 @@ hasami/
 ```
 
 ## 主要API
-- `Analyzer::load(path)` - .hsd 辞書ロード（mmap、~40ms）
-- `Analyzer::tokenize(text)` - 形態素解析
-- `DictBuilder` - MeCab形式CSVから辞書構築
-- `DictBuilder::load_hsd(path)` - 既存辞書からインポート（マージ用）
+- `Analyzer::load(path)` - .hsd 辞書ロード（mmap、IPAdic で ~1ms）
+- `Analyzer::tokenize(text)` - 形態素解析（壊れた辞書の不正な参照で panic）
+- `Analyzer::try_tokenize(text)` - 形態素解析（不正な参照は `DictError::Corrupt`。FFI・Python はこちら）
+- `Token` - `surface`, `start`, `end`, `pos`, `conj_type`, `conj_form`, `base_form`, `reading`, `pronunciation`,
+  `word_cost`, `is_known`（活用型・活用形が無い語は空文字列）
+- `Dictionary::load(path)` / `Dictionary::verify()` / `Dictionary::for_each_entry(cb)` / `Dictionary::lookup(text)`
+- `DictBuilder` - MeCab形式CSVから辞書構築。`write_hsd(path, &opts, progress)` でファイル、`build()` でメモリ上の辞書
+- `DictBuilder::load_hsd(path)` - 既存辞書からインポート（マージ・repair 用。支配エントリを除いた辞書は拒否）
+- `hasami::dict::write_lexicon_csv(&dict, w)` - MeCab 形式 CSV（13 列、活用型・活用形付き）に書き出す
 - `hasami_last_error(handle)` - C FFI の直前エラー取得（`handle == NULL` でも直近のロード失敗を参照可能）
 
 ## 辞書形式
 - **ビルド**: MeCab互換CSV + matrix.def + char.def + unk.def → .hsd
-- **フォーマット**: mmap-native バイナリ（bytemuck Pod、ゼロコピー）
+- **フォーマット**: v4。64B ヘッダ + セクション表（id で引く）+ 64B 境界のセクション 17 種。リトルエンディアン機専用
+  - 規範は `~/.claude/skills/hsd-format-redesign/references/v4-spec.md`（第 3 版の追記 A〜K が正）と `src/hsd/*.rs` の冒頭コメント
+  - v1〜v3 の .hsd は読めない（`scripts/build-dict.sh` で作り直すよう案内するエラー）
+  - 接続行列は転置して持つ: `costs[left_id * num_right + right_id]`（matrix.def の 1 行目は「right_id の数 left_id の数」）
+  - matrix.def なしで作った辞書は、使われている文脈 ID を覆うゼロ行列を置き、メタデータに `zero_matrix=true` を書く
+  - `--prune-dominated` を付けた最終辞書は flags とメタデータに記録し、`merge`・`repair` の入力にできない
+  - 書き出しは同じディレクトリの一時ファイル → rename（mmap 中の他プロセスを壊さない）
 - **拡張子**: `.hsd` (hasami dictionary)
 
 ## CLI コマンド
@@ -64,9 +85,10 @@ hasami/
 - `hasami merge` - 既存辞書にCSVを追加マージ
 - `hasami tokenize` - 形態素解析
 - `hasami bench` - ベンチマーク
-- `hasami info` - 辞書情報表示
+- `hasami info` - 辞書情報表示（メタデータ・セクションのサイズ。`--verify` で全件検証）
 - `hasami repair` - 誤読エントリの修復・除去（範囲外の文脈 ID、表記ゆれ、漢数字の人名、削除リスト）
-- `hasami export` - 辞書のエントリを MeCab 形式 CSV に書き出す（活用型・活用形は .hsd に無いので `*`）
+- `hasami export` - 辞書のエントリを MeCab 形式 CSV に書き出す（活用型・活用形も出る）
+- build / merge / repair 共通: `--meta key=value`（メタデータ）、`--prune-dominated`（支配エントリを除いた最終辞書）
 
 ## ビルド・テスト
 ```bash
