@@ -1,7 +1,7 @@
 """配布辞書用に IPAdic のソースを整える.
 
 上流の mecab-ipadic は書き換えず、`hasami build` に渡すディレクトリを別に作る。
-辞書 CSV と matrix.def はリンクを張り、次の 2 点だけを変える。
+辞書 CSV と matrix.def はリンクを張り、次の 3 点だけを変える。
 
 1. 記号の未知語 (char.def・unk.def)
    IPAdic の char.def は U+2000..206F (— 等)・U+3000..303F (全角スペース・。、「」 等)・
@@ -12,7 +12,15 @@
      char.def  SYMBOL 1 1 0 → SYMBOL 0 0 0 (既知語がある位置では未知語を作らず、作るときも 1 文字ずつ)
      unk.def   SYMBOL → 記号,一般 (文脈 ID・コストは DEFAULT と同じ 5,5,4769)
 
-2. EUC-JP の変換差を埋める別表記 (variants.csv)
+2. 未知語の候補 (char.def)
+   hasami は char.def を MeCab と同じ意味で読む (group なら同じ文字種の並び全体、続けて 1〜length 字の接頭辞)。
+   IPAdic の値のままだと、ひらがなの並びが 1 つの名詞になり (「なき / ゃいけないってこともないし」)、
+   英数字は 1 文字に分けられない (「04D」「08月」)。カタカナは並び全体を 1 語にしたい (「ブログ」
+   「モチベーション」) ので IPAdic のまま (1 1 2) にし、ほかを次のように変える。
+     char.def  HIRAGANA 0 1 2 → 0 0 2、ALPHA・NUMERIC 1 1 0 → 1 1 1
+     char.def  中黒 U+30FB と × U+00D7・÷ U+00F7 を SYMBOL に (カタカナ・英字の並びを切る)
+
+3. EUC-JP の変換差を埋める別表記 (variants.csv)
    IPAdic の CSV は EUC-JP で、JIS X 0208 のうち 7 字 (0xA1BD のダッシュ、0xA1C1 の波ダッシュ、
    0xA1DD のマイナスなど) は変換表によって写し先が分かれる。hasami は JIS の対応表どおり
    (iconv・MeCab と同じ)「—」U+2014「〜」U+301C「−」U+2212 等に写すが、Windows (CP932) 由来の
@@ -29,6 +37,24 @@ from pathlib import Path
 
 SYMBOL_CHAR_DEF = "SYMBOL 0 0 0"
 SYMBOL_UNK_DEF = "SYMBOL,5,5,4769,記号,一般,*,*,*,*,*"
+# 未知語の候補を MeCab から変えるカテゴリ (INVOKE GROUP LENGTH の意味は MeCab と同じ)
+#   HIRAGANA 0 1 2 → 0 0 2: 並び全体を候補にしない。MeCab は既知語の無い位置 (小書きの「ゃ」など) から
+#     続くひらがな (最大 25 字) を 1 つの名詞にする (「なき / ゃいけないってこともないし」)
+#   ALPHA・NUMERIC 1 1 0 → 1 1 1: 並び全体に加えて 1 文字も候補にする。「04D」「08月」を
+#     「0 / 4D」「0 / 8月」に分けて辞書の読みを使える (MeCab 式だと「04 / D」「08 / 月(ツキ)」)
+CATEGORY_CHAR_DEF = {
+    "HIRAGANA": "HIRAGANA 0 0 2",
+    "ALPHA": "ALPHA 1 1 1",
+    "NUMERIC": "NUMERIC 1 1 1",
+}
+# char.def の末尾に足す文字の割り当て (hasami は文字を含む範囲のうち開始位置が最も大きいものを使う)
+#   中黒は KATAKANA の範囲にあり、「ジョン・カーター」が 1 つの未知語になって読みを補えない (無音になる)
+#   × ÷ は ALPHA の範囲 0x00C0..0x00FF にあり、「microSD×C」「NIN×NIN」が 1 つの英字の未知語になる
+EXTRA_CHAR_RANGES = [
+    "0x30FB SYMBOL  # KATAKANA MIDDLE DOT",
+    "0x00D7 SYMBOL  # MULTIPLICATION SIGN",
+    "0x00F7 SYMBOL  # DIVISION SIGN",
+]
 
 # 変換表によって写し先が分かれる JIS X 0208 の字: JIS 側 (hasami・iconv) → CP932 側 (Windows)
 CP932_SIDE = {
@@ -65,22 +91,24 @@ def cp932_side(s: str) -> str:
 def patch_char_def(text: str) -> str:
     lines = text.splitlines()
     out = []
-    found = False
+    replace = {"SYMBOL": SYMBOL_CHAR_DEF, **CATEGORY_CHAR_DEF}
+    found = set()
     for line in lines:
         fields = line.split()
         if (
             fields
-            and fields[0] == "SYMBOL"
+            and fields[0] in replace
             and len(fields) >= 4
             and not fields[1].startswith("0x")
         ):
-            out.append(SYMBOL_CHAR_DEF)
-            found = True
+            out.append(replace[fields[0]])
+            found.add(fields[0])
         else:
             out.append(line)
-    if not found:
-        sys.exit("char.def: SYMBOL category not found")
-    return "\n".join(out) + "\n"
+    missing = replace.keys() - found
+    if missing:
+        sys.exit(f"char.def: categories not found: {sorted(missing)}")
+    return "\n".join([*out, *EXTRA_CHAR_RANGES]) + "\n"
 
 
 def patch_unk_def(text: str) -> str:
@@ -133,7 +161,8 @@ def main() -> None:
     )
 
     print(
-        f"char.def {SYMBOL_CHAR_DEF}; unk.def SYMBOL=記号,一般; "
+        f"char.def {SYMBOL_CHAR_DEF}, {', '.join(CATEGORY_CHAR_DEF.values())}, "
+        f"U+30FB/U+00D7/U+00F7 SYMBOL; unk.def SYMBOL=記号,一般; "
         f"{len(variants)} CP932-side variants of dashes, tildes and minus signs"
     )
 
