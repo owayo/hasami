@@ -2069,3 +2069,96 @@ fn test_distributed_dicts_verb_base_forms() {
         }
     }
 }
+
+// ==========================================================================
+// CLI（hasami tokenize の標準入力）
+// ==========================================================================
+
+/// `hasami tokenize` に標準入力を渡して (終了コードが 0 か, 標準出力, 標準エラー) を返す
+#[cfg(feature = "cli")]
+fn run_cli_tokenize(
+    dict: &std::path::Path,
+    args: &[&str],
+    input: &[u8],
+) -> (bool, Vec<u8>, String) {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    let mut child = Command::new(env!("CARGO_BIN_EXE_hasami"))
+        .arg("tokenize")
+        .arg("--dict")
+        .arg(dict)
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    let input = input.to_vec();
+    // 出力を読みながら書く（パイプが詰まらないように別スレッドで書く）
+    let writer = std::thread::spawn(move || {
+        let _ = stdin.write_all(&input);
+    });
+    let output = child.wait_with_output().unwrap();
+    writer.join().unwrap();
+    (
+        output.status.success(),
+        output.stdout,
+        String::from_utf8_lossy(&output.stderr).into_owned(),
+    )
+}
+
+#[cfg(feature = "cli")]
+#[test]
+fn test_cli_tokenize_stdin_matches_line_by_line_analysis() {
+    let tmp = std::env::temp_dir().join(format!("hasami_cli_stdin_{}.hsd", std::process::id()));
+    write_hsd(&test_builder(), &tmp);
+    let mut analyzer = Analyzer::load(&tmp).unwrap();
+
+    // 空行・空白だけの行・CRLF・1MB を超える長い行・並列に分かれる量の行・末尾に改行の無い行
+    let mut input = String::from("\n  \t\r\n私は猫です\r\n");
+    for i in 0..30_000 {
+        input.push_str(&format!("東京都に住んでいる人が多い{i}\n"));
+    }
+    input.push_str(&"東京都に住む".repeat(60_000));
+    input.push_str("\n東京に住む人\n私は猫です");
+
+    let expected_mecab: String = input
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .map(|l| format_mecab(&analyzer.tokenize(l)))
+        .collect();
+    let expected_wakachi: String = input
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .map(|l| format_wakachi(&analyzer.tokenize(l)) + "\n")
+        .collect();
+    for threads in ["1", "4"] {
+        let (ok, out, err) = run_cli_tokenize(&tmp, &["-j", threads], input.as_bytes());
+        assert!(ok, "{err}");
+        assert!(out == expected_mecab.as_bytes(), "mecab -j {threads}");
+        let (ok, out, err) = run_cli_tokenize(
+            &tmp,
+            &["-j", threads, "--format", "wakachi"],
+            input.as_bytes(),
+        );
+        assert!(ok, "{err}");
+        assert!(out == expected_wakachi.as_bytes(), "wakachi -j {threads}");
+    }
+
+    // 壊れた UTF-8 の行の手前までは出力し、エラーで終わる
+    let mut broken = "私は猫です\n東京都\n".as_bytes().to_vec();
+    broken.extend_from_slice(&[0xFF, b'\n']);
+    broken.extend_from_slice("猫\n".as_bytes());
+    let (ok, out, err) = run_cli_tokenize(&tmp, &["-j", "1"], &broken);
+    assert!(!ok);
+    assert!(err.contains("valid UTF-8"), "{err}");
+    let expected: String = ["私は猫です", "東京都"]
+        .iter()
+        .map(|l| format_mecab(&analyzer.tokenize(l)))
+        .collect();
+    assert_eq!(String::from_utf8(out).unwrap(), expected);
+    std::fs::remove_file(&tmp).unwrap();
+}
