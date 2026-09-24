@@ -1192,13 +1192,21 @@ fn test_drop_person_name_conflicting_with_pronoun() {
         "ミナト",
         "ミナト",
     ));
-    // 2 文字以上の人名は対象外
+    // 2 文字以上の人名は代名詞と衝突しても対象外。実辞書にある衝突をそのまま使う
+    // （代名詞「貴郎(アナタ)」と人名「貴郎(タカオ)」）
     builder.add_entry(entry(
-        "何々",
-        "名詞,固有名詞,人名,姓",
-        "何々",
-        "ガガ",
-        "ガガ",
+        "貴郎",
+        "名詞,代名詞,一般,*",
+        "貴郎",
+        "アナタ",
+        "アナタ",
+    ));
+    builder.add_entry(entry(
+        "貴郎",
+        "名詞,固有名詞,人名,名",
+        "貴郎",
+        "タカオ",
+        "タカオ",
     ));
 
     assert_eq!(builder.drop_conflicting_ortho_variants(), 1);
@@ -1207,7 +1215,8 @@ fn test_drop_person_name_conflicting_with_pronoun() {
     assert!(!readings.contains(&"ガ"));
     assert!(readings.contains(&"ナニ"));
     assert!(readings.contains(&"ミナト"));
-    assert!(readings.contains(&"ガガ"));
+    assert!(readings.contains(&"アナタ"));
+    assert!(readings.contains(&"タカオ"));
 }
 
 #[test]
