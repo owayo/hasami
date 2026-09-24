@@ -452,6 +452,9 @@ const UNK_FLAG: u32 = 0x8000_0000;
 /// カタカナの文字種の番号
 const KATAKANA: usize = type_index(CharType::Katakana);
 
+/// 空白の文字種の番号（char.def の SPACE。半角空白・タブ・改行）
+const SPACE: usize = type_index(CharType::Space);
+
 /// カタカナの並び全体の候補の規則を当てる長さの下限。並びを覆う既知語もこの字数以上のものだけを数える
 ///
 /// 2 字の語まで数えると、辞書にない人名が断片に割れる（ドミ / ニク、ゲイ / リー）。2 字のカタカナ語は
@@ -617,7 +620,8 @@ impl RunCover {
                 continue;
             }
             let crosses = rest[q - s - 1].iter().any(|n| {
-                let start = n.start as usize;
+                // ノードの start はつなぐ位置なので、表層の開始は空白を読み飛ばした位置
+                let start = chars.skip_spaces(n.start as usize);
                 start < s && q - start >= COMPOUND_MIN_CHARS && n.unknown_type().is_none()
             });
             if crosses {
@@ -674,6 +678,18 @@ impl ChunkChars {
 
     fn len(&self) -> usize {
         self.codes.len()
+    }
+
+    /// 位置 pos から空白（char.def の SPACE の文字）を読み飛ばした位置
+    ///
+    /// MeCab と同じく、空白はノードにせず、空白の後ろから始まる語を空白の前の位置につなぐ。ノードの
+    /// `start` はつなぐ位置なので、トークンの表層はこの位置から始まる。
+    #[inline]
+    fn skip_spaces(&self, pos: usize) -> usize {
+        match self.types.get(pos) {
+            Some(&t) if t as usize == SPACE => pos + self.runs[pos] as usize,
+            _ => pos,
+        }
     }
 }
 
@@ -986,27 +1002,33 @@ impl LatticeWorkspace {
             if prevs.is_empty() {
                 continue;
             }
-            let type_idx = chars.types[i] as usize;
+            // 語は位置 p から引く。空白は読み飛ばし、空白の後ろから始まる語を空白の前の位置 i につなぐ
+            // （MeCab と同じ。ノードの start は i）。末尾の空白なら何も作らない（EOS は i につなぐ）
+            let p = chars.skip_spaces(i);
+            if p == n {
+                continue;
+            }
+            let type_idx = chars.types[p] as usize;
             let unk = dict.unk_info(type_idx);
-            let run = chars.runs[i];
+            let run = chars.runs[p];
             // カタカナの並び（3 字以上）に入ったら、並びの各位置の辞書引きを先に済ませて表を作る
             if type_idx == KATAKANA
                 && unk.grouping.group()
                 && run as usize >= COMPOUND_MIN_CHARS
-                && !cover.contains(i)
+                && !cover.contains(p)
             {
                 cover.build(
-                    i,
-                    i + run as usize,
+                    p,
+                    p + run as usize,
                     input,
                     chars,
                     &view.trie,
-                    rest,
+                    &rest[p - i..],
                     known_reach,
                 )?;
             }
-            // この位置から引いた (語の終わり, 群)。カタカナの並びの中なら表を作るときに引いたもの
-            let hits = match cover.hits_at(i) {
+            // 位置 p から引いた (語の終わり, 群)。カタカナの並びの中なら表を作るときに引いたもの
+            let hits = match cover.hits_at(p) {
                 Some(hits) => hits,
                 None => {
                     scratch_hits.clear();
@@ -1014,7 +1036,7 @@ impl LatticeWorkspace {
                         input,
                         &chars.codes,
                         &chars.offsets,
-                        i,
+                        p,
                         |end, group| scratch_hits.push((end as u32, group)),
                     )?;
                     &scratch_hits[..]
@@ -1072,7 +1094,7 @@ impl LatticeWorkspace {
                 let skip_group = type_idx == KATAKANA
                     && unk.grouping.group()
                     && run as usize >= COMPOUND_MIN_CHARS
-                    && cover.suppresses(i);
+                    && cover.suppresses(p);
                 let mut added = false;
                 unk.grouping.for_each_len(run, |len| {
                     // group のときは、並び全体と同じ長さの候補は並び全体の候補だけ
@@ -1080,21 +1102,26 @@ impl LatticeWorkspace {
                         return;
                     }
                     added = true;
-                    rest[len as usize - 1].push(node);
+                    rest[p + len as usize - i - 1].push(node);
                 });
                 // 候補が無く、この位置から始まる既知語も無いときだけ 1 文字の未知語（MeCab と同じ）
                 if !added && !has_known {
-                    rest[0].push(node);
+                    rest[p - i].push(node);
                 }
             }
         }
 
         // --- EOS（left_id 0）の最良前ノードからトレースバック ---
-        // 位置 n にはいつも辿り着ける（辿り着ける位置からは、既知語・未知語の候補・1 文字の未知語の
-        // どれかで必ず先へ進める。ノードは入力の外で終わらない）
-        let (_, last) = best_prev(&lattice.ends[n], view.matrix_row(0));
+        // EOS は、末尾から見て最初にノードが終わる位置につなぐ（末尾の空白の手前。MeCab と同じ）。
+        // 空白でない文字はどれもノードに覆われる（辿り着ける位置からは、既知語・未知語の候補・1 文字の
+        // 未知語のどれかで必ず先へ進める。ノードは入力の外で終わらない）。ends[0] は BOS
+        let mut eos = n;
+        while lattice.ends[eos].is_empty() {
+            eos -= 1;
+        }
+        let (_, last) = best_prev(&lattice.ends[eos], view.matrix_row(0));
         lattice.path.clear();
-        let (mut pos, mut idx) = (n, last as usize);
+        let (mut pos, mut idx) = (eos, last as usize);
         loop {
             let node = lattice.ends[pos][idx];
             if node.is_boundary() {
@@ -1113,7 +1140,8 @@ impl LatticeWorkspace {
         for k in (0..path.len()).rev() {
             let (end_pos, idx) = path[k];
             let node = lattice.ends[end_pos as usize][idx as usize];
-            let (node_start, node_end) = (node.start as usize, end_pos as usize);
+            // 表層はつなぐ位置（node.start）から空白を読み飛ばした位置から始まる
+            let (node_start, node_end) = (chars.skip_spaces(node.start as usize), end_pos as usize);
             let start = chars.offsets[node_start] as usize;
             let end = chars.offsets[node_end] as usize;
             let surface = &input[start..end];
@@ -1122,7 +1150,7 @@ impl LatticeWorkspace {
             let dict_word = match node.unknown_type() {
                 Some(KATAKANA) if node_end - node_start >= COMPOUND_MIN_CHARS => {
                     // 前の語（BOS を含む）の right_id と、次の語（無ければ EOS の 0）の left_id
-                    let prev_right = lattice.ends[node_start][node.prev as usize].right_id;
+                    let prev_right = lattice.ends[node.start as usize][node.prev as usize].right_id;
                     let next_left = match k.checked_sub(1) {
                         Some(k) => {
                             let (pos, idx) = path[k];
@@ -1615,6 +1643,71 @@ mod tests {
         // 英字の並びは、3 字以上の既知語で覆えても 1 つの未知語のまま（SoftBank を Soft / Bank に割らない）
         let dict = cost_dict(&[("Soft", 3500, NOUN), ("Bank", 3500, NOUN)]);
         assert_eq!(segments(&dict, "SoftBank"), ["SoftBank*"]);
+    }
+
+    fn spans(tokens: &[Token]) -> Vec<(&str, usize, usize)> {
+        tokens
+            .iter()
+            .map(|t| (&*t.surface, t.start, t.end))
+            .collect()
+    }
+
+    #[test]
+    fn test_spaces_are_skipped() {
+        // 半角空白・タブ・改行はトークンにしない。トークンの位置は入力のバイト位置のまま
+        let dict = make_test_dict();
+        let mut ws = LatticeWorkspace::new();
+        let tokens = ws.tokenize("  東京 \tに\r\n住む  ", &dict).unwrap();
+        assert_eq!(
+            spans(&tokens),
+            [("東京", 2, 8), ("に", 10, 13), ("住む", 15, 21)]
+        );
+        assert!(ws.tokenize(" \t ", &dict).unwrap().is_empty());
+        // カタカナの並びの規則も空白の後ろの位置で効く
+        let dict = cost_dict(&[("オススメ", 3000, NOUN), ("アプリ", 3000, NOUN)]);
+        let tokens = LatticeWorkspace::new()
+            .tokenize(" オススメアプリ", &dict)
+            .unwrap();
+        assert_eq!(spans(&tokens), [("オススメ", 1, 13), ("アプリ", 13, 22)]);
+    }
+
+    #[test]
+    fn test_words_around_spaces_connect_directly() {
+        // 空白の前後の語を直接つなぐ（MeCab と同じ）。空白の未知語（右文脈 0）を挟むと、
+        // 0 → 接続詞 の接続コストが低いので「で」が接続詞になる
+        let mut builder = DictBuilder::new();
+        for (surface, id, pos) in [
+            ("東京", 1, "名詞,固有名詞,地域,一般"),
+            ("で", 2, "助詞,格助詞,一般,*"),
+            ("で", 3, "接続詞,*,*,*"),
+        ] {
+            builder.add_entry(DictEntry {
+                surface: surface.into(),
+                left_id: id,
+                right_id: id,
+                cost: 1000,
+                pos: pos.into(),
+                base_form: surface.into(),
+                ..Default::default()
+            });
+        }
+        let mut matrix = ConnectionMatrix::zeros(4, 4);
+        // costs[left_id * 4 + right_id]: 前の語の right_id → 次の語の left_id
+        matrix.costs[2 * 4 + 1] = 0; // 東京 → 格助詞
+        matrix.costs[3 * 4 + 1] = 2000; // 東京 → 接続詞
+        matrix.costs[2 * 4] = 1000; // 空白 → 格助詞
+        matrix.costs[3 * 4] = -1000; // 空白 → 接続詞
+        builder.set_matrix(matrix);
+        let dict = builder.build().unwrap();
+        let tokens = LatticeWorkspace::new().tokenize("東京 で", &dict).unwrap();
+        let got: Vec<(&str, &str)> = tokens.iter().map(|t| (&*t.surface, &*t.pos)).collect();
+        assert_eq!(
+            got,
+            [
+                ("東京", "名詞,固有名詞,地域,一般"),
+                ("で", "助詞,格助詞,一般,*")
+            ]
+        );
     }
 
     #[test]

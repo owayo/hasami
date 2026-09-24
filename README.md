@@ -84,6 +84,14 @@ flowchart TD
     VIT --> OUT["トークン列<br/>最良パスの語だけ素性（品詞・活用・読み）を復号"]
 ```
 
+### 空白
+
+半角空白・タブ・改行（char.def の SPACE の文字）は、MeCab と同じく読み飛ばしてトークンにしない。空白の前後の語は
+直接つながるので、「データを CSV で出力する」の「で」は空白の後ろでも格助詞のまま（空白をノードにしていたときは、
+記号,空白 からの接続コストが低い接続詞になっていた）。トークンの `start` / `end` は入力のバイト位置なので、
+空白はトークンの間の隙間になる（表層形をつなげても入力には戻らない）。全角の空白は IPAdic では辞書の語
+（記号,空白）なのでトークンになる（MeCab と同じ）。
+
 ### 未知語
 
 未知語の候補は MeCab と同じく char.def の group・length で作る（同じ文字種の並び全体と、1〜length 字の接頭辞）。
@@ -158,7 +166,7 @@ make dict-clean
 | `ipadic-neologd.hsd` | IPAdic に NEologd の seed を merge し、repair 一式（範囲外 ID・表記ゆれ・漢数字の人名・`dict/user-remove/*.csv`・一般語の固有名詞の降格）を掛けてから `dict/user/*.csv` を足す |
 | `ipadic-neologd-sudachi.hsd` | IPAdic + NEologd に SudachiDict の raw 辞書を `scripts/convert_sudachi_raw.py` で変換して merge し、同じ repair 一式を掛ける |
 
-`scripts/prepare_ipadic.py` は上流の IPAdic を書き換えずに、次の 3 点を変えたソースを作る（何を変えたかは
+`scripts/prepare_ipadic.py` は上流の IPAdic を書き換えずに、次の 4 点を変えたソースを作る（何を変えたかは
 辞書のメタデータ `ipadic_patch` に残る）。
 
 - **記号の未知語**: IPAdic の char.def は `— 。 、 「 ♪ ⇒` などを SYMBOL（まとめて 1 語）にし、unk.def はその未知語を
@@ -173,6 +181,8 @@ make dict-clean
 - **EUC-JP の変換差**: IPAdic の CSV は EUC-JP で、ダッシュ・波ダッシュ・マイナスなど 7 字は変換表によって
   写し先が分かれる。hasami は JIS の対応表どおり（MeCab と同じ）「—」「〜」「−」に写し、Windows 由来の文章が使う
   「―」「～」「－」の別表記を表層形に足す（33 語。「あ〜」と「あ～」のどちらでも感動詞「アー」になる）
+- **空白の文字**: IPAdic の char.def は SPACE に `0x00D0`（Ð）を入れている。ほかの行（タブ・改行）から見て復帰 `0x000D` の
+  書き間違いなので `0x000D` に直す（空白は読み飛ばすので、そのままだと「Ð」が解析結果から消える）
 
 SudachiDict は内容語（名詞・固有名詞・形状詞・連体詞・副詞・接続詞・感動詞・動詞・形容詞）と記号だけを取り込み、
 IPAdic・NEologd・`dict/user` に表層形がある語は落とす。品詞は IPAdic 体系に写し、文脈 ID は IPAdic の left-id.def から
