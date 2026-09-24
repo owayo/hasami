@@ -19,6 +19,11 @@
 //! 8. 例外表に載っている語の内側の文末記号では分割しない（`Yahoo!ニュース`）。語の末尾の
 //!    文末記号は、直後が助詞（の・は・が・を・に・と・で・も・や・へ）で始まるときだけ分割しない
 //!    （`モーニング娘。のライブ。` は 1 文、`好きなのはモーニング娘。次の話題。` は 2 文）
+//! 9. 全角ピリオド `．` と半角の句点 `｡` は、前後がどちらも数字（半角・全角）なら文末にしない
+//!    （`３．１４`、`第３．２節`）。`…を述べる．３章では…` のように片側だけが数字なら文末にする
+//!
+//! 規則で使う字の集合は、[`is_sentence_ender`]・[`ascii_run_is_ender`]・[`closing_bracket`]・
+//! [`is_closing_bracket`] で同じ基準のまま判定できる。
 //!
 //! 例外表は、推奨辞書から抽出した組み込みの表（[`builtin_exceptions`]）と、利用者が加える語
 //! （[`SplitOptions::extra_exceptions`]）からなる。1 つの文末記号を複数の語の出現が覆うときは、
@@ -287,7 +292,11 @@ impl Splitter {
             let len = c.len_utf8() as u8;
             match classify(c) {
                 CharKind::Other => {}
-                CharKind::Ender => emit(self.ender_mark(text, i, c, true)),
+                CharKind::Ender => {
+                    if !is_decimal_point(text, i, c) {
+                        emit(self.ender_mark(text, i, c, true));
+                    }
+                }
                 CharKind::AsciiEnder => {
                     // 規則 4: 連続の直後の文字で、連続全体が文末として働くかを決める
                     let run_end = bytes[i..]
@@ -462,9 +471,12 @@ fn push_sentence(
     });
 }
 
-/// 文末記号か（規則 4 の前後の文字による判定は含まない）
+/// 文末記号か（規則 1 の `。！？!?‼⁇⁈⁉．｡`）
+///
+/// 字だけで決まる集合で、前後の字による判定（規則 4 の ASCII の `!` `?`、規則 9 の数字に挟まれた
+/// `．` `｡`）は含まない。ASCII の `!` `?` の連続が文末として働くかは [`ascii_run_is_ender`] で判定する。
 #[inline]
-pub(crate) fn is_sentence_ender(c: char) -> bool {
+pub fn is_sentence_ender(c: char) -> bool {
     matches!(
         c,
         '。' | '！' | '？' | '!' | '?' | '‼' | '⁇' | '⁈' | '⁉' | '．' | '｡'
@@ -474,14 +486,29 @@ pub(crate) fn is_sentence_ender(c: char) -> bool {
 /// ASCII の `!` `?` の連続が、直後の文字 `next` のもとで文末として働くか（規則 4）
 ///
 /// 直後が英数字・ASCII 記号なら文末にしない（`?id=1`、`!important`）。直後が空白・日本語・
-/// 閉じ括弧・行末（`None`）なら文末にする。
-pub(crate) fn ascii_run_is_ender(next: Option<char>) -> bool {
+/// 閉じ括弧・行末（`None`）なら文末にする。`?!` のような連続は、最後の字の直後の文字を渡す。
+pub fn ascii_run_is_ender(next: Option<char>) -> bool {
     match next {
         None => true,
         Some(c) => {
             matches!(c, ')' | ']' | '}') || !(c.is_ascii_alphanumeric() || c.is_ascii_punctuation())
         }
     }
+}
+
+/// 位置 `pos` の全角ピリオド `．`・半角の句点 `｡` が、数字に挟まれた小数点や節番号の区切りか（規則 9）
+///
+/// 前後の字がどちらも数字（半角・全角）なら文末にしない（`３．１４`、`第３．２節`）。片側だけを
+/// 見ると、`．` を句点に使う文書の「…を述べる．３章では…」をつないでしまうので、両側を見る。
+#[inline]
+fn is_decimal_point(text: &str, pos: usize, c: char) -> bool {
+    let is_digit = |c: char| c.is_ascii_digit() || ('０'..='９').contains(&c);
+    (c == '．' || c == '｡')
+        && text[..pos].chars().next_back().is_some_and(is_digit)
+        && text[pos + c.len_utf8()..]
+            .chars()
+            .next()
+            .is_some_and(is_digit)
 }
 
 /// 分割に関わりうる文字の先頭バイトか
@@ -555,6 +582,44 @@ fn classify(c: char) -> CharKind {
             None => CharKind::Other,
         },
     }
+}
+
+/// 開き括弧 `open` に対応する閉じ括弧（規則 2 の開き括弧でなければ `None`）
+///
+/// `〝` には `〟` を返す（`〝` は `〞` でも閉じる。[`is_closing_bracket`] は両方を閉じ括弧とみなす）。
+/// 開閉が同じ字の ASCII 引用符（`"` `'`）は括弧として扱わないので `None`。
+pub fn closing_bracket(open: char) -> Option<char> {
+    Some(match open {
+        '「' => '」',
+        '『' => '』',
+        '（' => '）',
+        '(' => ')',
+        '〔' => '〕',
+        '［' => '］',
+        '[' => ']',
+        '｛' => '｝',
+        '{' => '}',
+        '〈' => '〉',
+        '《' => '》',
+        '【' => '】',
+        '〖' => '〗',
+        '〘' => '〙',
+        '〚' => '〛',
+        '｟' => '｠',
+        '“' => '”',
+        '‘' => '’',
+        '«' => '»',
+        '‹' => '›',
+        '｢' => '｣',
+        '〝' => '〟',
+        _ => return None,
+    })
+}
+
+/// 閉じ括弧か（規則 2 の閉じ括弧。`〟` と `〞` を含む）
+#[inline]
+pub fn is_closing_bracket(c: char) -> bool {
+    matches!(bracket(c), Some((_, false)))
 }
 
 /// 括弧の種類の数

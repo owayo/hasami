@@ -1,7 +1,7 @@
 //! 辞書モジュール - エントリ、接続コスト行列、辞書構築
 //!
 //! エントリ・未知語テンプレート・接続行列の型は解析側（[`crate::Dictionary`] の書き出し・取り込み）でも
-//! 使うので常に入る。辞書を組み立てる [`DictBuilder`] と CSV の読み書きは `build` feature
+//! 使うので `analyzer` feature で入る。辞書を組み立てる `DictBuilder` と CSV の読み書きは `build` feature
 //! （csv・encoding_rs・glob に依存）に閉じ込める。
 
 use std::sync::Arc;
@@ -16,7 +16,7 @@ pub use builder::*;
 /// 活用型・活用形が無い語は `*`（MeCab 形式 CSV と同じ）。空文字列は書き出し時に `*` にそろえる。
 #[derive(Clone, Debug, Default)]
 pub struct DictEntry {
-    /// 表層形（Arc<str>で共有参照）
+    /// 表層形（`Arc<str>` で共有参照）
     pub surface: Arc<str>,
     /// 左文脈ID
     pub left_id: u16,
@@ -24,7 +24,7 @@ pub struct DictEntry {
     pub right_id: u16,
     /// 単語コスト
     pub cost: i16,
-    /// 品詞情報（カンマ区切り）- Arc<str>で共有参照（クローンコスト最小）
+    /// 品詞情報（カンマ区切り）- `Arc<str>` で共有参照（クローンコスト最小）
     pub pos: Arc<str>,
     /// 活用型（MeCab 形式 CSV の 9 列目）
     pub conj_type: Arc<str>,

@@ -223,8 +223,8 @@ pub struct FeatureRef<'a> {
     pub pronunciation: Option<PackedStr<'a>>,
     /// None なら表層形と同じ
     pub base_form: Option<PackedStr<'a>>,
-    /// レコードの終わりの位置
-    #[cfg(test)]
+    /// レコードの終わりの位置（`build` feature のテストだけが読む）
+    #[cfg(all(test, feature = "build"))]
     pub end: usize,
 }
 
@@ -279,7 +279,7 @@ pub fn decode(blob: &[u8], offset: usize) -> Result<FeatureRef<'_>, DictError> {
         let (s, pos) = read_str(blob, pos, flags & PRON_KANA != 0, offset)?;
         (Some(s), pos)
     };
-    #[cfg_attr(not(test), allow(unused_variables))]
+    #[cfg_attr(not(all(test, feature = "build")), allow(unused_variables))]
     let (base_form, pos) = if flags & BASE_IS_SURFACE != 0 {
         (None, pos)
     } else {
@@ -293,7 +293,7 @@ pub fn decode(blob: &[u8], offset: usize) -> Result<FeatureRef<'_>, DictError> {
         reading,
         pronunciation,
         base_form,
-        #[cfg(test)]
+        #[cfg(all(test, feature = "build"))]
         end: pos,
     })
 }
