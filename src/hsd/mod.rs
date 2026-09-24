@@ -14,9 +14,10 @@ pub mod meta;
 pub(crate) mod reader;
 pub(crate) mod records;
 pub(crate) mod strtab;
-#[cfg(test)]
+#[cfg(all(test, feature = "build"))]
 mod tests;
 pub mod trie;
+#[cfg(feature = "build")]
 pub(crate) mod writer;
 
 use std::fmt;
@@ -24,6 +25,7 @@ use std::io;
 
 pub use meta::{Meta, PosScheme};
 pub use reader::{Dictionary, VerifyReport};
+#[cfg(feature = "build")]
 pub use writer::{WriteOptions, WriteStats};
 
 /// 辞書の読み込み・書き出し・解析で起きるエラー

@@ -8,9 +8,11 @@ pub mod dict;
 pub mod ffi;
 pub mod hsd;
 pub mod lattice;
+pub mod pos;
 pub mod sentence;
 
 pub use analyzer::Analyzer;
 pub use dict::DictEntry;
 pub use hsd::{DictError, Dictionary};
 pub use lattice::Token;
+pub use pos::CoarsePos;

@@ -9,6 +9,7 @@ use indicatif::{ProgressBar, ProgressStyle};
 use std::io::{self, BufRead, Write};
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Instant;
 
 #[derive(Parser)]
@@ -152,6 +153,14 @@ enum Commands {
         #[arg(long, value_name = "CSV")]
         remove: Vec<PathBuf>,
 
+        /// 一般語に付いた「名詞,固有名詞,一般」を一般名詞に降格する。値は IPAdic 単体の辞書 (.hsd)。
+        /// 表層形をこの辞書で解析して「一般名詞・サ変接続・形容動詞語幹 + 一般名詞を作る接尾辞」に
+        /// 分かれる語 (成果物・多角的・可視化・安全性・担当者 等) を、名詞,一般 (語末が「化」なら
+        /// 名詞,サ変接続、「的」なら名詞,形容動詞語幹) にし、文脈 ID もその品詞のものにする。
+        /// 参照辞書は修復する辞書と同じ接続行列を持つこと
+        #[arg(long, value_name = "IPADIC_HSD")]
+        demote_common_proper_nouns: Option<PathBuf>,
+
         /// 修復後に追加マージする MeCab 形式 CSV またはそのディレクトリ。複数指定可
         #[arg(long, value_name = "PATH")]
         merge: Vec<PathBuf>,
@@ -215,6 +224,7 @@ fn run() -> io::Result<()> {
             drop_ortho_variants,
             drop_numeral_misreadings,
             remove,
+            demote_common_proper_nouns,
             merge,
             write,
         } => cmd_repair(
@@ -227,6 +237,7 @@ fn run() -> io::Result<()> {
                 drop_ortho_variants,
                 drop_numeral_misreadings,
                 remove: &remove,
+                demote_common_proper_nouns: demote_common_proper_nouns.as_deref(),
                 merge: &merge,
             },
         ),
@@ -498,6 +509,7 @@ struct RepairOptions<'a> {
     drop_ortho_variants: bool,
     drop_numeral_misreadings: bool,
     remove: &'a [PathBuf],
+    demote_common_proper_nouns: Option<&'a Path>,
     merge: &'a [PathBuf],
 }
 
@@ -507,8 +519,9 @@ struct RepairOptions<'a> {
 ///    これらを借用元に使わないよう、最初に落とす
 /// 2. 壊れた発音の修復（`--no-pronunciation-repair` を付けなければ常に行う）
 /// 3. 汎用フィルタによる除去（`--drop-ortho-variants` / `--drop-numeral-misreadings`）
-/// 4. 削除リスト CSV の適用（`--remove`）
-/// 5. CSV の追加マージ（`--merge`）
+/// 4. 削除リスト CSV の適用（`--remove`）。削除リストは上流の辞書の品詞で書くので、降格より先に適用する
+/// 5. 一般語の固有名詞の降格（`--demote-common-proper-nouns`）
+/// 6. CSV の追加マージ（`--merge`）。追加する語は降格の対象にしない
 ///
 /// 行った操作はメタデータの `repairs` に書き足す。
 fn cmd_repair(
@@ -571,6 +584,39 @@ fn cmd_repair(
         ops.push(format!("remove:{}", file_name(path)));
     }
 
+    let mut demoted = 0;
+    if let Some(reference_path) = opts.demote_common_proper_nouns {
+        eprintln!(
+            "Loading reference dictionary for demotion: {}",
+            reference_path.display()
+        );
+        let reference = Arc::new(Dictionary::load(reference_path)?);
+        let stats = builder.demote_common_proper_nouns(&reference)?;
+        eprintln!(
+            "Demoted {} of {} 名詞,固有名詞,一般 entries that {} splits into common nouns + a suffix",
+            stats.demoted,
+            stats.examined,
+            file_name(reference_path)
+        );
+        for p in &stats.by_pos {
+            eprintln!(
+                "  -> {}: {} entries (left_id={}, right_id={})",
+                p.pos, p.entries, p.left_id, p.right_id
+            );
+        }
+        let suffixes: Vec<String> = stats
+            .by_suffix
+            .iter()
+            .map(|(s, n)| format!("{s}:{n}"))
+            .collect();
+        eprintln!("  by suffix: {}", suffixes.join(" "));
+        for sample in &stats.samples {
+            eprintln!("  demote: {sample}");
+        }
+        demoted = stats.demoted;
+        ops.push("demote-common-proper-nouns".into());
+    }
+
     let mut added = 0;
     for path in opts.merge {
         let before = builder.entry_count();
@@ -587,7 +633,7 @@ fn cmd_repair(
 
     let output_path = output.map_or_else(|| dict_path.to_path_buf(), |p| p.to_path_buf());
     let output_path = ensure_hsd_extension(&output_path);
-    let unchanged = fixed == 0 && dropped == 0 && added == 0;
+    let unchanged = fixed == 0 && dropped == 0 && demoted == 0 && added == 0;
     if unchanged && output_path == dict_path && !write.prune_dominated && write.meta.is_empty() {
         eprintln!("No entries to fix. Skipping rebuild.");
         return Ok(());

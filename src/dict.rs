@@ -1,8 +1,10 @@
 //! 辞書モジュール - エントリ、接続コスト行列、辞書構築
 
+use crate::analyzer::Analyzer;
 use crate::char_class::{CharClass, CharClassifier};
 use crate::hsd::writer::{self, DictSource};
 use crate::hsd::{DictError, Dictionary, Meta, WriteOptions, WriteStats};
+use crate::lattice::Token;
 use std::collections::HashMap;
 use std::io;
 use std::path::Path;
@@ -235,9 +237,217 @@ const INVALID_CONTEXT_ID_SAMPLE: usize = 5;
 ///
 /// `,` で区切った要素単位の前方一致をとる。文字列としての前方一致ではないので、
 /// `名詞,固有名詞,人` は `名詞,固有名詞,人名,姓` に一致しない。`prefix` が空なら常に真。
-fn pos_has_prefix(pos: &str, prefix: &[String]) -> bool {
+fn pos_has_prefix<S: AsRef<str>>(pos: &str, prefix: &[S]) -> bool {
     let mut parts = pos.split(',');
-    prefix.iter().all(|p| parts.next() == Some(p.as_str()))
+    prefix.iter().all(|p| parts.next() == Some(p.as_ref()))
+}
+
+/// 固有名詞の降格で、語末に来てよい接尾辞（IPAdic で「名詞,接尾」の語）
+///
+/// NEologd の「名詞,固有名詞,一般」には、IPAdic で「一般名詞 + 接尾辞」に分かれる語が 3.7 万あるが、
+/// 接尾辞の品詞だけでは一般語と固有名詞を分けられない。「名詞,接尾,一般」にも「〜線」（路線名）
+/// 「〜法」（法律名）「〜院」（寺院名）「〜会」（団体名）「〜社」「〜賞」のように固有名詞を作る語が多い。
+/// そこで一般名詞を作る接尾辞だけを表層形で挙げる。載せたのは、SudachiDict で普通名詞と固有名詞の
+/// どちらに分類されているかを参照し、候補をすべて目で見て、固有名詞がほぼ混ざらない接尾辞
+/// （「〜度」は 87 語中「公孫度」など歴史上の人名 2 語だけ）。「〜書」（「唐書」「梁書」）・「〜式」
+/// （「公文式」「ねじ式」）は作品名・商標が数 % 混ざるので外した。「〜機」「〜車」「〜家」「〜士」
+/// 「〜師」「〜虫」も境界を確かめていないので入れていない
+const COMMON_NOUN_SUFFIXES: [&str; 28] = [
+    "的", "化", "性", "者", "物", "論", "学", "力", "率", "感", "度", "費", "料", "権", "症", "型",
+    "系", "制", "体", "器", "業", "剤", "員", "官", "数", "罪", "病", "術",
+];
+
+/// 固有名詞の降格で、語の途中に来てよい接尾辞（「心理/的/安全/性」の「的」）
+const INNER_COMMON_NOUN_SUFFIX: &str = "的";
+
+/// 固有名詞の降格で、ログに出す降格例の件数
+const DEMOTION_SAMPLE: usize = 20;
+
+/// 一般語の固有名詞を降格する先の品詞
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum DemotedPos {
+    /// 名詞,一般（「成果物」「安全性」「担当者」）
+    General,
+    /// 名詞,サ変接続（語末が「化」。「可視化」「言語化」）
+    Sahen,
+    /// 名詞,形容動詞語幹（語末が「的」。「多角的」「包括的」）
+    AdjectivalStem,
+}
+
+impl DemotedPos {
+    const ALL: [DemotedPos; 3] = [Self::General, Self::Sahen, Self::AdjectivalStem];
+
+    /// 品詞の文字列（IPAdic のエントリと同じ 4 要素）
+    fn pos(self) -> &'static str {
+        match self {
+            Self::General => "名詞,一般,*,*",
+            Self::Sahen => "名詞,サ変接続,*,*",
+            Self::AdjectivalStem => "名詞,形容動詞語幹,*,*",
+        }
+    }
+
+    /// 語末の接尾辞から降格先を決める
+    fn for_suffix(suffix: &str) -> Self {
+        match suffix {
+            "化" => Self::Sahen,
+            "的" => Self::AdjectivalStem,
+            _ => Self::General,
+        }
+    }
+}
+
+/// 一般名詞の語基（接尾辞の前に来てよい品詞）かどうか
+fn is_common_noun_stem(pos: &str) -> bool {
+    pos_has_prefix(pos, &["名詞", "一般"])
+        || pos_has_prefix(pos, &["名詞", "サ変接続"])
+        || pos_has_prefix(pos, &["名詞", "形容動詞語幹"])
+}
+
+/// 参照辞書（IPAdic 単体）の解析結果から、固有名詞の降格先を決める
+///
+/// 次をすべて満たすときだけ降格する（満たさなければ None）。
+/// 1. 2 語以上に分かれ、すべて既知語で、表層形を過不足なく覆う（英字などの未知語を含む語は
+///    「AACTA賞」のような名称が多いので除く）
+/// 2. 最後の語が「名詞,接尾」で、表層形が [`COMMON_NOUN_SUFFIXES`] にある
+/// 3. それより前は一般名詞・サ変接続・形容動詞語幹の連続。途中の接尾辞は「的」だけを許し、
+///    前後に語基を置く（「心理/的/安全/性」は通し、接尾辞が続く列は通さない）
+///
+/// Returns: 降格先の品詞と語末の接尾辞
+fn demotion_target(surface: &str, tokens: &[Token]) -> Option<(DemotedPos, &'static str)> {
+    let (last, body) = tokens.split_last()?;
+    if body.is_empty() || tokens.iter().any(|t| !t.is_known) {
+        return None;
+    }
+    let mut rest = surface;
+    for t in tokens {
+        rest = rest.strip_prefix(&*t.surface)?;
+    }
+    if !rest.is_empty() || !pos_has_prefix(&last.pos, &["名詞", "接尾"]) {
+        return None;
+    }
+    let suffix = COMMON_NOUN_SUFFIXES
+        .iter()
+        .copied()
+        .find(|s| *s == &*last.surface)?;
+    // 直前の語が語基か（語頭では偽。途中の「的」の前後と、最後の接尾辞の前に語基を求める）
+    let mut after_stem = false;
+    for t in body {
+        if is_common_noun_stem(&t.pos) {
+            after_stem = true;
+        } else if after_stem
+            && &*t.surface == INNER_COMMON_NOUN_SUFFIX
+            && pos_has_prefix(&t.pos, &["名詞", "接尾"])
+        {
+            after_stem = false;
+        } else {
+            return None;
+        }
+    }
+    after_stem.then(|| (DemotedPos::for_suffix(suffix), suffix))
+}
+
+/// 固有名詞の降格で、参照辞書の解析に使うスレッド数の上限
+const DEMOTION_THREADS_MAX: usize = 16;
+
+/// 表層形を参照辞書で解析し、それぞれの降格先と語末の接尾辞を求める
+///
+/// 推奨辞書では「名詞,固有名詞,一般」の表層形が 140 万あるので、スレッドに分けて解析する。
+fn analyze_demotion_targets(
+    reference: &Arc<Dictionary>,
+    surfaces: &[&str],
+) -> Result<Vec<Option<(DemotedPos, &'static str)>>, DictError> {
+    if surfaces.is_empty() {
+        return Ok(Vec::new());
+    }
+    let threads = std::thread::available_parallelism()
+        .map_or(1, |n| n.get())
+        .min(DEMOTION_THREADS_MAX);
+    let chunk = surfaces.len().div_ceil(threads);
+    std::thread::scope(|scope| {
+        let workers: Vec<_> = surfaces
+            .chunks(chunk)
+            .map(|part| {
+                let mut analyzer = Analyzer::from_shared(Arc::clone(reference));
+                scope.spawn(move || {
+                    part.iter()
+                        .map(|surface| {
+                            let tokens = analyzer.try_tokenize(surface)?;
+                            Ok(demotion_target(surface, &tokens))
+                        })
+                        .collect::<Result<Vec<_>, DictError>>()
+                })
+            })
+            .collect();
+        let mut out = Vec::with_capacity(surfaces.len());
+        for worker in workers {
+            out.extend(worker.join().expect("demotion worker panicked")?);
+        }
+        Ok(out)
+    })
+}
+
+/// 降格先の品詞ごとの文脈 ID と件数
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DemotedPosStats {
+    /// 降格先の品詞（`名詞,一般,*,*` など）
+    pub pos: String,
+    /// 付け替えた左文脈 ID（参照辞書でこの品詞のエントリが最も多く使う組）
+    pub left_id: u16,
+    /// 付け替えた右文脈 ID
+    pub right_id: u16,
+    /// この品詞に降格したエントリ数
+    pub entries: usize,
+}
+
+/// [`DictBuilder::demote_common_proper_nouns`] の結果
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct DemotionStats {
+    /// 判定したエントリ数（品詞が「名詞,固有名詞,一般」のもの）
+    pub examined: usize,
+    /// 降格したエントリ数
+    pub demoted: usize,
+    /// 降格先の品詞ごとの内訳（名詞,一般 → 名詞,サ変接続 → 名詞,形容動詞語幹 の順）
+    pub by_pos: Vec<DemotedPosStats>,
+    /// 語末の接尾辞ごとの降格件数（多い順）
+    pub by_suffix: Vec<(String, usize)>,
+    /// 降格したエントリの先頭の数件（`表層形 (読み) -> 品詞`）
+    pub samples: Vec<String>,
+}
+
+/// 参照辞書で降格先の品詞のエントリが最も多く使う (left_id, right_id) の組を求める
+///
+/// 左右を別々に数えると実在しない組を作りうるので、組で数える。同数なら ID の小さい組を採る。
+fn demoted_context_ids(
+    reference: &Dictionary,
+) -> Result<HashMap<DemotedPos, (u16, u16)>, DictError> {
+    let mut counts: HashMap<(DemotedPos, u16, u16), usize> = HashMap::new();
+    reference.for_each_entry(|e| {
+        if let Some(&target) = DemotedPos::ALL.iter().find(|p| *e.pos == *p.pos()) {
+            *counts.entry((target, e.left_id, e.right_id)).or_default() += 1;
+        }
+        Ok(())
+    })?;
+    let mut best: HashMap<DemotedPos, (usize, u16, u16)> = HashMap::new();
+    for ((target, left, right), n) in counts {
+        let slot = best.entry(target).or_insert((n, left, right));
+        if (n, std::cmp::Reverse((left, right))) > (slot.0, std::cmp::Reverse((slot.1, slot.2))) {
+            *slot = (n, left, right);
+        }
+    }
+    DemotedPos::ALL
+        .iter()
+        .map(|&target| {
+            best.get(&target)
+                .map(|&(_, left, right)| (target, (left, right)))
+                .ok_or_else(|| {
+                    DictError::invalid(format!(
+                        "the reference dictionary has no `{}` entries to take context IDs from; \
+                         pass an IPAdic dictionary",
+                        target.pos()
+                    ))
+                })
+        })
+        .collect()
 }
 
 /// [`DictBuilder::drop_entries_from_csv`] で CSV を適用した結果
@@ -816,6 +1026,113 @@ impl DictBuilder {
                     .unmatched_samples
                     .push(format!("{}: {}", rule.line_no, rule.text));
             }
+        }
+        Ok(stats)
+    }
+
+    /// 一般語に付いた「名詞,固有名詞,一般」を一般名詞に降格する
+    ///
+    /// NEologd は「成果物」「多角的」「可視化」「安全性」「担当者」のような一般語を
+    /// 「名詞,固有名詞,一般」で登録している。固有名詞を具体性の手掛かりに数える処理
+    /// （文章の Linter 等）では、抽象的な文が具体的に見えてしまう。
+    ///
+    /// `reference`（IPAdic 単体の辞書）で表層形を解析し、「一般名詞・サ変接続・形容動詞語幹の
+    /// 連続 + 一般名詞を作る接尾辞」に分かれるエントリを、`名詞,一般`（語末が「化」なら
+    /// `名詞,サ変接続`、「的」なら `名詞,形容動詞語幹`）に変える。判定の条件は `demotion_target`、
+    /// 接尾辞の一覧は `COMMON_NOUN_SUFFIXES` を参照。人名・地域・組織（固有名詞の他の下位分類）は
+    /// 対象にしない。
+    ///
+    /// 品詞に合わせて文脈 ID も付け替える（参照辞書でその品詞のエントリが最も多く使う組）。
+    /// コスト・原形・読み・発音は変えない。文脈 ID を持ち込むので、参照辞書はこの辞書と同じ
+    /// 接続行列を持っていなければならない（違えばエラー）。
+    pub fn demote_common_proper_nouns(
+        &mut self,
+        reference: &Arc<Dictionary>,
+    ) -> Result<DemotionStats, DictError> {
+        match (&self.matrix, reference.connection_matrix()) {
+            (None, _) => {}
+            (Some(ours), Some(theirs))
+                if ours.num_left == theirs.num_left
+                    && ours.num_right == theirs.num_right
+                    && ours.costs == theirs.costs => {}
+            _ => {
+                return Err(DictError::invalid(
+                    "the reference dictionary for --demote-common-proper-nouns has a different \
+                     connection matrix, so its context IDs mean something else in this dictionary; \
+                     pass the IPAdic dictionary this one was built from",
+                ));
+            }
+        }
+        let context_ids = demoted_context_ids(reference)?;
+
+        // 表層形ごとに 1 回だけ解析する（同じ表層形のエントリが複数ある）
+        let mut candidates: Vec<usize> = Vec::new();
+        let mut surface_index: HashMap<&str, usize> = HashMap::new();
+        let mut surfaces: Vec<&str> = Vec::new();
+        for (i, e) in self.entries.iter().enumerate() {
+            if pos_has_prefix(&e.pos, &["名詞", "固有名詞", "一般"]) {
+                candidates.push(i);
+                surface_index.entry(&e.surface).or_insert_with(|| {
+                    surfaces.push(&e.surface);
+                    surfaces.len() - 1
+                });
+            }
+        }
+        let targets = analyze_demotion_targets(reference, &surfaces)?;
+        let decisions: Vec<(usize, DemotedPos, &str)> = candidates
+            .iter()
+            .filter_map(|&i| {
+                let surface = &*self.entries[i].surface;
+                targets[surface_index[surface]].map(|(target, suffix)| (i, target, suffix))
+            })
+            .collect();
+        drop(surface_index);
+        drop(surfaces);
+
+        let mut stats = DemotionStats {
+            examined: candidates.len(),
+            demoted: decisions.len(),
+            ..DemotionStats::default()
+        };
+        let mut per_pos: HashMap<DemotedPos, usize> = HashMap::new();
+        let mut per_suffix: HashMap<&str, usize> = HashMap::new();
+        for &(i, target, suffix) in &decisions {
+            *per_pos.entry(target).or_default() += 1;
+            *per_suffix.entry(suffix).or_default() += 1;
+            if stats.samples.len() < DEMOTION_SAMPLE {
+                let e = &self.entries[i];
+                stats
+                    .samples
+                    .push(format!("{} ({}) -> {}", e.surface, e.reading, target.pos()));
+            }
+        }
+        for target in DemotedPos::ALL {
+            let (left_id, right_id) = context_ids[&target];
+            stats.by_pos.push(DemotedPosStats {
+                pos: target.pos().to_string(),
+                left_id,
+                right_id,
+                entries: per_pos.get(&target).copied().unwrap_or(0),
+            });
+        }
+        stats.by_suffix = per_suffix
+            .into_iter()
+            .map(|(s, n)| (s.to_string(), n))
+            .collect();
+        stats
+            .by_suffix
+            .sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+
+        let pos: HashMap<DemotedPos, Arc<str>> = DemotedPos::ALL
+            .iter()
+            .map(|&target| (target, self.intern(target.pos())))
+            .collect();
+        for (i, target, _) in decisions {
+            let (left_id, right_id) = context_ids[&target];
+            let e = &mut self.entries[i];
+            e.pos = Arc::clone(&pos[&target]);
+            e.left_id = left_id;
+            e.right_id = right_id;
         }
         Ok(stats)
     }
@@ -1500,7 +1817,7 @@ mod tests {
     fn test_pos_has_prefix_is_element_wise() {
         let prefix = |s: &str| -> Vec<String> { s.split(',').map(String::from).collect() };
         let pos = "名詞,固有名詞,人名,姓";
-        assert!(pos_has_prefix(pos, &[]));
+        assert!(pos_has_prefix::<&str>(pos, &[]));
         assert!(pos_has_prefix(pos, &prefix("名詞,固有名詞,人名")));
         assert!(pos_has_prefix(pos, &prefix("名詞,固有名詞,人名,姓")));
         // 文字列としては前方一致でも、要素の途中で切れていれば一致しない

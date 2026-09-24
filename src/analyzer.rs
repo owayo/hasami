@@ -285,7 +285,7 @@ pub fn format_wakachi(tokens: &[Token]) -> String {
     output
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "build"))]
 mod tests {
     use super::*;
     use crate::dict::{DictBuilder, DictEntry};
@@ -380,7 +380,10 @@ mod tests {
         let mut analyzer = make_analyzer();
         let text = "私は猫です。  「私は猫です？」と私は猫です。";
         let sentences = analyzer.tokenize_sentences(text, &SplitOptions::default());
-        let ranges: Vec<&str> = sentences.iter().map(|(s, _)| &text[s.range.clone()]).collect();
+        let ranges: Vec<&str> = sentences
+            .iter()
+            .map(|(s, _)| &text[s.range.clone()])
+            .collect();
         assert_eq!(ranges, ["私は猫です。", "「私は猫です？」と私は猫です。"]);
         for (sentence, tokens) in &sentences {
             assert_eq!(tokens.first().unwrap().start, sentence.range.start);
@@ -400,14 +403,20 @@ mod tests {
         // 何も無ければ、探した場所を並べて NotFound
         match find_dict(None, Some(dir.clone())) {
             Err(DictError::NotFound(searched)) => {
-                assert!(searched.iter().any(|s| s.contains("hasami")), "{searched:?}")
+                assert!(
+                    searched.iter().any(|s| s.contains("hasami")),
+                    "{searched:?}"
+                )
             }
             other => panic!("{other:?}"),
         }
         // 推奨順の辞書が無ければ、ほかの .hsd を名前順で
         std::fs::write(hasami.join("zzz.hsd"), b"").unwrap();
         std::fs::write(hasami.join("custom.hsd"), b"").unwrap();
-        assert_eq!(find_dict(None, Some(dir.clone())).unwrap(), hasami.join("custom.hsd"));
+        assert_eq!(
+            find_dict(None, Some(dir.clone())).unwrap(),
+            hasami.join("custom.hsd")
+        );
         // 推奨順の辞書が優先
         std::fs::write(hasami.join("ipadic.hsd"), b"").unwrap();
         std::fs::write(hasami.join("ipadic-neologd-sudachi.hsd"), b"").unwrap();
