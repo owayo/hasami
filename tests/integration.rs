@@ -1590,18 +1590,37 @@ fn test_cli_repair_without_pronunciation_repair_keeps_symbol_readings() {
     );
 }
 
-/// 既定では発音の修復が走り、発音も読みもカタカナでない記号の読みは空になる
+/// 既定では発音の修復が走るが、記号の読み (記号そのもの) は空にしない
 #[test]
-fn test_cli_repair_clears_symbol_readings_by_default() {
+fn test_cli_repair_keeps_symbol_readings_by_default() {
     let entries = run_cli_repair("cli_repair_default", &[]);
-    assert!(
-        entries.contains(&("、".into(), String::new())),
-        "{entries:?}"
-    );
+    assert!(entries.contains(&("、".into(), "、".into())), "{entries:?}");
     assert!(
         !entries.contains(&("林".into(), "リン".into())),
         "{entries:?}"
     );
+}
+
+/// 読みも発音もカタカナでない記号以外の語 (ラテン文字の読み) は、発音の修復で読みを空にして
+/// 解析時の綴り読みに任せる
+#[test]
+fn test_repair_pronunciation_clears_latin_readings_but_keeps_symbols() {
+    let mut builder = DictBuilder::new();
+    builder.add_entry(entry("、", "記号,読点,*,*", "、", "、", "、"));
+    builder.add_entry(entry(
+        "Siemens",
+        "名詞,固有名詞,組織,*",
+        "Siemens",
+        "siemens",
+        "siemens",
+    ));
+    assert_eq!(builder.repair_pronunciation(), 1);
+    let readings: Vec<(&str, &str)> = builder
+        .entries()
+        .iter()
+        .map(|e| (&*e.surface, &*e.reading))
+        .collect();
+    assert_eq!(readings, vec![("、", "、"), ("Siemens", "")]);
 }
 
 /// matrix.def なしで作った辞書（使われている ID を覆うゼロ行列）を読み込んでも、文脈 ID の

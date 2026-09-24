@@ -16,7 +16,6 @@
 //! 検査してから無視する。
 
 use super::DictError;
-use std::collections::HashMap;
 use std::io::{self, Write};
 
 pub const MAGIC: [u8; 8] = *b"HSMDICT\0";
@@ -26,6 +25,8 @@ pub const SECTION_ENTRY_LEN: usize = 24;
 pub const MAX_SECTIONS: usize = 64;
 /// セクションの配置境界（キャッシュライン）
 pub const SECTION_ALIGN: usize = 64;
+/// 既知のセクション id の最大値 + 1（id で引く配列の長さ）
+const SECTION_SLOTS: usize = SectionId::CategoryNames as usize + 1;
 
 /// flags の bit0: 支配エントリを除いた最終辞書（repair・merge の入力にできない）
 pub const FLAG_PRUNED_DOMINATED: u32 = 1;
@@ -141,24 +142,23 @@ impl SectionRange {
 #[derive(Debug)]
 pub struct Layout {
     pub flags: u32,
-    sections: HashMap<SectionId, SectionRange>,
+    /// `SectionId as usize` で引く（解析のたびに引くのでハッシュ表にしない）。無いセクションは None
+    sections: [Option<SectionRange>; SECTION_SLOTS],
     /// 表にあった未知の id の数（前方互換のため無視したもの）
     pub unknown_sections: usize,
 }
 
 impl Layout {
     /// セクションの位置。無くてもよいセクションが無ければ長さ 0 の範囲を返す
+    #[inline]
     pub fn get(&self, id: SectionId) -> SectionRange {
-        self.sections
-            .get(&id)
-            .copied()
-            .unwrap_or(SectionRange { offset: 0, len: 0 })
+        self.sections[id as usize].unwrap_or(SectionRange { offset: 0, len: 0 })
     }
 
     pub fn sections(&self) -> impl Iterator<Item = (SectionId, SectionRange)> + '_ {
         SectionId::ALL
             .iter()
-            .filter_map(|id| self.sections.get(id).map(|r| (*id, *r)))
+            .filter_map(|&id| self.sections[id as usize].map(|r| (id, r)))
     }
 }
 
@@ -220,7 +220,7 @@ pub fn parse(data: &[u8]) -> Result<Layout, DictError> {
         ));
     }
 
-    let mut sections = HashMap::new();
+    let mut sections = [None; SECTION_SLOTS];
     let mut ranges: Vec<(usize, usize, u32)> = Vec::with_capacity(count);
     let mut unknown_sections = 0;
     for i in 0..count {
@@ -259,7 +259,7 @@ pub fn parse(data: &[u8]) -> Result<Layout, DictError> {
                     offset,
                     len: end - offset,
                 };
-                if sections.insert(sid, range).is_some() {
+                if sections[sid as usize].replace(range).is_some() {
                     return Err(DictError::corrupt(format!(
                         "section {} appears twice",
                         sid.name()
@@ -279,7 +279,7 @@ pub fn parse(data: &[u8]) -> Result<Layout, DictError> {
         }
     }
     for id in SectionId::ALL {
-        if !id.is_optional() && !sections.contains_key(&id) {
+        if !id.is_optional() && sections[id as usize].is_none() {
             return Err(DictError::corrupt(format!(
                 "required section {} is missing",
                 id.name()
