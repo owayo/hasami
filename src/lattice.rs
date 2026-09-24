@@ -433,6 +433,69 @@ pub struct LatticeWorkspace {
     prevs: Vec<u32>,
     /// end_nodes[byte_pos] = そのバイト位置で終了するノードインデックスのリスト
     end_nodes: Vec<Vec<u32>>,
+    /// 素性レコードの読み・発音を復号するときの再利用バッファ
+    decode_scratch: String,
+    /// 既知語のトークンの文字列のキャッシュ
+    token_cache: TokenCache,
+}
+
+/// 既知語のトークンの文字列（表層形・品詞・活用・原形・読み・発音）のキャッシュ
+///
+/// 辞書エントリの番号で引く直接マップ方式。同じ語を何度も解析するときに、素性レコードの復号と
+/// 文字列の確保を省く（v3 は辞書の全文字列をキャッシュしていたが、v4 はよく出る語だけを
+/// 解析器ごとに持つ）。解析器（`Analyzer::clone`）ごとに独立しているのでロックは要らない。
+/// 文脈による読みの補正はキャッシュから作った `Token` に対して行い、キャッシュには戻さない。
+struct TokenCache {
+    /// キャッシュを作った辞書の番号。違う辞書で解析したら捨てる
+    dict_id: u64,
+    slots: Vec<Option<(u32, Token)>>,
+}
+
+/// キャッシュのスロット数
+const TOKEN_CACHE_SLOTS: usize = 1024;
+/// これより長い表層形の語はキャッシュしない（まれな長い固有名詞でメモリを使わない）
+const TOKEN_CACHE_MAX_SURFACE: usize = 64;
+
+impl TokenCache {
+    fn new() -> Self {
+        TokenCache {
+            dict_id: u64::MAX,
+            slots: Vec::new(),
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn known_token(
+        &mut self,
+        dict: &Dictionary,
+        entry_id: u32,
+        surface: &str,
+        start: usize,
+        end: usize,
+        word_cost: i16,
+        scratch: &mut String,
+    ) -> Result<Token, DictError> {
+        if self.dict_id != dict.id() {
+            self.slots.clear();
+            self.slots.resize(TOKEN_CACHE_SLOTS, None);
+            self.dict_id = dict.id();
+        }
+        let slot = &mut self.slots[entry_id as usize % TOKEN_CACHE_SLOTS];
+        if let Some((cached_id, token)) = slot {
+            if *cached_id == entry_id {
+                let mut token = token.clone();
+                token.start = start;
+                token.end = end;
+                token.word_cost = word_cost;
+                return Ok(token);
+            }
+        }
+        let token = dict.known_token(entry_id, surface, start, end, word_cost, scratch)?;
+        if surface.len() <= TOKEN_CACHE_MAX_SURFACE {
+            *slot = Some((entry_id, token.clone()));
+        }
+        Ok(token)
+    }
 }
 
 impl LatticeWorkspace {
@@ -442,6 +505,8 @@ impl LatticeWorkspace {
             costs: Vec::with_capacity(4096),
             prevs: Vec::with_capacity(4096),
             end_nodes: Vec::with_capacity(1024),
+            decode_scratch: String::with_capacity(64),
+            token_cache: TokenCache::new(),
         }
     }
 
@@ -648,12 +713,14 @@ impl LatticeWorkspace {
             let (start, end) = (node.start as usize, node.end as usize);
             let surface = &input[start..end];
             if node.is_known() {
-                tokens.push(dict.known_token(
+                tokens.push(self.token_cache.known_token(
+                    dict,
                     node.entry_id,
                     surface,
                     start,
                     end,
                     node.word_cost,
+                    &mut self.decode_scratch,
                 )?);
             } else {
                 let surface: Arc<str> = Arc::from(surface);

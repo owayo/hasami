@@ -1656,7 +1656,10 @@ mod tests {
             0xA1, 0xBD, 0xA1, 0xC1, 0xA1, 0xC2, 0xA1, 0xDD, 0xA1, 0xF1, 0xA1, 0xF2, 0xA2, 0xCC,
         ];
         let result = DictBuilder::decode_to_utf8(bytes);
-        assert_eq!(result, "\u{2014}\u{301C}\u{2016}\u{2212}\u{00A2}\u{00A3}\u{00AC}");
+        assert_eq!(
+            result,
+            "\u{2014}\u{301C}\u{2016}\u{2212}\u{00A2}\u{00A3}\u{00AC}"
+        );
     }
 
     #[test]

@@ -285,6 +285,31 @@ echo "形態素解析のテスト" | hasami tokenize --dict dict/ipadic-neologd.
 
 ### Rust API
 
+#### ライブラリとして使う
+
+crates.io には公開していない（`hasami` の名前は別のプロジェクトが使っている）。git 依存で使う。
+
+```toml
+[dependencies]
+# 解析だけ（Analyzer・Dictionary・sentence）。依存は memmap2 と bytemuck だけになる
+hasami = { git = "https://github.com/owayo/hasami", default-features = false }
+# 辞書も作るなら（DictBuilder、MeCab 形式 CSV の読み書き）
+# hasami = { git = "https://github.com/owayo/hasami", default-features = false, features = ["build"] }
+```
+
+| feature | 中身 | 追加の依存 |
+| --- | --- | --- |
+| （なし） | 解析（`Analyzer`・`Dictionary`・`Token`・`sentence`）、C FFI | memmap2, bytemuck |
+| `build` | 辞書の構築・修復・書き出し（`DictBuilder`、`write_lexicon_csv`） | csv, encoding_rs, glob |
+| `cli` | `hasami` コマンド（`build` を含む） | clap, indicatif, serde_json |
+
+既定は `cli`（`cargo install` やこのリポジトリでのビルドで CLI が使える）。
+
+**版の方針**: 0.x の間は minor 版で API と辞書形式を変えることがある。辞書形式を変えたときは、古い `.hsd` を
+読み込むと作り直しを案内するエラーになる（`scripts/build-dict.sh` で上流から作り直す）。
+
+#### 基本
+
 ```rust
 use hasami::Analyzer;
 
@@ -318,6 +343,57 @@ match analyzer.try_tokenize("東京都に住んでいる") {
 
 辞書は mmap で読み込むので、読み込み中の辞書ファイルを書き換えたり切り詰めたりしてはいけない。
 辞書を差し替えるときは別名で書いてから rename する（`hasami build` / `merge` / `repair` の出力はそうしている）。
+
+#### 辞書の既定の場所
+
+`Analyzer::load_default()` は次の順に辞書を探す。見つからなければ探した場所を持つ `DictError::NotFound` を返すので、
+辞書なしでも動く利用者はこのエラーのときだけ辞書なしに切り替えればよい。
+
+1. 環境変数 `HASAMI_DICT`（辞書ファイルのパス）
+2. `$XDG_DATA_HOME/hasami/`（未設定なら `~/.local/share/hasami/`）の `*.hsd`。複数あれば
+   `ipadic-neologd-sudachi.hsd` → `ipadic-neologd.hsd` → `ipadic.hsd` → そのほかの名前順
+
+```rust
+let mut analyzer = match hasami::Analyzer::load_default() {
+    Ok(a) => Some(a),
+    Err(hasami::DictError::NotFound(_)) => None, // 辞書なしで動く
+    Err(e) => return Err(e.into()),
+};
+```
+
+#### 文分割（辞書不要）
+
+`hasami::sentence` は辞書をロードせずに日本語の文境界を求める。括弧の対応を取ってから括弧の内側の文末記号を
+無視し、`Yahoo!ニュース`・`モーニング娘。`・`Hey!Say!JUMP` のように文末記号を含む語（推奨辞書から抽出した
+2 万語の例外表）の内側では切らない。URL の `?` や `!important` でも切らない。
+
+```rust
+use hasami::sentence::{self, LineBreaks, SplitOptions};
+
+let text = "「うまく行くかな？」と思った。Yahoo!ニュースを見た。";
+let sentences: Vec<&str> = sentence::split(text, &SplitOptions::default())
+    .into_iter()
+    .map(|s| &text[s.range])
+    .collect();
+assert_eq!(sentences, ["「うまく行くかな？」と思った。", "Yahoo!ニュースを見た。"]);
+
+// 改行で区切る・例外語を足す。繰り返し使うなら Splitter を作って使い回す
+let options = SplitOptions {
+    line_breaks: LineBreaks::Split,
+    extra_exceptions: &["ヤッター!マン"],
+    ..SplitOptions::default()
+};
+let splitter = sentence::Splitter::new(&options);
+```
+
+形態素解析の前分割（ラティスを小さく保つための区切り）にも同じ規則を使っているので、例外表の語は解析でも割れない。
+文ごとにトークン列が欲しいときは `Analyzer::tokenize_sentences` を使う（トークンの位置は入力全体のバイト位置）。
+
+```rust
+for (sentence, tokens) in analyzer.tokenize_sentences(text, &SplitOptions::default()) {
+    println!("{}: {} tokens", &text[sentence.range.clone()], tokens.len());
+}
+```
 
 #### 並行解析（Rust マルチスレッド）
 
