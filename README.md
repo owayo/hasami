@@ -353,8 +353,11 @@ hasami = { git = "https://github.com/owayo/hasami", default-features = false }
 
 既定は `cli`（`cargo install` やこのリポジトリでのビルドで CLI が使える）。
 
-**版の方針**: 0.x の間は minor 版で API と辞書形式を変えることがある。辞書形式を変えたときは、古い `.hsd` を
-読み込むと作り直しを案内するエラーになる（`scripts/build-dict.sh` で上流から作り直す）。
+**版の方針**: 版は `yy.m.counter` の日付版（例: `26.9.100`。リリースワークフローが年・月・月内の連番で付ける）で、
+semver の互換性は表さない。API と辞書形式はどの版でも変わりうるので、git 依存では
+`tag = "v<版>"`（[Releases](https://github.com/owayo/hasami/releases) の版）か `rev` で固定する。
+辞書形式を変えたときは、古い `.hsd` を読み込むと作り直しを案内するエラーになる
+（`scripts/build-dict.sh` で上流から作り直す）。
 
 #### 基本
 
