@@ -178,6 +178,20 @@ enum Commands {
         #[arg(long, value_name = "CSV")]
         remove: Vec<PathBuf>,
 
+        /// 文や句を 1 語にした名詞を削除する。値は IPAdic 単体の辞書 (.hsd)。
+        /// ひらがなか文末記号を含む名詞の表層形をこの辞書で解析し、文法に合う文や句
+        /// (述語・助詞で終わる並び「どうでしょう」「一緒に」、内容語 1 つ以下の文 + 文末記号「好きだ。」、
+        /// 機能語だけの並び「なのか」、感動詞「こんにちは。」、記号 + 文末記号「…。」、表記ゆれの副詞・用言
+        /// 「および」=お呼び) になるエントリを削除する。この辞書自身の語は削除しない
+        #[arg(long, value_name = "IPADIC_HSD")]
+        drop_sentence_like_nouns: Option<PathBuf>,
+
+        /// 数と単位の記号だけの表層形を 1 語にした固有名詞 (「50%」「0.1℃」「30℃」) を削除する。
+        /// 値は IPAdic 単体の辞書 (.hsd)。「名詞,固有名詞,一般」の表層形をこの辞書で解析し、数 (名詞,数) と
+        /// 単位 (名詞,接尾) だけに分かれるものを削除する。人名・組織 (「100%ORANGE」「4℃」) は残す
+        #[arg(long, value_name = "IPADIC_HSD")]
+        drop_quantity_nouns: Option<PathBuf>,
+
         /// 一般語に付いた「名詞,固有名詞,一般」を一般名詞に降格する。値は IPAdic 単体の辞書 (.hsd)。
         /// 表層形をこの辞書で解析して「一般名詞・サ変接続・形容動詞語幹 + 一般名詞を作る接尾辞」に
         /// 分かれ、読みがその接尾辞の読みで終わる語 (成果物・多角的・可視化・安全性・担当者 等) を、
@@ -271,6 +285,8 @@ fn run() -> io::Result<()> {
             drop_ortho_variants,
             drop_numeral_misreadings,
             remove,
+            drop_sentence_like_nouns,
+            drop_quantity_nouns,
             demote_common_proper_nouns,
             merge,
             write,
@@ -284,6 +300,8 @@ fn run() -> io::Result<()> {
                 drop_ortho_variants,
                 drop_numeral_misreadings,
                 remove: &remove,
+                drop_sentence_like_nouns: drop_sentence_like_nouns.as_deref(),
+                drop_quantity_nouns: drop_quantity_nouns.as_deref(),
                 demote_common_proper_nouns: demote_common_proper_nouns.as_deref(),
                 merge: &merge,
             },
@@ -831,8 +849,27 @@ struct RepairOptions<'a> {
     drop_ortho_variants: bool,
     drop_numeral_misreadings: bool,
     remove: &'a [PathBuf],
+    drop_sentence_like_nouns: Option<&'a Path>,
+    drop_quantity_nouns: Option<&'a Path>,
     demote_common_proper_nouns: Option<&'a Path>,
     merge: &'a [PathBuf],
+}
+
+/// 参照辞書（IPAdic 単体）を読み込む。`--drop-sentence-like-nouns`・`--drop-quantity-nouns`・
+/// `--demote-common-proper-nouns` に同じ辞書を渡したときは 1 回だけ読み込む
+fn load_reference(
+    cache: &mut Option<(PathBuf, Arc<Dictionary>)>,
+    path: &Path,
+) -> io::Result<Arc<Dictionary>> {
+    if let Some((cached, dict)) = cache.as_ref() {
+        if cached == path {
+            return Ok(Arc::clone(dict));
+        }
+    }
+    eprintln!("Loading reference dictionary: {}", path.display());
+    let dict = Arc::new(Dictionary::load(path)?);
+    *cache = Some((path.to_path_buf(), Arc::clone(&dict)));
+    Ok(dict)
 }
 
 /// 辞書を読み込み、次の順で修復して書き出す
@@ -842,8 +879,10 @@ struct RepairOptions<'a> {
 /// 2. 壊れた発音の修復（`--no-pronunciation-repair` を付けなければ常に行う）
 /// 3. 汎用フィルタによる除去（`--drop-ortho-variants` / `--drop-numeral-misreadings`）
 /// 4. 削除リスト CSV の適用（`--remove`）。削除リストは上流の辞書の品詞で書くので、降格より先に適用する
-/// 5. 一般語の固有名詞の降格（`--demote-common-proper-nouns`）
-/// 6. CSV の追加マージ（`--merge`）。追加する語は降格の対象にしない
+/// 5. 文や句を 1 語にした名詞の除去（`--drop-sentence-like-nouns`）と、数と単位の組の固有名詞の除去
+///    （`--drop-quantity-nouns`）
+/// 6. 一般語の固有名詞の降格（`--demote-common-proper-nouns`）
+/// 7. CSV の追加マージ（`--merge`）。追加する語は削除・降格の対象にしない
 ///
 /// 行った操作はメタデータの `repairs` に書き足す。
 fn cmd_repair(
@@ -906,13 +945,47 @@ fn cmd_repair(
         ops.push(format!("remove:{}", file_name(path)));
     }
 
+    let mut reference_cache: Option<(PathBuf, Arc<Dictionary>)> = None;
+    if let Some(reference_path) = opts.drop_sentence_like_nouns {
+        let reference = load_reference(&mut reference_cache, reference_path)?;
+        let stats = builder.drop_sentence_like_nouns(&reference)?;
+        eprintln!(
+            "Dropped {} of {} noun entries that {} parses as sentences or phrases",
+            stats.dropped,
+            stats.examined,
+            file_name(reference_path)
+        );
+        let reasons: Vec<String> = stats
+            .by_reason
+            .iter()
+            .map(|(r, n)| format!("{}:{n}", r.name()))
+            .collect();
+        eprintln!("  by reason: {}", reasons.join(" "));
+        for (reason, sample) in &stats.samples {
+            eprintln!("  drop [{}]: {sample}", reason.name());
+        }
+        dropped += stats.dropped;
+        ops.push("drop-sentence-like-nouns".into());
+    }
+    if let Some(reference_path) = opts.drop_quantity_nouns {
+        let reference = load_reference(&mut reference_cache, reference_path)?;
+        let stats = builder.drop_quantity_nouns(&reference)?;
+        eprintln!(
+            "Dropped {} of {} number-and-unit proper nouns that {} parses as a number and a suffix",
+            stats.dropped,
+            stats.examined,
+            file_name(reference_path)
+        );
+        for sample in &stats.samples {
+            eprintln!("  drop: {sample}");
+        }
+        dropped += stats.dropped;
+        ops.push("drop-quantity-nouns".into());
+    }
+
     let mut demoted = 0;
     if let Some(reference_path) = opts.demote_common_proper_nouns {
-        eprintln!(
-            "Loading reference dictionary for demotion: {}",
-            reference_path.display()
-        );
-        let reference = Arc::new(Dictionary::load(reference_path)?);
+        let reference = load_reference(&mut reference_cache, reference_path)?;
         let stats = builder.demote_common_proper_nouns(&reference)?;
         eprintln!(
             "Demoted {} of {} 名詞,固有名詞,一般 entries that {} splits into common nouns + a suffix",

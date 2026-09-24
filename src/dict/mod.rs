@@ -9,7 +9,11 @@ use std::sync::Arc;
 #[cfg(feature = "build")]
 mod builder;
 #[cfg(feature = "build")]
+mod sentence_like;
+#[cfg(feature = "build")]
 pub use builder::*;
+#[cfg(feature = "build")]
+pub use sentence_like::SentenceLikeReason;
 
 /// 辞書エントリ（1形態素に対応）
 ///
