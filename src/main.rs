@@ -684,13 +684,28 @@ fn cmd_export_sentence_exceptions(dict_path: &Path, output: Option<&Path>) -> io
     ));
     text.push_str("#     --output src/sentence/builtin_exceptions.txt\n");
     text.push_str(
-        "# 抽出規則: sentence::extract_candidates（文末記号 `。！？!?‼⁇⁈⁉．｡` を含む語だけを残し、\n",
+        "# 抽出規則: sentence::extract_candidates（全角の英数字・記号を半角に畳み、文末記号\n",
     );
     text.push_str(
-        "#   記号だけの語・2 文字未満の語・文末記号で始まる語・この書式で書けない語を除く。\n",
+        "#   `。！？!?‼⁇⁈⁉．｡` を含む語だけを残し、記号だけの語・2 文字未満の語・文末記号で始まる語・\n",
     );
-    text.push_str("#   重複を除いてバイト順に並べる）\n");
-    text.push_str("# 書式: 1 行 1 語。# で始まる行と空行は読み飛ばす\n");
+    text.push_str(
+        "#   この書式で書けない語・照合の上限を超える語を除く。重複を除いてバイト順に並べる）\n",
+    );
+    text.push_str("# 書式: 1 行 1 語。# で始まる行と空行は読み飛ばす。照合の索引は build.rs がビルド時に作る\n");
+    let sources = dict.meta().get("sources").unwrap_or("不明");
+    text.push_str(&format!(
+        "# 出典とライセンス: 辞書のソース（{sources}）の表層形から選んで表記を整えた派生データ。\n"
+    ));
+    text.push_str(
+        "#   mecab-ipadic は NAIST-2003、mecab-ipadic-NEologd と SudachiDict は Apache-2.0、SudachiDict が\n",
+    );
+    text.push_str(
+        "#   含む UniDic は BSD-3-Clause。この表を含むものを配布するときは、同じディレクトリの\n",
+    );
+    text.push_str(
+        "#   builtin_exceptions.NOTICE（著作権表示と条文。THIRD_PARTY_LICENSES.md も参照）を添える\n",
+    );
     text.push_str(&format!(
         "# 件数: {} 語（辞書の {} 表層形から抽出）\n",
         words.len(),

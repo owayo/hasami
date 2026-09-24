@@ -4,21 +4,37 @@
 //! 語の一覧を持ち、入力の文末記号を覆う出現があるかを調べる。
 //!
 //! - 組み込みの表（`builtin_exceptions.txt`）は、推奨辞書の表層形を [`extract_candidates`] で
-//!   絞ったもの。生成手順はファイルの先頭のコメントにある
-//! - 照合は文末記号を起点にする。語の中の文末記号ごとに「文末記号とその前」を逆順にした鍵の
-//!   トライと、鍵ごとの「文末記号の後ろ」の一覧を持ち、入力の文末記号から前へ・後ろへと調べる。
-//!   文末記号から離れた文字は読まないので、入力の大部分を占める文末記号のない区間には手間が
-//!   かからない（計算量は [`Matcher`] を参照）
+//!   絞ったもの。生成手順はファイルの先頭のコメントにある。索引（[`super::index`]）は build.rs が
+//!   ビルド時に作って埋め込むので、初めて使うときにも組み立ての手間がかからない
+//! - 照合は文末記号を起点にする（[`Matcher::guards`]）。入力の文末記号から前へ 1 字ずつ進みながら、
+//!   鍵がその字の列で始まる錨の範囲を二分探索で狭め、語の先頭に届いた錨について左の境界と
+//!   文末記号の後ろを調べる。文末記号から離れた文字は読まないので、入力の大部分を占める文末記号の
+//!   ない区間には手間がかからない（計算量は [`Matcher`] を参照）
+//! - 比べるときは全角の英数字・記号を半角に畳む（[`fold_width`]）。表の語は畳んで持つ
 
+use std::borrow::Cow;
+use std::cmp::Ordering;
+use std::ops::Range;
 use std::sync::LazyLock;
 
-use super::{ascii_run_is_ender, is_sentence_ender};
+use super::chars::{Script, fold_width, is_sentence_ender, script};
+use super::index::{self, Index};
 
 /// 組み込みの例外表（1 行 1 語。`#` で始まる行と空行は読み飛ばす）
 const BUILTIN_EXCEPTIONS: &str = include_str!("builtin_exceptions.txt");
 
-/// 組み込みの例外表の照合器（初めて使うときに 1 度だけ組み立てる）
-static BUILTIN_MATCHER: LazyLock<Matcher> = LazyLock::new(|| Matcher::new(builtin_exceptions()));
+/// 組み込みの例外表の索引（build.rs が [`Index::to_bytes`] の形式で作る）
+static BUILTIN_INDEX: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/builtin_exceptions.idx"));
+
+/// 組み込みの例外表の版の識別子
+///
+/// `語の数-語の FNV-1a 64 の 16 進`（例: `21745-0123456789abcdef`）。表の語が変わると変わるので、
+/// 下流で分割の結果の変化（統計の前提の変化）を検知するのに使える。分割の規則の変更は含まない。
+pub const BUILTIN_EXCEPTIONS_VERSION: &str =
+    include!(concat!(env!("OUT_DIR"), "/builtin_exceptions_version.rs"));
+
+/// 組み込みの例外表の照合器（索引は埋め込み済みなので、作るのは索引の先頭を読むだけ）
+static BUILTIN_MATCHER: LazyLock<Matcher> = LazyLock::new(Matcher::builtin);
 
 /// 組み込みの例外表の語を、表に書かれた順（バイト順）に返す
 pub fn builtin_exceptions() -> impl Iterator<Item = &'static str> {
@@ -34,7 +50,9 @@ pub(crate) fn builtin_matcher() -> &'static Matcher {
 
 /// 辞書の表層形の一覧から、例外表に載せる語を抽出する
 ///
-/// 文末記号（`。！？!?‼⁇⁈⁉．｡`）を含む語だけを残し、次の語を除く。
+/// 全角の英数字・記号（U+FF01〜U+FF5E。畳むと文末記号でなくなる `．` を除く）を半角に畳み（照合も
+/// 畳んで比べるので、`Yahoo！` と `Yahoo!` は 1 語になる）、文末記号（`。！？!?‼⁇⁈⁉．｡`）を含む語だけを
+/// 残し、次の語を除く。
 /// 結果は重複を除いてバイト順（符号位置の順）に並べる。
 ///
 /// - 記号だけの語（英数字・かな・漢字などの文字を 1 字も含まない）
@@ -42,18 +60,19 @@ pub(crate) fn builtin_matcher() -> &'static Matcher {
 /// - 文末記号で始まる語
 /// - 表の書式（1 行 1 語、`#` で始まる行はコメント）で書けない語: 制御文字（改行を含む）を含む語、
 ///   `#` で始まる語、前後に空白がある語
+/// - 照合に使えない語（文末記号が 16 個より多い語、256 文字より長い語）
 pub fn extract_candidates<'a>(surfaces: impl IntoIterator<Item = &'a str>) -> Vec<String> {
     let mut words: Vec<String> = surfaces
         .into_iter()
+        .map(fold_word)
         .filter(|w| is_candidate(w))
-        .map(str::to_owned)
         .collect();
     words.sort_unstable();
     words.dedup();
     words
 }
 
-/// [`extract_candidates`] の規則で残す語か
+/// [`extract_candidates`] の規則で残す語か（字幅は畳んであること）
 fn is_candidate(word: &str) -> bool {
     let mut chars = word.chars();
     let (Some(first), Some(_)) = (chars.next(), chars.next()) else {
@@ -63,189 +82,379 @@ fn is_candidate(word: &str) -> bool {
     !is_sentence_ender(first)
         && first != '#'
         && word.trim() == word
-        && word.chars().any(is_sentence_ender)
         && word.chars().any(char::is_alphanumeric)
         && !word.chars().any(char::is_control)
+        && index::is_matchable(word)
 }
 
-/// 例外語の末尾の文末記号の直後に来たとき、その文末記号を語の一部とみなす助詞か
-#[inline]
-fn is_particle(c: char) -> bool {
-    matches!(
-        c,
-        'の' | 'は' | 'が' | 'を' | 'に' | 'と' | 'で' | 'も' | 'や' | 'へ'
-    )
+/// 全角の英数字・記号を半角に畳んだ語
+fn fold_word(word: &str) -> String {
+    word.chars().map(fold_width).collect()
 }
 
-/// トライの根の節点
-const ROOT: u32 = 0;
-/// `back_info` の最上位ビット: 文末記号が語の最後の文字になる組がこの鍵で終わる
-const END: u32 = 1 << 31;
+/// 例外語の末尾の文末記号の後ろに来たとき、文末記号を語の一部とみなす語（助詞と、助詞のように続く語）
+///
+/// 語の頭が同じでも、[`SENTENCE_STARTERS`] などの文頭に立つ語で始まるならみなさない。
+const CONTINUATIONS: &[&str] = &[
+    "の",
+    "は",
+    "が",
+    "を",
+    "に",
+    "と",
+    "で",
+    "も",
+    "や",
+    "へ",
+    "から",
+    "まで",
+    "より",
+    "って",
+    "など",
+    "だけ",
+    "しか",
+    "さえ",
+    "くらい",
+    "ぐらい",
+    "ほど",
+    "として",
+    "について",
+];
+
+/// 文頭に立つ語（接続詞・副詞・感動詞）のうち、続きの語と頭が同じもの
+///
+/// 例外語の末尾の文末記号の後ろがこれで始まるなら、次の文の始まりとみなす
+/// （`好きなのはモーニング娘。もう一度言う。` は 2 文）。前方一致で見るので、`もし` は `もしも`
+/// `もしかして` を、`やっぱ` は `やっぱり` を含む。
+const SENTENCE_STARTERS: &[&str] = &[
+    "もう",
+    "もし",
+    "もちろん",
+    "もっと",
+    "もともと",
+    "もはや",
+    "とにかく",
+    "ところで",
+    "ところが",
+    "ともかく",
+    "ともあれ",
+    "とりあえず",
+    "とても",
+    "とっても",
+    "とくに",
+    "とうとう",
+    "ときどき",
+    "やはり",
+    "やっぱ",
+    "やがて",
+    "やっと",
+    "やれやれ",
+    "はじめに",
+    "はたして",
+    "しかし",
+    "しかも",
+    "しかたな",
+    "しかたが",
+    "よりによって",
+    "ほどなく",
+    "にもかかわらず",
+    "へえ",
+    "へー",
+];
+
+/// 文末記号の直前がひらがなの語（`寒いね。` `好きだ。` のように普通の文末と同じ形で終わる語）の後ろで、
+/// 文頭に立つ語とみなすもの
+///
+/// 助詞としても読める（`Yahoo!では` `モーニング娘。でも`）ので、名詞のように終わる語の後ろでは
+/// 続きとみなし、文末と同じ形の語の後ろでだけ次の文の始まりとみなす。
+const STARTERS_AFTER_PREDICATE: &[&str] =
+    &["でも", "では", "で、", "とはいえ", "だけど", "だけれど"];
+
+/// 例外語の末尾の文末記号の後ろ `rest` が、語の続きとして読めるか
+///
+/// `after_predicate` は、語の末尾の文末記号の連続の直前がひらがなか（[`ends_like_predicate`]）。
+fn continues(rest: &str, after_predicate: bool) -> bool {
+    let starts_with_any = |words: &[&str]| words.iter().any(|w| rest.starts_with(w));
+    if starts_with_any(SENTENCE_STARTERS)
+        || (after_predicate && starts_with_any(STARTERS_AFTER_PREDICATE))
+        || is_interjection_hai(rest)
+    {
+        return false;
+    }
+    starts_with_any(CONTINUATIONS)
+}
+
+/// 感動詞の `はい`（直後が読点・文末記号・空白・終わり）で始まるか。`モーニング娘。はいつも` の `は` は助詞
+fn is_interjection_hai(rest: &str) -> bool {
+    rest.strip_prefix("はい").is_some_and(|after| {
+        after.chars().next().is_none_or(|c| {
+            c.is_whitespace() || matches!(c, '、' | '，' | ',' | '…') || is_sentence_ender(c)
+        })
+    })
+}
+
+/// 語の出現の左の境界として認めるか（`prev` は出現の直前の字、`first` は語の先頭の字）
+///
+/// 語の先頭がひらがなで直前がかな・漢字なら、送り仮名や活用語尾の途中から一致しているとみなして
+/// 認めない（`食べる。` の中の `べる。`）。語の先頭がカタカナ・漢字・英数字で直前も同じ字種なら、
+/// 語の途中から一致しているとみなして認めない（`主流。` の中の `流。`）。
+fn left_boundary(prev: Option<char>, first: char) -> bool {
+    let Some(prev) = prev else {
+        return true;
+    };
+    let prev = script(prev);
+    match script(first) {
+        Script::Hiragana => !matches!(prev, Script::Hiragana | Script::Katakana | Script::Kanji),
+        Script::Other => true,
+        first => prev != first,
+    }
+}
+
+/// 語の列の位置 `ender` の文末記号で終わる語が、文末記号の連続の直前がひらがなで終わるか
+fn ends_like_predicate(list: &str, ender: usize) -> bool {
+    let line_start = list[..ender].rfind('\n').map_or(0, |i| i + 1);
+    list[line_start..ender]
+        .chars()
+        .rev()
+        .find(|&c| !is_sentence_ender(c))
+        .is_some_and(|c| script(c) == Script::Hiragana)
+}
 
 /// 例外語の照合器
 ///
-/// 語の中の文末記号 1 つごとに、語を「文末記号とその前」と「文末記号の後ろ（後半）」に分けた組を
-/// 作る。前者を逆順にした鍵（文末記号、その直前の文字、…）のトライを入力の文末記号から前へ辿り、
-/// 鍵が終わる節点ごとに、その鍵の後半のどれかが文末記号の直後に続くかを調べる。
+/// 語の列（1 行 1 語）と、その索引（錨ごとの文末記号の位置と後半のリンク。[`super::index`]）を持つ。
 ///
-/// - 後半が空でない組が一致した: 文末記号は語の内側にある
-/// - 後半が空の組が一致した: 文末記号は語の最後の文字（直後が助詞なら語の一部とみなす）
-///
-/// 後半は鍵ごとにバイト順に並べ、同じ組の中で自分の接頭辞になっている最長の後半への鎖を持つ。
+/// - 語の内側の文末記号: 語の出現が左の境界を満たせば、分割しない
+/// - 語の末尾の文末記号: 語の出現が左の境界を満たし、直後が続きの語（[`CONTINUATIONS`]）で
+///   始まれば分割しない。ただし文頭に立つ語（[`SENTENCE_STARTERS`] など）で始まるなら分割する
 ///
 /// 計算量: 前へ辿る照合が入力の文字の上を通るのは、その文字より後ろにある文末記号のうち
-/// 1 語の中の文末記号の数（組み込みの表では最多 9 個）までなので、前へ辿る手間の合計は入力長に
-/// 比例する。後半の照合は 1 回あたり二分探索と後半の長さで抑えられる。利用者が加える語で
-/// この定数が膨らまないよう、[`MAX_WORD_ENDERS`] と [`MAX_WORD_CHARS`] を超える語は捨てる。
+/// 1 語の中の文末記号の数（組み込みの表では最多 9 個）までなので、前へ辿る手間の合計は入力長と
+/// 錨の数の対数の積に比例する。後半の照合は 1 回あたり二分探索と後半の長さで抑えられる。利用者が
+/// 加える語でこの定数が膨らまないよう、[`index::MAX_WORD_ENDERS`] と [`index::MAX_WORD_CHARS`] を
+/// 超える語は捨てる。
 #[derive(Clone)]
 pub(crate) struct Matcher {
-    /// 鍵のトライ
-    back: Trie,
-    /// 節点ごとの情報。最上位ビットは END、残りはその鍵の後半の組の番号 + 1（0 はなし）
-    back_info: Box<[u32]>,
-    /// 鍵ごとの後半の組（`tail_ranges` 上の範囲）
-    groups: Box<[(u32, u32)]>,
-    /// 後半の `tails` 上のバイト範囲（組ごとにバイト順）
-    tail_ranges: Box<[(u32, u32)]>,
-    /// 後半ごとの、同じ組の中で自分の真の接頭辞になっている最長の後半の `tail_ranges` 上の
-    /// 位置 + 1（0 はなし）
-    tail_links: Box<[u32]>,
-    /// 後半をつないだ文字列
-    tails: Box<str>,
+    /// 語の列（組み込みの表はコメント行を含む）
+    list: Cow<'static, str>,
+    anchors: Anchors,
+    /// 文末記号で始まる語があるか（利用者が加える語にだけありうる）
+    ender_initial: bool,
     /// 語の数
     words: usize,
 }
 
-/// 照合に使う語の文末記号の数の上限（組み込みの表の語は最多 9 個）。超える語は捨てる
-pub(crate) const MAX_WORD_ENDERS: usize = 16;
-/// 照合に使う語の文字数の上限（組み込みの表の語は最長 124 文字）。超える語は捨てる
-pub(crate) const MAX_WORD_CHARS: usize = 256;
+/// 錨の列（鍵・後半の順）と、鍵の頭の 2 字ごとの錨の範囲（[`Index`] と同じ中身）
+#[derive(Clone)]
+enum Anchors {
+    /// 埋め込んだ索引（LE の数値の列のまま）
+    Static {
+        enders: &'static [u8],
+        links: &'static [u8],
+        head_keys: &'static [u8],
+        head_starts: &'static [u8],
+    },
+    /// 実行時に作った索引
+    Owned {
+        enders: Box<[u32]>,
+        links: Box<[u32]>,
+        head_keys: Box<[u64]>,
+        head_starts: Box<[u32]>,
+    },
+}
 
-/// 照合に使える語か（文末記号を含み、上限を超えない）
-fn is_matchable(word: &str) -> bool {
-    let mut chars = 0;
-    let mut enders = 0;
-    for c in word.chars() {
-        chars += 1;
-        enders += usize::from(is_sentence_ender(c));
-        if chars > MAX_WORD_CHARS || enders > MAX_WORD_ENDERS {
-            return false;
+impl Anchors {
+    fn len(&self) -> usize {
+        match self {
+            Anchors::Static { enders, .. } => enders.len() / 4,
+            Anchors::Owned { enders, .. } => enders.len(),
         }
     }
-    enders > 0
+
+    /// 鍵の頭が `first`（[`index::head_key`]）の錨の範囲と、`second` の錨の範囲
+    ///
+    /// `second` は `first` と文末記号・直前の字が同じ頭（並びの上で `first` の近くにある）で、
+    /// `first` を二分探索した位置から倍々に探す。
+    #[inline]
+    fn head_ranges(
+        &self,
+        first: u64,
+        second: Option<u64>,
+    ) -> (Option<Range<usize>>, Option<Range<usize>>) {
+        match self {
+            Anchors::Static {
+                head_keys,
+                head_starts,
+                ..
+            } => find_heads(
+                first,
+                second,
+                head_keys.len() / 8,
+                |k| read_u64(head_keys, k),
+                |k| read_u32(head_starts, k),
+                self.len(),
+            ),
+            Anchors::Owned {
+                head_keys,
+                head_starts,
+                ..
+            } => find_heads(
+                first,
+                second,
+                head_keys.len(),
+                |k| head_keys[k],
+                |k| head_starts[k],
+                self.len(),
+            ),
+        }
+    }
+
+    /// 錨 `i` の文末記号の、語の列の上のバイト位置
+    #[inline]
+    fn ender(&self, i: usize) -> usize {
+        match self {
+            Anchors::Static { enders, .. } => read_u32(enders, i) as usize,
+            Anchors::Owned { enders, .. } => enders[i] as usize,
+        }
+    }
+
+    /// 錨 `i` の後半のリンク（[`Index::links`]）
+    #[inline]
+    fn link(&self, i: usize) -> u32 {
+        match self {
+            Anchors::Static { links, .. } => read_u32(links, i),
+            Anchors::Owned { links, .. } => links[i],
+        }
+    }
+}
+
+/// 頭の番号の列（`heads` 個）から `first` と `second` を探し、それぞれの錨の範囲を返す
+///
+/// 最後の頭の範囲は `anchors` まで。`second` は `first` 以上の番号であること。
+#[inline]
+fn find_heads(
+    first: u64,
+    second: Option<u64>,
+    heads: usize,
+    head_key: impl Fn(usize) -> u64,
+    head_start: impl Fn(usize) -> u32,
+    anchors: usize,
+) -> (Option<Range<usize>>, Option<Range<usize>>) {
+    let range = |k: usize| {
+        let end = if k + 1 < heads {
+            head_start(k + 1) as usize
+        } else {
+            anchors
+        };
+        head_start(k) as usize..end
+    };
+    let k = partition(0, heads, |k| head_key(k) < first);
+    let first = (k < heads && head_key(k) == first).then(|| range(k));
+    let second = second.and_then(|second| {
+        let j = gallop(k, heads, |j| head_key(j) < second);
+        (j < heads && head_key(j) == second).then(|| range(j))
+    });
+    (first, second)
+}
+
+/// u32 LE の列の `i` 番目
+#[inline]
+fn read_u32(bytes: &[u8], i: usize) -> u32 {
+    let at = i * 4;
+    u32::from_le_bytes(bytes[at..at + 4].try_into().expect("4 バイト"))
+}
+
+/// u64 LE の列の `i` 番目
+#[inline]
+fn read_u64(bytes: &[u8], i: usize) -> u64 {
+    let at = i * 8;
+    u64::from_le_bytes(bytes[at..at + 8].try_into().expect("8 バイト"))
+}
+
+/// [`partition`] と同じ位置を、`lo` から 1, 2, 4, … 先を調べて範囲を挟んでから求める
+///
+/// 真の側が短いと見込めるときに、`lo..hi` 全体を二分探索するより調べる回数が少ない。
+#[inline]
+fn gallop(lo: usize, hi: usize, pred: impl Fn(usize) -> bool) -> usize {
+    // `lo..known` はすべて真
+    let mut known = lo;
+    let mut step = 1;
+    loop {
+        let probe = known + step - 1;
+        if probe >= hi {
+            return partition(known, hi, pred);
+        }
+        if !pred(probe) {
+            return partition(known, probe, pred);
+        }
+        known = probe + 1;
+        step *= 2;
+    }
+}
+
+/// `lo..hi` のうち、`pred` が偽になる最初の位置（`pred` は前の側で真、後ろの側で偽）
+#[inline]
+fn partition(mut lo: usize, mut hi: usize, pred: impl Fn(usize) -> bool) -> usize {
+    while lo < hi {
+        let mid = lo + (hi - lo) / 2;
+        if pred(mid) {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+    lo
 }
 
 impl Matcher {
+    /// 組み込みの例外表の照合器（埋め込んだ索引の先頭を読むだけ）
+    fn builtin() -> Matcher {
+        let parts =
+            index::split_bytes(BUILTIN_INDEX).expect("組み込みの例外表の索引の形式が合わない");
+        let ender_initial = (0..parts.head_keys.len() / 8)
+            .any(|k| index::head_has_no_prev(read_u64(parts.head_keys, k)));
+        Matcher {
+            list: Cow::Borrowed(BUILTIN_EXCEPTIONS),
+            anchors: Anchors::Static {
+                enders: parts.enders,
+                links: parts.links,
+                head_keys: parts.head_keys,
+                head_starts: parts.head_starts,
+            },
+            ender_initial,
+            words: parts.words as usize,
+        }
+    }
+
     /// 語の一覧から照合器を組み立てる
     ///
-    /// 文末記号を含まない語は分割に影響しないので捨てる。文末記号が [`MAX_WORD_ENDERS`] 個を
-    /// 超える語と、[`MAX_WORD_CHARS`] 文字を超える語も捨てる。重複は 1 つにまとめる。
+    /// 字幅を畳んでから、文末記号を含まない語（分割に影響しない）、文末記号が
+    /// [`index::MAX_WORD_ENDERS`] 個を超える語、[`index::MAX_WORD_CHARS`] 文字を超える語、改行を
+    /// 含む語を捨てる。重複は 1 つにまとめる。
     pub(crate) fn new<'a>(words: impl IntoIterator<Item = &'a str>) -> Self {
-        let mut words: Vec<&str> = words.into_iter().filter(|w| is_matchable(w)).collect();
-        if !words.is_sorted() {
-            words.sort_unstable();
-        }
+        let mut words: Vec<String> = words
+            .into_iter()
+            .map(fold_word)
+            .filter(|w| index::is_matchable(w))
+            .collect();
+        words.sort_unstable();
         words.dedup();
-
-        // 語の中の文末記号ごとの組。鍵（文末記号とその前を逆順にした文字列）は組ごとに確保せず、
-        // 1 つの文字列に並べてバイト範囲で指す。UTF-8 のバイト順は符号位置の順と同じなので、
-        // 鍵はバイト列のまま比べて並べる
-        let mut keys = String::with_capacity(words.iter().map(|w| w.len()).sum());
-        let mut anchors: Vec<Anchor<'_>> = Vec::with_capacity(words.len());
-        for word in &words {
-            for (k, c) in word.char_indices() {
-                if !is_sentence_ender(c) || !can_be_active(word, k, c) {
-                    continue;
-                }
-                let after = k + c.len_utf8();
-                let start = keys.len();
-                keys.extend(word[..after].chars().rev());
-                let mut prefix = [0u8; 8];
-                let head = &keys.as_bytes()[start..keys.len().min(start + 8)];
-                prefix[..head.len()].copy_from_slice(head);
-                anchors.push(Anchor {
-                    prefix: u64::from_be_bytes(prefix),
-                    start: to_u32(start),
-                    end: to_u32(keys.len()),
-                    tail: &word[after..],
-                });
-            }
-        }
-        let key = |a: &Anchor<'_>| &keys[a.start as usize..a.end as usize];
-        // 鍵の先頭 8 バイトで大半の比較が決まる
-        anchors.sort_unstable_by(|a, b| {
-            a.prefix
-                .cmp(&b.prefix)
-                .then_with(|| key(a).cmp(key(b)))
-                .then_with(|| a.tail.cmp(b.tail))
-        });
-        anchors.dedup_by(|a, b| a.prefix == b.prefix && key(a) == key(b) && a.tail == b.tail);
-
-        let mut back = TrieBuilder::with_capacity(keys.len() / 2);
-        let mut back_info: Vec<(u32, u32)> = Vec::new(); // (節点, 情報)
-        let mut groups: Vec<(u32, u32)> = Vec::new();
-        let mut tail_ranges: Vec<(u32, u32)> = Vec::new();
-        let mut tail_links: Vec<u32> = Vec::new();
-        let mut tails = String::new();
-        let mut chain: Vec<usize> = Vec::new();
-        let mut i = 0;
-        while let Some(anchor) = anchors.get(i) {
-            let this_key = key(anchor);
-            let node = back.insert(this_key);
-            let mut info = 0u32;
-            let group_start = tail_ranges.len();
-            // 同じ鍵の組は後半の昇順に並んでいる（空の後半が先頭）
-            while let Some(tail) = anchors
-                .get(i)
-                .filter(|a| a.prefix == anchor.prefix && key(a) == this_key)
-                .map(|a| a.tail)
-            {
-                if tail.is_empty() {
-                    info |= END;
-                } else {
-                    let start = tails.len();
-                    tails.push_str(tail);
-                    tail_ranges.push((to_u32(start), to_u32(tails.len())));
-                }
-                i += 1;
-            }
-            if tail_ranges.len() > group_start {
-                // 各後半の真の接頭辞になっている最長の後半を求める。後半は昇順なので、直前までの
-                // 接頭辞の鎖を積みに持ち、接頭辞でなくなったものを降ろせばよい
-                chain.clear();
-                for j in group_start..tail_ranges.len() {
-                    let (start, end) = tail_ranges[j];
-                    let t = &tails.as_bytes()[start as usize..end as usize];
-                    while let Some(&top) = chain.last() {
-                        let (s, e) = tail_ranges[top];
-                        if t.starts_with(&tails.as_bytes()[s as usize..e as usize]) {
-                            break;
-                        }
-                        chain.pop();
-                    }
-                    tail_links.push(chain.last().map_or(0, |&k| to_u32(k + 1)));
-                    chain.push(j);
-                }
-                groups.push((to_u32(group_start), to_u32(tail_ranges.len())));
-                info |= to_u32(groups.len());
-                debug_assert!(groups.len() < END as usize);
-            }
-            back_info.push((node, info));
-        }
-
-        let back = back.finish();
-        let mut info = vec![0u32; back.nodes()];
-        for (node, value) in back_info {
-            info[node as usize] = value;
-        }
+        let list = words.join("\n");
+        let index = Index::build(&list, false);
+        let ender_initial = index
+            .head_keys
+            .iter()
+            .any(|&key| index::head_has_no_prev(key));
         Matcher {
-            back,
-            back_info: info.into_boxed_slice(),
-            groups: groups.into_boxed_slice(),
-            tail_ranges: tail_ranges.into_boxed_slice(),
-            tail_links: tail_links.into_boxed_slice(),
-            tails: tails.into_boxed_str(),
-            words: words.len(),
+            ender_initial,
+            list: Cow::Owned(list),
+            anchors: Anchors::Owned {
+                enders: index.enders.into_boxed_slice(),
+                links: index.links.into_boxed_slice(),
+                head_keys: index.head_keys.into_boxed_slice(),
+                head_starts: index.head_starts.into_boxed_slice(),
+            },
+            words: index.words as usize,
         }
     }
 
@@ -254,61 +463,118 @@ impl Matcher {
         self.words
     }
 
-    /// 鍵のトライの節点の数
-    #[cfg(test)]
-    fn nodes(&self) -> usize {
-        self.back.nodes()
-    }
-
     /// `text` の位置 `pos` にある文末記号 `c` で分割してはいけないか
-    ///
-    /// 語の出現が文末記号を内側に含むか、文末記号で終わる語の出現があって直後が助詞で始まるなら真。
     pub(crate) fn guards(&self, text: &str, pos: usize, c: char) -> bool {
-        let Some(mut node) = self.back.child(ROOT, c) else {
-            return false;
-        };
+        let list = &*self.list;
+        let anchors = &self.anchors;
         let after = pos + c.len_utf8();
-        let mut ends_here = false;
-        let mut before = text[..pos].chars();
-        loop {
-            let info = self.back_info[node as usize];
-            ends_here |= info & END != 0;
-            let group = info & !END;
-            if group != 0 && self.tail_follows(group - 1, &text.as_bytes()[after..]) {
+        let ender = fold_width(c);
+        // 文末記号で始まる語（利用者が加える語にだけありうる）
+        if self.ender_initial {
+            let (group, _) = anchors.head_ranges(index::head_key(ender, None, None), None);
+            if group.is_some_and(|group| self.group_guards(group, text, pos, after)) {
                 return true;
             }
-            let Some(prev) = before.next_back() else {
-                break;
-            };
-            let Some(next) = self.back.child(node, prev) else {
-                break;
-            };
-            node = next;
         }
-        ends_here && text[after..].chars().next().is_some_and(is_particle)
-    }
-
-    /// 後半の組 `group` のどれかが `text` の先頭に一致するか
-    ///
-    /// 後半はバイト順に並んでいる。`text` の接頭辞になっている後半 P があれば、`text` 以下で最大の
-    /// 後半 t（二分探索で求める）は P と `text` の間に並ぶので P で始まり、P は t と `text` の共通
-    /// 接頭辞に収まる。t の接頭辞になっている後半は、t から「真の接頭辞になっている最長の後半」の
-    /// 鎖を辿ると長い順にすべて現れるので、共通接頭辞に収まる最初のものを探せばよい。
-    /// 手間は二分探索と、後半の長さ以下の鎖の長さで抑えられる。
-    fn tail_follows(&self, group: u32, text: &[u8]) -> bool {
-        let (lo, hi) = self.groups[group as usize];
-        let bytes = |(start, end): (u32, u32)| &self.tails.as_bytes()[start as usize..end as usize];
-        let tail = |i: usize| bytes(self.tail_ranges[i]);
-        let n = self.tail_ranges[lo as usize..hi as usize].partition_point(|&r| bytes(r) <= text);
-        let Some(mut j) = n.checked_sub(1).map(|n| lo as usize + n) else {
+        let Some(prev1) = text[..pos].chars().next_back() else {
             return false;
         };
-        let common = tail(j).iter().zip(text).take_while(|(a, b)| a == b).count();
+        let c1 = fold_width(prev1);
+        let start1 = pos - prev1.len_utf8();
+        let prev2 = text[..start1].chars().next_back();
+        let c2 = prev2.map(fold_width);
+        let (short, long) = anchors.head_ranges(
+            index::head_key(ender, Some(c1), None),
+            c2.map(|c2| index::head_key(ender, Some(c1), Some(c2))),
+        );
+        // 直前の 1 字と文末記号からなる語
+        if short.is_some_and(|group| self.group_guards(group, text, start1, after)) {
+            return true;
+        }
+        // 鍵の頭の 3 字（文末記号と直前の 2 字）が同じ錨から始めて、1 字ずつ前へ狭める
+        let (
+            Some(Range {
+                start: mut lo,
+                end: mut hi,
+            }),
+            Some(prev2),
+            Some(c2),
+        ) = (long, prev2, c2)
+        else {
+            return false;
+        };
+        // 比べ終わった鍵の字（文末記号を除く）の、語の列の上のバイト数と、入力の上の語の先頭
+        let mut back = c1.len_utf8() + c2.len_utf8();
+        let mut start = start1 - prev2.len_utf8();
+        while lo < hi {
+            // 鍵がここで終わる錨（語の出現は `start` から始まる）は、範囲の先頭に並んでいる。
+            // 大半の位置では 1 つもないので、先頭を見てから探す
+            let ended_here = |i: usize| index::key_char(list, anchors.ender(i), back).is_none();
+            let ended = if ended_here(lo) {
+                partition(lo + 1, hi, ended_here)
+            } else {
+                lo
+            };
+            if ended > lo && self.group_guards(lo..ended, text, start, after) {
+                return true;
+            }
+            let Some(prev) = text[..start].chars().next_back() else {
+                break;
+            };
+            let folded = fold_width(prev);
+            let key = |i: usize| index::key_char(list, anchors.ender(i), back);
+            lo = partition(ended, hi, |i| key(i) < Some(folded));
+            // 同じ字の範囲は小さいのが普通なので、上限は下限から倍々に広げて挟んでから探す
+            hi = gallop(lo, hi, |i| key(i) == Some(folded));
+            back += folded.len_utf8();
+            start -= prev.len_utf8();
+        }
+        false
+    }
+
+    /// 同じ鍵の錨の組 `group`（語の出現は入力の `start` から始まる）が、`after` の直前の文末記号を守るか
+    fn group_guards(&self, group: Range<usize>, text: &str, start: usize, after: usize) -> bool {
+        let first = text[start..].chars().next().expect("語の出現の先頭の字");
+        if !left_boundary(text[..start].chars().next_back(), first) {
+            return false;
+        }
+        let list = &*self.list;
+        let rest = &text[after..];
+        let mut lo = group.start;
+        // 後半が空の錨（文末記号が語の最後の字）は組の先頭にある
+        let ender = self.anchors.ender(lo);
+        if index::tail(list, ender).is_empty() {
+            if continues(rest, ends_like_predicate(list, ender)) {
+                return true;
+            }
+            lo += 1;
+        }
+        lo < group.end && self.tail_follows(lo..group.end, rest)
+    }
+
+    /// 錨の組 `group`（後半が空でない、同じ鍵の錨）のどれかの後半が、`rest` の先頭に一致するか
+    ///
+    /// 後半は昇順に並んでいる。`rest` の接頭辞になっている後半 P があれば、`rest` 以下で最大の
+    /// 後半 t（二分探索で求める）は P と `rest` の間に並ぶので P で始まり、P は t と `rest` の共通
+    /// 接頭辞に収まる。t の接頭辞になっている後半は、t からリンク（真の接頭辞になっている最長の
+    /// 後半）を辿ると長い順にすべて現れるので、共通接頭辞に収まる最初のものを探せばよい。
+    /// 手間は二分探索と、後半の長さ以下のリンクの鎖の長さで抑えられる。
+    fn tail_follows(&self, group: Range<usize>, rest: &str) -> bool {
+        let list = &*self.list;
+        let tail = |i: usize| index::tail(list, self.anchors.ender(i));
+        let n = partition(group.start, group.end, |i| {
+            compare_folded(tail(i), rest) != Ordering::Greater
+        });
+        if n == group.start {
+            return false;
+        }
+        let mut j = n - 1;
+        let common = common_prefix_folded(tail(j), rest);
         loop {
             if tail(j).len() <= common {
                 return true;
             }
-            match self.tail_links[j] {
+            match self.anchors.link(j) {
                 0 => return false,
                 link => j = link as usize - 1,
             }
@@ -316,192 +582,28 @@ impl Matcher {
     }
 }
 
-/// 照合に使う組（語の中の文末記号 1 つ）
-struct Anchor<'a> {
-    /// 鍵の先頭 8 バイト（足りなければ 0 で埋める）をビッグエンディアンで読んだ値。
-    /// 鍵の大小と矛盾しないので、並べ替えの比較を先にこれで済ませる
-    prefix: u64,
-    /// 鍵（文末記号とその前を逆順にした文字列）の、鍵を並べた文字列の上のバイト範囲
-    start: u32,
-    end: u32,
-    /// 文末記号より後ろの部分
-    tail: &'a str,
-}
-
-/// 語の `k` バイト目の文末記号 `c` が、語の出現の中で文末として働きうるか
-///
-/// ASCII の `!` `?` の連続が語の中で英数字・ASCII 記号に続くなら、入力の中でも同じ文字が続くので
-/// 文末として働かない（規則 4）。そうした文末記号は照合で問われないので組を作らない。
-fn can_be_active(word: &str, k: usize, c: char) -> bool {
-    if c != '!' && c != '?' {
-        return true;
-    }
-    let run_end = word[k..]
-        .find(|ch: char| ch != '!' && ch != '?')
-        .map_or(word.len(), |n| k + n);
-    run_end == word.len() || ascii_run_is_ender(word[run_end..].chars().next())
-}
-
-/// 例外表の大きさを u32 に収める（例外表が 4 GiB を超えることはない）
-fn to_u32(n: usize) -> u32 {
-    u32::try_from(n).expect("例外表が大きすぎる")
-}
-
-/// 子の数がこれを超える節点の子は、ハッシュ表で引く
-const HASHED_DEGREE: usize = 8;
-/// ハッシュ表の空きを表す値（節点 < 2^32 - 1、文字 <= U+10FFFF なので鍵と重ならない）
-const EMPTY: u64 = u64::MAX;
-
-/// 文字で子を引くトライ
-///
-/// 子は節点ごとに連続して並べ、子の少ない節点は並びをそのまま探す。子の多い節点（文末記号の
-/// 直前の文字で分かれる浅い節点など）は、(節点, 文字) を鍵にした開番地法のハッシュ表で引く。
-#[derive(Clone)]
-struct Trie {
-    /// 節点 `n` の子は `edge_char[edge_start[n]..edge_start[n + 1]]` と、同じ位置の `edge_target`
-    edge_start: Box<[u32]>,
-    edge_char: Box<[char]>,
-    edge_target: Box<[u32]>,
-    /// 子の多い節点の子のハッシュ表の鍵（`節点 << 32 | 文字`。空きは EMPTY）と行き先
-    hash_keys: Box<[u64]>,
-    hash_targets: Box<[u32]>,
-    /// ハッシュ値を表の大きさに縮めるシフト量（64 - 表の大きさの log2）
-    hash_shift: u32,
-}
-
-impl Trie {
-    /// 節点の数
-    fn nodes(&self) -> usize {
-        self.edge_start.len() - 1
-    }
-
-    /// 節点 `node` から文字 `c` で辿った子
-    #[inline]
-    fn child(&self, node: u32, c: char) -> Option<u32> {
-        let lo = self.edge_start[node as usize] as usize;
-        let hi = self.edge_start[node as usize + 1] as usize;
-        if hi - lo <= HASHED_DEGREE {
-            let found = self.edge_char[lo..hi].iter().position(|&x| x == c);
-            return found.map(|i| self.edge_target[lo + i]);
-        }
-        let key = u64::from(node) << 32 | u64::from(c);
-        let mask = self.hash_keys.len() - 1;
-        let mut i = hash_slot(key, self.hash_shift);
-        loop {
-            let k = self.hash_keys[i];
-            if k == key {
-                return Some(self.hash_targets[i]);
-            }
-            if k == EMPTY {
-                return None;
-            }
-            i = (i + 1) & mask;
+/// 後半 `tail`（畳んである）と、入力の続き `rest` を畳んだものの順序。`tail` が `rest` の接頭辞なら Less
+fn compare_folded(tail: &str, rest: &str) -> Ordering {
+    let mut rest = rest.chars().map(fold_width);
+    for t in tail.chars() {
+        match rest.next() {
+            None => return Ordering::Greater,
+            Some(r) if r != t => return t.cmp(&r),
+            Some(_) => {}
         }
     }
+    Ordering::Less
 }
 
-/// ハッシュ表の位置（乗算で混ぜた上位ビットを使う）
-#[inline]
-fn hash_slot(key: u64, shift: u32) -> usize {
-    (key.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> shift) as usize
-}
-
-/// 昇順に並べた鍵からトライを作る
-///
-/// 直前の鍵との共通接頭辞までを使い回し、残りの文字の節点を作る。鍵を昇順に加えるので、
-/// 同じ親の子は文字の昇順に作られる。
-struct TrieBuilder {
-    /// (親, 文字, 子)
-    edges: Vec<(u32, char, u32)>,
-    /// 節点の数
-    nodes: u32,
-    /// 直前に加えた鍵の節点の列（先頭は根）
-    path: Vec<u32>,
-    /// 直前に加えた鍵
-    prev: String,
-}
-
-impl TrieBuilder {
-    /// 根だけのトライを作り始める（`edges` は見込みの辺の数）
-    fn with_capacity(edges: usize) -> Self {
-        TrieBuilder {
-            edges: Vec::with_capacity(edges),
-            nodes: 1,
-            path: vec![ROOT],
-            prev: String::new(),
+/// 後半 `tail` と、入力の続き `rest` を畳んだものの共通接頭辞の、`tail` の上のバイト数
+fn common_prefix_folded(tail: &str, rest: &str) -> usize {
+    let mut rest = rest.chars().map(fold_width);
+    for (i, t) in tail.char_indices() {
+        if rest.next() != Some(t) {
+            return i;
         }
     }
-
-    /// 鍵を加え、鍵の終わりの節点を返す（鍵は昇順に加える）
-    fn insert(&mut self, key: &str) -> u32 {
-        debug_assert!(key >= self.prev.as_str(), "鍵が昇順でない");
-        let common = self
-            .prev
-            .chars()
-            .zip(key.chars())
-            .take_while(|(a, b)| a == b)
-            .count();
-        self.path.truncate(common + 1);
-        let mut node = self.path[common];
-        for c in key.chars().skip(common) {
-            let child = self.nodes;
-            self.nodes = child.checked_add(1).expect("例外表が大きすぎる");
-            self.edges.push((node, c, child));
-            self.path.push(child);
-            node = child;
-        }
-        self.prev.clear();
-        self.prev.push_str(key);
-        node
-    }
-
-    /// 子を親ごとにまとめ（数え上げソート）、子の多い節点の子をハッシュ表に入れたトライにする
-    fn finish(self) -> Trie {
-        let nodes = self.nodes as usize;
-        let mut edge_start = vec![0u32; nodes + 1];
-        for &(parent, _, _) in &self.edges {
-            edge_start[parent as usize + 1] += 1;
-        }
-        for i in 0..nodes {
-            edge_start[i + 1] += edge_start[i];
-        }
-        let mut cursor = edge_start.clone();
-        let mut edge_char = vec!['\0'; self.edges.len()];
-        let mut edge_target = vec![0u32; self.edges.len()];
-        for &(parent, c, child) in &self.edges {
-            let i = cursor[parent as usize] as usize;
-            edge_char[i] = c;
-            edge_target[i] = child;
-            cursor[parent as usize] += 1;
-        }
-
-        // ハッシュ表の大きさは入れる子の数の 2 倍以上の 2 のべき（埋まり具合は半分以下）
-        let degree = |n: usize| (edge_start[n + 1] - edge_start[n]) as usize;
-        let hashed: usize = (0..nodes).map(degree).filter(|&d| d > HASHED_DEGREE).sum();
-        let bits = (hashed * 2).max(2).next_power_of_two().trailing_zeros();
-        let mut hash_keys = vec![EMPTY; 1 << bits];
-        let mut hash_targets = vec![0u32; 1 << bits];
-        let mask = hash_keys.len() - 1;
-        for n in (0..nodes).filter(|&n| degree(n) > HASHED_DEGREE) {
-            for e in edge_start[n] as usize..edge_start[n + 1] as usize {
-                let key = (n as u64) << 32 | u64::from(edge_char[e]);
-                let mut i = hash_slot(key, 64 - bits);
-                while hash_keys[i] != EMPTY {
-                    i = (i + 1) & mask;
-                }
-                hash_keys[i] = key;
-                hash_targets[i] = edge_target[e];
-            }
-        }
-        Trie {
-            edge_start: edge_start.into_boxed_slice(),
-            edge_char: edge_char.into_boxed_slice(),
-            edge_target: edge_target.into_boxed_slice(),
-            hash_keys: hash_keys.into_boxed_slice(),
-            hash_targets: hash_targets.into_boxed_slice(),
-            hash_shift: 64 - bits,
-        }
-    }
+    tail.len()
 }
 
 #[cfg(test)]
@@ -512,30 +614,58 @@ mod tests {
     fn guards_naive(words: &[&str], text: &str, pos: usize) -> bool {
         let c = text[pos..].chars().next().unwrap();
         let after = pos + c.len_utf8();
-        let mut ends_here = false;
-        for word in words.iter().filter(|w| w.chars().any(is_sentence_ender)) {
+        let chars: Vec<(usize, char)> = text
+            .char_indices()
+            .map(|(i, c)| (i, fold_width(c)))
+            .collect();
+        for word in words.iter().map(|w| fold_word(w)) {
+            if !index::is_matchable(&word) {
+                continue;
+            }
+            let wchars: Vec<char> = word.chars().collect();
             // 重なり合う出現もすべて数える
-            let starts = text
-                .char_indices()
-                .map(|(i, _)| i)
-                .filter(|&i| text[i..].starts_with(word));
-            for start in starts {
-                let end = start + word.len();
+            for s in 0..chars.len() {
+                let Some(window) = chars.get(s..s + wchars.len()) else {
+                    break;
+                };
+                if window.iter().map(|&(_, c)| c).ne(wchars.iter().copied()) {
+                    continue;
+                }
+                let start = chars[s].0;
+                let end = chars.get(s + wchars.len()).map_or(text.len(), |&(i, _)| i);
+                let first = text[start..].chars().next().unwrap();
+                if !left_boundary(text[..start].chars().next_back(), first) {
+                    continue;
+                }
                 if start <= pos && after < end {
                     return true;
                 }
-                if after == end {
-                    ends_here = true;
+                if after == end
+                    && continues(
+                        &text[after..],
+                        ends_like_predicate(&word, word.len() - wchars.last().unwrap().len_utf8()),
+                    )
+                {
+                    return true;
                 }
             }
         }
-        ends_here && text[after..].chars().next().is_some_and(is_particle)
+        false
     }
 
-    /// 規則 4 で文末として働く文末記号の位置
+    /// 文末として働きうる文末記号の位置（規則 4 の ASCII の `!` `?` は直後の字で決める）
     fn active_enders(text: &str) -> Vec<(usize, char)> {
         text.char_indices()
-            .filter(|&(pos, c)| is_sentence_ender(c) && can_be_active(text, pos, c))
+            .filter(|&(pos, c)| {
+                if c == '!' || c == '?' {
+                    let run_end = text[pos..]
+                        .find(|ch: char| ch != '!' && ch != '?')
+                        .map_or(text.len(), |n| pos + n);
+                    super::super::ascii_run_is_ender(text[run_end..].chars().next())
+                } else {
+                    is_sentence_ender(c)
+                }
+            })
             .collect()
     }
 
@@ -572,28 +702,37 @@ mod tests {
             "…！",        // 記号だけ
             "娘",         // 文末記号を含まない
             "!",          // 2 文字未満
-            "！ニュース", // 文末記号で始まる
+            "！ニュース", // 文末記号で始まる（畳むと `!ニュース`）
             "。はい",     // 文末記号で始まる
             "#タグ!",     // 表の書式で書けない
             " Yahoo!",    // 表の書式で書けない
             "改\n行!",    // 表の書式で書けない
             "〇〇!",      // 漢数字は英数字として数える
-            "ｵｯｹｰ｡",      // 半角の句点も文末記号
+            "ｵｯｹｰ｡",      // 半角の句点も文末記号（半角カタカナは畳まない）
         ]);
         assert_eq!(words, vec!["〇〇!", "ｵｯｹｰ｡"]);
     }
 
     #[test]
-    fn test_extract_candidates_dedups_and_sorts() {
-        let words = extract_candidates(["b!", "a!", "b!", "a!"]);
-        assert_eq!(words, vec!["a!", "b!"]);
+    fn test_extract_candidates_folds_width_and_dedups() {
+        let words = extract_candidates([
+            "b!",
+            "a!",
+            "b!",
+            "Ｙａｈｏｏ！",
+            "Yahoo!",
+            "Yahoo！",
+            "第１．２",
+        ]);
+        // `．` は畳まない（畳むと文末記号でなくなる）
+        assert_eq!(words, vec!["Yahoo!", "a!", "b!", "第1．2"]);
     }
 
     #[test]
     fn test_builtin_exceptions_follow_extraction_rules() {
         let words: Vec<&str> = builtin_exceptions().collect();
         assert!(!words.is_empty());
-        // 組み込みの表は extract_candidates の出力そのもの（規則を満たし、重複がなく、並んでいる）
+        // 組み込みの表は extract_candidates の出力そのもの（規則を満たし、畳んであり、重複がなく、並んでいる）
         assert_eq!(extract_candidates(words.iter().copied()), words);
     }
 
@@ -614,6 +753,26 @@ mod tests {
     }
 
     #[test]
+    fn test_builtin_index_matches_the_table() {
+        // build.rs が埋め込んだ索引は、いまの表と組み立ての規則から作ったものと一致する
+        let index = Index::build(BUILTIN_EXCEPTIONS, true);
+        assert_eq!(index.to_bytes(), BUILTIN_INDEX);
+        assert_eq!(index.words as usize, builtin_exceptions().count());
+        assert_eq!(builtin_matcher().len(), builtin_exceptions().count());
+    }
+
+    #[test]
+    fn test_builtin_exceptions_version() {
+        let (count, hash) = BUILTIN_EXCEPTIONS_VERSION.split_once('-').unwrap();
+        assert_eq!(
+            count.parse::<usize>().unwrap(),
+            builtin_exceptions().count()
+        );
+        assert_eq!(hash.len(), 16);
+        assert!(hash.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
     fn test_guards_inside_and_at_end_of_words() {
         let words = ["Yahoo!", "Yahoo!ニュース", "モーニング娘。", "けいおん!!"];
         let matcher = Matcher::new(words);
@@ -625,10 +784,14 @@ mod tests {
             ("Yahoo!", "Yahoo".len(), false),              // 語の末尾 + 入力の終わり
             ("モーニング娘。のライブ", "モーニング娘".len(), true),
             ("モーニング娘。次", "モーニング娘".len(), false),
-            ("娘。のライブ", "娘".len(), false), // 語の途中から始まる
-            ("けいおん!!次", "けいおん".len(), true), // 1 つ目は内側
-            ("けいおん!!次", "けいおん!".len(), false), // 2 つ目は末尾
+            ("モーニング娘。もう一度", "モーニング娘".len(), false), // 文頭に立つ語
+            ("モーニング娘。からの発表", "モーニング娘".len(), true), // 助詞のように続く語
+            ("娘。のライブ", "娘".len(), false),                     // 語の途中から始まる
+            ("けいおん!!次", "けいおん".len(), true),                // 1 つ目は内側
+            ("けいおん!!次", "けいおん!".len(), false),              // 2 つ目は末尾
             ("けいおん!!の話", "けいおん!".len(), true),
+            ("けいおん!!でも", "けいおん!".len(), false), // 文末と同じ形の語の後ろの「でも」
+            ("Yahoo!でも検索", "Yahoo".len(), true),      // 名詞のように終わる語の後ろの「でも」
         ];
         for (text, pos, expected) in cases {
             let c = text[pos..].chars().next().unwrap();
@@ -638,8 +801,100 @@ mod tests {
     }
 
     #[test]
+    fn test_left_boundary() {
+        let words = ["べる。", "流。", "モーニング娘。", "Yahoo!", "けいおん!"];
+        let matcher = Matcher::new(words);
+        let cases = [
+            ("食べる。では次", "食べる".len(), false), // ひらがなの語が漢字に続く
+            ("べる。の話", "べる".len(), true),        // 入力の先頭
+            ("主流。です", "主流".len(), false),       // 漢字の語が漢字に続く
+            ("この流。です", "この流".len(), true),    // 漢字の語がひらがなに続く
+            ("元モーニング娘。の", "元モーニング娘".len(), true), // カタカナの語が漢字に続く
+            ("プチモーニング娘。の", "プチモーニング娘".len(), false), // カタカナの語がカタカナに続く
+            ("MyYahoo!の", "MyYahoo".len(), false),                    // 英字の語が英字に続く
+            ("のYahoo!の", "のYahoo".len(), true),
+            ("アニメけいおん!の", "アニメけいおん".len(), false), // ひらがなの語がカタカナに続く
+            ("「けいおん!の", "「けいおん".len(), true),
+        ];
+        for (text, pos, expected) in cases {
+            let c = text[pos..].chars().next().unwrap();
+            assert_eq!(matcher.guards(text, pos, c), expected, "{text} @ {pos}");
+            assert_eq!(guards_naive(&words, text, pos), expected, "{text} @ {pos}");
+        }
+    }
+
+    #[test]
+    fn test_width_is_folded_in_matching() {
+        let words = ["Yahoo!ニュース", "Hey!Say!JUMP", "Ｑさま！！"];
+        let matcher = Matcher::new(words);
+        let cases = [
+            ("Yahoo！ニュース", "Yahoo".len(), true),
+            ("Ｙａｈｏｏ！ニュース", "Ｙａｈｏｏ".len(), true),
+            ("YAHOO!ニュース", "YAHOO".len(), false), // 大文字・小文字は畳まない
+            ("Ｈｅｙ！Ｓａｙ！ＪＵＭＰ", "Ｈｅｙ".len(), true), // 全角の `！` は常に文末になりうる
+            ("Qさま!!の", "Qさま!".len(), true),      // 表の語が全角でも畳んで持つ
+        ];
+        for (text, pos, expected) in cases {
+            let c = text[pos..].chars().next().unwrap();
+            assert_eq!(matcher.guards(text, pos, c), expected, "{text} @ {pos}");
+            assert_eq!(guards_naive(&words, text, pos), expected, "{text} @ {pos}");
+        }
+    }
+
+    #[test]
+    fn test_continuations_and_sentence_starters() {
+        // 名詞のように終わる語
+        for (rest, expected) in [
+            ("の", true),
+            ("から", true),
+            ("まで", true),
+            ("より", true),
+            ("って", true),
+            ("など", true),
+            ("だけ", true),
+            ("しか", true),
+            ("さえ", true),
+            ("くらい", true),
+            ("ぐらい", true),
+            ("ほど", true),
+            ("として", true),
+            ("について", true),
+            ("では", true),
+            ("でも", true),
+            ("はいつも", true),
+            ("もう一度", false),
+            ("もちろん", false),
+            ("とにかく", false),
+            ("やはり", false),
+            ("しかし", false),
+            ("はい、", false),
+            ("はい", false),
+            ("次", false),
+            ("", false),
+            ("！", false),
+        ] {
+            assert_eq!(continues(rest, false), expected, "{rest}");
+        }
+        // 文末と同じ形で終わる語
+        for (rest, expected) in [
+            ("の", true),
+            ("を", true),
+            ("でも", false),
+            ("では", false),
+            ("で、", false),
+            ("で有名", true),
+            ("とはいえ", false),
+            ("と思った", true),
+            ("だけど", false),
+            ("だけが", true),
+        ] {
+            assert_eq!(continues(rest, true), expected, "{rest}");
+        }
+    }
+
+    #[test]
     fn test_matcher_ignores_words_without_enders() {
-        let matcher = Matcher::new(["猫", "", "犬!"]);
+        let matcher = Matcher::new(["猫", "", "犬!", "改\n行!"]);
         assert_eq!(matcher.len(), 1);
         assert!(matcher.guards("犬!の", "犬".len(), '!'));
         assert!(!matcher.guards("猫!の", "猫".len(), '!'));
@@ -654,8 +909,11 @@ mod tests {
 
     #[test]
     fn test_matcher_agrees_with_naive_search_on_random_input() {
-        // 小さな字母で語と入力を作り、語が入れ子・部分的に重なる状況で総当たりと突き合わせる
-        let alphabet = ['a', 'b', '!', '?', '。', 'の', 'x'];
+        // 小さな字母で語と入力を作り、語が入れ子・部分的に重なる状況、字種の境界、字幅の畳み込み、
+        // 続きの語・文頭に立つ語を総当たりと突き合わせる
+        let alphabet = [
+            'a', 'b', '!', '?', '。', 'の', 'も', 'う', 'ア', '字', 'ｂ', '！', '．',
+        ];
         let mut seed = 0x2545_f491_4f6c_dd1du64;
         let mut next = move |n: usize| {
             seed ^= seed << 13;
@@ -663,7 +921,7 @@ mod tests {
             seed ^= seed << 17;
             (seed % n as u64) as usize
         };
-        for _ in 0..2000 {
+        for _ in 0..3000 {
             let words: Vec<String> = (0..next(8) + 1)
                 .map(|_| {
                     (0..next(5) + 1)
@@ -719,6 +977,7 @@ mod tests {
             "ンン",
             "",
             "Z",
+            "Ａｎ",
         ] {
             let text = format!("それいけ!{after}");
             assert_eq!(
@@ -755,14 +1014,15 @@ mod tests {
 
     #[test]
     fn test_words_over_the_limits_are_ignored() {
+        use index::{MAX_WORD_CHARS, MAX_WORD_ENDERS};
         let enders_ok = format!("語{}", "!".repeat(MAX_WORD_ENDERS));
         let enders_over = format!("語{}", "!".repeat(MAX_WORD_ENDERS + 1));
         let chars_ok = format!("{}!", "あ".repeat(MAX_WORD_CHARS - 1));
         let chars_over = format!("{}!", "あ".repeat(MAX_WORD_CHARS));
-        assert!(is_matchable(&enders_ok));
-        assert!(!is_matchable(&enders_over));
-        assert!(is_matchable(&chars_ok));
-        assert!(!is_matchable(&chars_over));
+        assert!(index::is_matchable(&enders_ok));
+        assert!(!index::is_matchable(&enders_over));
+        assert!(index::is_matchable(&chars_ok));
+        assert!(!index::is_matchable(&chars_over));
         let matcher = Matcher::new([
             enders_ok.as_str(),
             enders_over.as_str(),
@@ -771,13 +1031,13 @@ mod tests {
         ]);
         assert_eq!(matcher.len(), 2);
         // 組み込みの表の語はどれも上限に収まる
-        assert!(builtin_exceptions().all(is_matchable));
+        assert!(builtin_exceptions().all(index::is_matchable));
     }
 
     #[test]
     fn test_dense_enders_with_ender_heavy_word_stay_linear() {
         // 文末記号だけの語と、文末記号だけの長い入力（前へ辿る手間は語の文末記号の数で抑えられる）
-        let word = "。".repeat(MAX_WORD_ENDERS);
+        let word = "。".repeat(index::MAX_WORD_ENDERS);
         let matcher = Matcher::new([word.as_str()]);
         let text = "。".repeat(200_000);
         let guarded = text
@@ -786,15 +1046,5 @@ mod tests {
             .count();
         // 最後の 1 つ以外は語の内側にある
         assert_eq!(guarded, 200_000 - 1);
-    }
-
-    #[test]
-    fn test_inactive_ascii_enders_in_words_are_not_indexed() {
-        // 「Hey!Say!JUMP」の `!` は英字が続くので文末にならず、組を作らない
-        let matcher = Matcher::new(["Hey!Say!JUMP"]);
-        assert_eq!(matcher.nodes(), 1);
-        // 語の末尾・日本語の前の `!` は文末になりうるので組を作る
-        assert!(Matcher::new(["Yahoo!"]).nodes() > 1);
-        assert!(Matcher::new(["Yahoo!ニュース"]).nodes() > 1);
     }
 }

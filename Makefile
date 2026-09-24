@@ -43,9 +43,14 @@ test: ## Run tests
 fmt: ## Format code
 	cargo fmt --all
 
-check: ## Run clippy and check
+# ライブラリとして使う 2 つの構成も CI と同じく確かめる。文分割だけ (feature なし。依存なし) と、
+# 解析まで (analyzer。依存は memmap2 と bytemuck)
+check: ## Run clippy and check (incl. the library-only feature sets)
 	cargo clippy --workspace --all-targets -- -D warnings
 	cargo clippy --lib --no-default-features -- -D warnings
+	cargo test --lib --no-default-features
+	cargo clippy --lib --no-default-features --features analyzer -- -D warnings
+	cargo test --lib --no-default-features --features analyzer
 	cargo check --workspace
 
 setup-hooks: ## Enable repository hooks and Git LFS for this clone

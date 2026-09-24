@@ -154,18 +154,22 @@ jobs:
         if: "!matrix.cross"
         run: cargo build --release --locked --target ${{ matrix.target }}
 
+      # CLI は文分割の例外表（辞書のデータに由来する）を埋め込んでいるので、ライセンスの文書と
+      # 例外表の NOTICE を同梱する
       - name: Package (Unix)
         if: runner.os != 'Windows'
         run: |
+          cp LICENSE LICENSE-APACHE-2.0 THIRD_PARTY_LICENSES.md src/sentence/builtin_exceptions.NOTICE target/${{ matrix.target }}/release/
           cd target/${{ matrix.target }}/release
-          tar czvf ../../../${{ matrix.asset_name }} ${{ matrix.artifact_name }}
+          tar czvf ../../../${{ matrix.asset_name }} ${{ matrix.artifact_name }} LICENSE LICENSE-APACHE-2.0 THIRD_PARTY_LICENSES.md builtin_exceptions.NOTICE
           cd ../../..
 
       - name: Package (Windows)
         if: runner.os == 'Windows'
         run: |
+          Copy-Item LICENSE, LICENSE-APACHE-2.0, THIRD_PARTY_LICENSES.md, src/sentence/builtin_exceptions.NOTICE -Destination target/${{ matrix.target }}/release/
           cd target/${{ matrix.target }}/release
-          7z a ../../../${{ matrix.asset_name }} ${{ matrix.artifact_name }}
+          7z a ../../../${{ matrix.asset_name }} ${{ matrix.artifact_name }} LICENSE LICENSE-APACHE-2.0 THIRD_PARTY_LICENSES.md builtin_exceptions.NOTICE
           cd ../../..
 
       - name: Upload artifact
