@@ -561,9 +561,10 @@ mod tests {
     #[test]
     fn test_whitespace_only() {
         let mut analyzer = make_analyzer();
-        let tokens = analyzer.tokenize("   ");
-        // Whitespace should be tokenized as unknown words
-        assert!(!tokens.is_empty());
+        // 半角空白・タブ・改行はトークンにしない（MeCab と同じ）
+        for input in ["   ", "\t", " \n ", "\r\n"] {
+            assert!(analyzer.tokenize(input).is_empty(), "{input:?}");
+        }
     }
 
     #[test]

@@ -1,7 +1,7 @@
 """配布辞書用に IPAdic のソースを整える.
 
 上流の mecab-ipadic は書き換えず、`hasami build` に渡すディレクトリを別に作る。
-辞書 CSV と matrix.def はリンクを張り、次の 3 点だけを変える。
+辞書 CSV と matrix.def はリンクを張り、次の 4 点だけを変える。
 
 1. 記号の未知語 (char.def・unk.def)
    IPAdic の char.def は U+2000..206F (— 等)・U+3000..303F (全角スペース・。、「」 等)・
@@ -27,6 +27,11 @@
    文章は「―」U+2015「～」U+FF5E「－」U+FF0D 等を使う。表層形にこの 7 字を含む語に、CP932 側の字で
    書いた別表記を足す (「あ〜」に「あ～」、「——」に「――」)。品詞・文脈 ID・コスト・読みは元の語と同じで、
    原形が表層形と同じ語は原形も同じ字にする。入力の文字は変えない。
+
+4. 空白の文字 (char.def)
+   IPAdic の char.def は SPACE に 0x00D0 (Ð) を入れている。ほかの行 (0x0009・0x000A・0x000B) から
+   見て復帰 0x000D の書き間違いなので、0x000D に直す。hasami は MeCab と同じく SPACE の文字を
+   読み飛ばす (ノードにしない) ので、そのままだと「Ð」が解析結果から消える。
 
 usage: python3 scripts/prepare_ipadic.py <mecab-ipadic のディレクトリ> <出力ディレクトリ>
        変えた内容を 1 行で標準出力に書く (辞書のメタデータ `ipadic_patch` に入れる)
@@ -55,6 +60,10 @@ EXTRA_CHAR_RANGES = [
     "0x00D7 SYMBOL  # MULTIPLICATION SIGN",
     "0x00F7 SYMBOL  # DIVISION SIGN",
 ]
+# IPAdic の char.def は SPACE に 0x00D0 (Ð) を入れている。ほかの行 (0x0009・0x000A・0x000B) から見て、
+# 復帰 0x000D の書き間違い。hasami は MeCab と同じく SPACE の文字を読み飛ばすので、そのままだと Ð が消える
+MISTYPED_SPACE = "0x00D0"
+SPACE_FIX = "0x000D SPACE  # CARRIAGE RETURN (IPAdic の 0x00D0 は 0x000D の書き間違い)"
 
 # 変換表によって写し先が分かれる JIS X 0208 の字: JIS 側 (hasami・iconv) → CP932 側 (Windows)
 CP932_SIDE = {
@@ -93,6 +102,7 @@ def patch_char_def(text: str) -> str:
     out = []
     replace = {"SYMBOL": SYMBOL_CHAR_DEF, **CATEGORY_CHAR_DEF}
     found = set()
+    space_fixed = False
     for line in lines:
         fields = line.split()
         if (
@@ -103,11 +113,16 @@ def patch_char_def(text: str) -> str:
         ):
             out.append(replace[fields[0]])
             found.add(fields[0])
+        elif fields[:2] == [MISTYPED_SPACE, "SPACE"]:
+            out.append(SPACE_FIX)
+            space_fixed = True
         else:
             out.append(line)
     missing = replace.keys() - found
     if missing:
         sys.exit(f"char.def: categories not found: {sorted(missing)}")
+    if not space_fixed:
+        sys.exit(f"char.def: {MISTYPED_SPACE} SPACE not found")
     return "\n".join([*out, *EXTRA_CHAR_RANGES]) + "\n"
 
 
@@ -162,7 +177,7 @@ def main() -> None:
 
     print(
         f"char.def {SYMBOL_CHAR_DEF}, {', '.join(CATEGORY_CHAR_DEF.values())}, "
-        f"U+30FB/U+00D7/U+00F7 SYMBOL; unk.def SYMBOL=記号,一般; "
+        f"U+30FB/U+00D7/U+00F7 SYMBOL, 0x000D SPACE (not 0x00D0); unk.def SYMBOL=記号,一般; "
         f"{len(variants)} CP932-side variants of dashes, tildes and minus signs"
     )
 
