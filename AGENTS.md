@@ -19,7 +19,7 @@ Rust製の日本語形態素解析エンジン。外部エンジン（MeCab等�
 ```
 hasami/
 ├── src/
-│   ├── lib.rs          # ライブラリエントリポイント（sentence 以外のモジュールは `analyzer` feature）
+│   ├── lib.rs          # ライブラリエントリポイント（sentence 以外のモジュールは `analyzer` feature）、include_hsd! マクロ
 │   ├── main.rs         # CLI (build, merge, repair, export, tokenize, bench, info)
 │   ├── dict/
 │   │   ├── mod.rs      # DictEntry, UnkEntry, ConnectionMatrix（解析側でも使う型）
@@ -33,7 +33,7 @@ hasami/
 │   │   ├── strtab.rs   # 品詞・活用型・活用形の文字列表
 │   │   ├── meta.rs     # メタデータ（name, pos_scheme, sources, repairs, ...）
 │   │   ├── writer.rs   # DictBuilder の中身 → セクション（一時ファイル + rename で書き出し）
-│   │   ├── reader.rs   # Dictionary（mmap / 所有バッファ）、ロード時検査、verify、export 用の列挙
+│   │   ├── reader.rs   # Dictionary（mmap / 所有バッファ / 'static の参照）、ロード時検査、verify、export 用の列挙
 │   │   └── tests.rs    # 往復・再現性・支配エントリの除去・壊れたファイルの拒否
 │   ├── char_class.rs   # 文字分類（未知語処理）。辞書は BMP の文字種表を持ち、解析では表を引く
 │   ├── sentence/       # 辞書不要の文分割
@@ -74,7 +74,8 @@ hasami/
 ## feature
 - feature なし（`default-features = false`）: 辞書不要の文分割 `sentence` だけ。依存は無い（noslop がこの構成で使う）
 - `analyzer`: 形態素解析。`sentence` 以外のモジュール（analyzer・char_class・dict・ffi・hsd・lattice・pos）と
-  再エクスポート（`Analyzer`・`DictEntry`・`DictError`・`Dictionary`・`Token`・`CoarsePos`）。依存は memmap2・bytemuck
+  再エクスポート（`Analyzer`・`DictEntry`・`DictError`・`Dictionary`・`Token`・`CoarsePos`）、`include_hsd!` マクロ。
+  依存は memmap2・bytemuck
 - `build`: 辞書の構築・修復・書き出し（`DictBuilder`・`write_lexicon_csv`・`hsd::writer`）。`analyzer` を含む。依存は csv・encoding_rs・glob
 - `cli`: `hasami` コマンド（`[[bin]]` の required-features）。`build` を含む。既定（`default = ["cli"]`）
 - `sentence` はほかのモジュールに依存しない（`pos`・`analyzer` が `sentence` を使う片方向）。`sentence` の doc から
@@ -101,6 +102,10 @@ hasami/
   MeCab と同じく読み飛ばしてトークンにしない（前後の語を直接つなぐ。`Node::start` はつなぐ位置で、表層は
   `ChunkChars::skip_spaces` の位置から）
 - `Dictionary::load(path)` / `Dictionary::verify()` / `Dictionary::for_each_entry(cb)` / `Dictionary::lookup(text)`
+- `Dictionary::from_static(bytes)` / `hasami::include_hsd!(path)` - 実行ファイルに埋め込んだ辞書を複製せずに読む（`Storage::Static`）。
+  先頭は 8 バイト境界（型付きスライスが要るのは 4 だが `from_bytes` の所有バッファにそろえた）。マクロは 64 にそろえる
+  （セクションがキャッシュラインに乗る）。境界になければ複製に切り替えずに `DictError::Invalid`（辞書でなければ先に `NotHsd` など）。
+  `Dictionary::from_bytes(bytes)` は 8 バイト境界の `Vec<u64>` に複製する。C FFI・Python はパス指定の mmap だけで、メモリから読む入口は無い
 - `DictBuilder` - MeCab形式CSVから辞書構築。`write_hsd(path, &opts, progress)` でファイル、`build()` でメモリ上の辞書
 - `DictBuilder::load_hsd(path)` - 既存辞書からインポート（マージ・repair 用。支配エントリを除いた辞書は拒否）
 - `hasami::dict::write_lexicon_csv(&dict, w)` - MeCab 形式 CSV（13 列、活用型・活用形付き）に書き出す
