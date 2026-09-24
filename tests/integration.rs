@@ -151,6 +151,50 @@ fn test_mmap_roundtrip_preserves_metadata() {
 }
 
 // ==========================================================================
+// 埋め込んだ辞書（include_hsd! と from_static）
+// ==========================================================================
+
+/// 利用側のクレートから展開できる。パスはこのファイルからの相対パス
+static EMBEDDED_FILE: &[u8] = hasami::include_hsd!("../Cargo.toml");
+
+#[test]
+fn test_include_hsd_from_another_crate() {
+    assert_eq!(EMBEDDED_FILE, include_bytes!("../Cargo.toml"));
+    assert_eq!(EMBEDDED_FILE.as_ptr().addr() % 64, 0);
+    assert!(matches!(
+        Dictionary::from_static(EMBEDDED_FILE),
+        Err(hasami::DictError::NotHsd)
+    ));
+}
+
+#[test]
+fn test_from_static_full_pipeline() {
+    let tmp = std::env::temp_dir().join(format!(
+        "hasami_integration_static_{}.hsd",
+        std::process::id()
+    ));
+    write_hsd(&test_builder(), &tmp);
+    let bytes = std::fs::read(&tmp).unwrap();
+
+    // 実行ファイルに埋め込んだ辞書の代わりに、8 バイト境界の 'static なバッファに置く
+    let words: &'static mut [u64] =
+        Box::leak(vec![0u64; bytes.len().div_ceil(8)].into_boxed_slice());
+    let embedded: &'static mut [u8] = &mut bytemuck::cast_slice_mut(words)[..bytes.len()];
+    embedded.copy_from_slice(&bytes);
+    let embedded: &'static [u8] = embedded;
+
+    let mut from_static = Analyzer::from_dict(Dictionary::from_static(embedded).unwrap());
+    let mut from_file = Analyzer::load(&tmp).unwrap();
+    for text in ["私は猫です", "東京都に住んでいる", "未知語XYZ"] {
+        assert_eq!(
+            format_mecab(&from_static.tokenize(text)),
+            format_mecab(&from_file.tokenize(text))
+        );
+    }
+    let _ = std::fs::remove_file(&tmp);
+}
+
+// ==========================================================================
 // 文分割テスト
 // ==========================================================================
 
