@@ -133,12 +133,8 @@ impl Analyzer {
     ) -> Result<(), DictError> {
         let mut start = 0;
         for end in self.splitter.chunk_ends(input) {
-            let tokens = self.workspace.tokenize(&input[start..end], &self.dict)?;
-            out.extend(tokens.into_iter().map(|mut t| {
-                t.start += offset + start;
-                t.end += offset + start;
-                t
-            }));
+            self.workspace
+                .tokenize_into(&input[start..end], &self.dict, offset + start, out)?;
             start = end;
         }
         Ok(())
@@ -251,6 +247,12 @@ fn find_dict(env_dict: Option<OsString>, data_home: Option<PathBuf>) -> Result<P
 /// MeCab互換の出力フォーマット
 pub fn format_mecab(tokens: &[Token]) -> String {
     let mut output = String::with_capacity(tokens.len() * 48 + 4);
+    push_mecab(&mut output, tokens);
+    output
+}
+
+/// [`format_mecab`] の出力を `output` の末尾に足す（出力用の文字列を行ごとに使い回すとき）
+pub fn push_mecab(output: &mut String, tokens: &[Token]) {
     for token in tokens {
         output.push_str(&token.surface);
         output.push('\t');
@@ -270,19 +272,23 @@ pub fn format_mecab(tokens: &[Token]) -> String {
         output.push('\n');
     }
     output.push_str("EOS\n");
-    output
 }
 
 /// Wakachi（分かち書き）出力
 pub fn format_wakachi(tokens: &[Token]) -> String {
     let mut output = String::with_capacity(tokens.len() * 4);
+    push_wakachi(&mut output, tokens);
+    output
+}
+
+/// [`format_wakachi`] の出力を `output` の末尾に足す（末尾に改行は付けない）
+pub fn push_wakachi(output: &mut String, tokens: &[Token]) {
     for (i, t) in tokens.iter().enumerate() {
         if i > 0 {
             output.push(' ');
         }
         output.push_str(&t.surface);
     }
-    output
 }
 
 #[cfg(all(test, feature = "build"))]
