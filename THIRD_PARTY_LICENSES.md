@@ -89,3 +89,16 @@ Licensed under the Apache License, Version 2.0.
 NEologd 辞書 (`ipadic-neologd.hsd`) の追加語彙データ。
 
 - https://github.com/neologd/mecab-ipadic-neologd
+
+## Unicode Han Database (Unihan) — ビルド時のみ使用
+
+Copyright © 1991-2026 Unicode, Inc.
+
+Licensed under the [Unicode License v3](https://www.unicode.org/license.txt).
+
+外国人名の削除リスト (`dict/user-remove/foreign-names.csv`, `dict/foreign-names/full-names.csv`) を
+生成する `scripts/find_foreign_names.py` が、漢字の字音 (kJapanese / kMandarin / kHangul ほか) の参照に使う。
+Unihan のデータ自体は辞書にもリポジトリにも含めず、スクリプトの実行時に
+`https://www.unicode.org/Public/18.0.0/ucd/Unihan.zip` を取得して SHA-256 を検証する。
+
+- https://www.unicode.org/reports/tr38/

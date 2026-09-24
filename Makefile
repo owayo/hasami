@@ -1,6 +1,6 @@
 .PHONY: build release install clean test fmt check help setup-hooks \
-       dict dict-ipadic dict-neologd dict-repair dict-unidic-cwj dict-unidic-csj dict-clean \
-       dict-download-ipadic dict-download-neologd dict-download-unidic-cwj dict-download-unidic-csj
+       dict dict-ipadic dict-neologd dict-sudachi dict-repair dict-unidic-cwj dict-unidic-csj dict-clean \
+       dict-download-unidic-cwj dict-download-unidic-csj
 
 # Default target
 .DEFAULT_GOAL := help
@@ -13,16 +13,6 @@ HASAMI := ./target/release/$(BINARY_NAME)
 # Dictionary build variables
 DICT_SRC := .dict-src
 DICT_OUT := dict
-
-IPADIC_REPO := https://github.com/taku910/mecab.git
-IPADIC_DIR := $(DICT_SRC)/mecab/mecab-ipadic
-
-NEOLOGD_REPO := https://github.com/neologd/mecab-ipadic-neologd.git
-NEOLOGD_DIR := $(DICT_SRC)/mecab-ipadic-neologd
-NEOLOGD_EXCLUDE := \
-	neologd-adjective-exp-dict-seed.20151126.csv \
-	neologd-date-time-infreq-dict-seed.20190415.csv \
-	neologd-quantity-infreq-dict-seed.20190415.csv
 
 UNIDIC_VERSION := 202512
 UNIDIC_CWJ_URL := https://unidic.ninjal.ac.jp/unidic_archive/2512/unidic-cwj-$(UNIDIC_VERSION).zip
@@ -66,40 +56,26 @@ clean: ## Clean build artifacts
 
 ## Dictionary Build
 
-dict: dict-ipadic dict-neologd dict-unidic-cwj dict-unidic-csj ## Build all dictionaries
+# 配布辞書 (ipadic / ipadic-neologd / ipadic-neologd-sudachi) は scripts/build-dict.sh が
+# 上流の固定版から作る。上流の版・取得・repair の手順はスクリプトにまとめてある
+BUILD_DICT := scripts/build-dict.sh --hasami $(HASAMI) --src $(DICT_SRC) --out $(DICT_OUT)
 
-dict-ipadic: release dict-download-ipadic ## Build IPAdic dictionary
-	@mkdir -p $(DICT_OUT)
-	$(HASAMI) build --input $(IPADIC_DIR) --output $(DICT_OUT)/ipadic.hsd
+dict: release ## Build the distributed dictionaries (IPAdic, +NEologd, +SudachiDict)
+	$(BUILD_DICT)
 
-dict-neologd: dict-ipadic dict-download-neologd ## Build IPAdic + NEologd dictionary
-	@mkdir -p $(DICT_SRC)/neologd-seed
-	@if command -v xz >/dev/null 2>&1; then \
-		xz -dkf $(NEOLOGD_DIR)/seed/*.csv.xz 2>/dev/null || true; \
-	else \
-		python3 -c "import lzma,glob,os; [open(f[:-3],'wb').write(lzma.open(f).read()) for f in glob.glob('$(NEOLOGD_DIR)/seed/*.csv.xz') if not os.path.exists(f[:-3])]"; \
-	fi
-	@for f in $(NEOLOGD_DIR)/seed/*.csv; do \
-		base=$$(basename "$$f"); \
-		skip=false; \
-		for ex in $(NEOLOGD_EXCLUDE); do \
-			if [ "$$base" = "$$ex" ]; then skip=true; break; fi; \
-		done; \
-		if [ "$$skip" = "false" ]; then cp "$$f" $(DICT_SRC)/neologd-seed/; fi; \
-	done
-	$(HASAMI) merge \
-		--dict $(DICT_OUT)/ipadic.hsd \
-		--input $(DICT_SRC)/neologd-seed \
-		--output $(DICT_OUT)/ipadic-neologd.hsd
-	@if [ -d "$(DICT_OUT)/user" ] && [ "$$(ls -A $(DICT_OUT)/user/*.csv 2>/dev/null)" ]; then \
-		echo "Merging user dictionary entries..."; \
-		$(HASAMI) merge --dict $(DICT_OUT)/ipadic-neologd.hsd --input $(DICT_OUT)/user; \
-	fi
-	$(MAKE) dict-repair DICT=$(DICT_OUT)/ipadic-neologd.hsd
+dict-ipadic: release ## Build IPAdic dictionary
+	$(BUILD_DICT) ipadic
+
+dict-neologd: release ## Build IPAdic + NEologd dictionary
+	$(BUILD_DICT) neologd
+
+dict-sudachi: release ## Build IPAdic + NEologd + SudachiDict dictionary (recommended)
+	$(BUILD_DICT) sudachi
 
 dict-repair: release ## Repair a dictionary in place (DICT=path/to/dict.hsd)
 	@test -n "$(DICT)" || { echo "usage: make dict-repair DICT=dict/xxx.hsd"; exit 1; }
 	$(HASAMI) repair --dict $(DICT) \
+		--drop-invalid-context-ids \
 		--drop-ortho-variants \
 		--drop-numeral-misreadings \
 		$(foreach f,$(wildcard $(DICT_OUT)/user-remove/*.csv),--remove $(f))
@@ -119,25 +95,6 @@ dict-unidic-csj: release dict-download-unidic-csj ## Build UniDic CSJ (話し言
 	@cp $(UNIDIC_CSJ_DIR)/char.def   $(DICT_SRC)/unidic-csj-converted/
 	@cp $(UNIDIC_CSJ_DIR)/unk.def    $(DICT_SRC)/unidic-csj-converted/
 	$(HASAMI) build --input $(DICT_SRC)/unidic-csj-converted --output $(DICT_OUT)/unidic-csj.hsd
-
-dict-download-ipadic:
-	@if [ ! -d "$(IPADIC_DIR)" ]; then \
-		echo "Downloading IPAdic from taku910/mecab..."; \
-		mkdir -p $(DICT_SRC); \
-		git clone --depth 1 --filter=blob:none --sparse $(IPADIC_REPO) $(DICT_SRC)/mecab; \
-		cd $(DICT_SRC)/mecab && git sparse-checkout set mecab-ipadic; \
-	else \
-		echo "IPAdic already downloaded: $(IPADIC_DIR)"; \
-	fi
-
-dict-download-neologd:
-	@if [ ! -d "$(NEOLOGD_DIR)" ]; then \
-		echo "Downloading NEologd seed..."; \
-		git clone --depth 1 --filter=blob:none --sparse $(NEOLOGD_REPO) $(NEOLOGD_DIR); \
-		cd $(NEOLOGD_DIR) && git sparse-checkout set seed; \
-	else \
-		echo "NEologd already downloaded: $(NEOLOGD_DIR)"; \
-	fi
 
 dict-download-unidic-cwj:
 	@if [ ! -d "$(UNIDIC_CWJ_DIR)" ]; then \
@@ -173,10 +130,11 @@ help: ## Show this help message
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
 	@echo ""
 	@echo "Dictionary files are output to $(DICT_OUT)/:"
-	@echo "  ipadic.hsd          IPAdic single"
-	@echo "  ipadic-neologd.hsd  IPAdic + NEologd (recommended)"
-	@echo "  unidic-cwj.hsd      UniDic CWJ (書き言葉)"
-	@echo "  unidic-csj.hsd      UniDic CSJ (話し言葉)"
+	@echo "  ipadic.hsd                  IPAdic single"
+	@echo "  ipadic-neologd.hsd          IPAdic + NEologd"
+	@echo "  ipadic-neologd-sudachi.hsd  IPAdic + NEologd + SudachiDict (recommended)"
+	@echo "  unidic-cwj.hsd              UniDic CWJ (書き言葉, not distributed)"
+	@echo "  unidic-csj.hsd              UniDic CSJ (話し言葉, not distributed)"
 	@echo ""
 	@echo "Release:"
 	@echo "  Use GitHub Actions > Release > Run workflow"

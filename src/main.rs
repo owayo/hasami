@@ -91,6 +91,20 @@ enum Commands {
         dict: PathBuf,
     },
 
+    /// 辞書のエントリを MeCab 形式の CSV（13 列）に書き出す
+    ///
+    /// 書き出すのはエントリ（lexicon）だけで、matrix.def・char.def・unk.def は出さない。
+    /// 活用型・活用形は .hsd に保存されていないので `*` になる。
+    Export {
+        /// 辞書ファイルのパス (.hsd)
+        #[arg(short, long)]
+        dict: PathBuf,
+
+        /// 出力 CSV ファイル。省略時は標準出力
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
+
     /// 辞書の壊れた読み・誤読エントリを修復
     Repair {
         /// 辞書ファイルのパス (.hsd)
@@ -100,6 +114,16 @@ enum Commands {
         /// 出力辞書ファイル (.hsd)。省略時は既存辞書を上書き
         #[arg(short, long)]
         output: Option<PathBuf>,
+
+        /// 接続行列の範囲外の文脈 ID を持つエントリを削除する
+        /// (解析時に接続コスト 0 として扱われ、不当に有利になるエントリ)
+        #[arg(long)]
+        drop_invalid_context_ids: bool,
+
+        /// 壊れた発音の修復 (常時) を行わない。削除リストだけを適用したいときに使う
+        /// (発音の修復は、発音も読みもカタカナでない記号などのエントリの読みを空にする)
+        #[arg(long)]
+        no_pronunciation_repair: bool,
 
         /// 活用語・機能語と衝突する異表記エントリを削除する
         /// (「高い」→「高位(コウイ)」等の表記ゆれ正規化エントリ)
@@ -111,7 +135,8 @@ enum Commands {
         #[arg(long)]
         drop_numeral_misreadings: bool,
 
-        /// 削除するエントリを列挙した CSV (`表層形,読み`)。複数指定可
+        /// 削除するエントリを列挙した CSV (`表層形,読み[,品詞]`)。複数指定可。
+        /// 3 列目の品詞 (例 "名詞,固有名詞,人名") を書くと、その品詞で始まるエントリだけを削除する
         #[arg(long, value_name = "CSV")]
         remove: Vec<PathBuf>,
 
@@ -121,7 +146,15 @@ enum Commands {
     },
 }
 
-fn main() -> io::Result<()> {
+fn main() {
+    // io::Error の Debug 表示は改行をエスケープして 1 行に潰すので、Display で出す
+    if let Err(e) = run() {
+        eprintln!("Error: {e}");
+        std::process::exit(1);
+    }
+}
+
+fn run() -> io::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
@@ -138,9 +171,12 @@ fn main() -> io::Result<()> {
             iterations,
         } => cmd_bench(&dict, &text, iterations.get()),
         Commands::Info { dict } => cmd_info(&dict),
+        Commands::Export { dict, output } => cmd_export(&dict, output.as_deref()),
         Commands::Repair {
             dict,
             output,
+            drop_invalid_context_ids,
+            no_pronunciation_repair,
             drop_ortho_variants,
             drop_numeral_misreadings,
             remove,
@@ -148,10 +184,14 @@ fn main() -> io::Result<()> {
         } => cmd_repair(
             &dict,
             output.as_deref(),
-            drop_ortho_variants,
-            drop_numeral_misreadings,
-            &remove,
-            &merge,
+            RepairOptions {
+                drop_invalid_context_ids,
+                repair_pronunciation: !no_pronunciation_repair,
+                drop_ortho_variants,
+                drop_numeral_misreadings,
+                remove: &remove,
+                merge: &merge,
+            },
         ),
     }
 }
@@ -182,16 +222,17 @@ fn cmd_build(input: &Path, output: &Path) -> io::Result<()> {
 
     let mut builder = DictBuilder::new();
 
-    // CSVファイルを読み込み
-    builder.add_csv_dir(input)?;
-
-    // matrix.def があれば読み込み
+    // matrix.def があれば読み込み。CSV より先に読むと、範囲外の文脈 ID を持つ行を
+    // 行番号付きで検出できる
     let matrix_path = input.join("matrix.def");
     if matrix_path.exists() {
         builder.load_matrix(&matrix_path)?;
     } else {
         eprintln!("Warning: matrix.def not found, using default connection costs");
     }
+
+    // CSVファイルを読み込み
+    builder.add_csv_dir(input)?;
 
     // char.def があれば読み込み
     let char_def_path = input.join("char.def");
@@ -204,6 +245,7 @@ fn cmd_build(input: &Path, output: &Path) -> io::Result<()> {
     if unk_path.exists() {
         builder.load_unk(&unk_path)?;
     }
+    builder.check_context_ids()?;
 
     // 辞書をビルド（プログレスバー付き）
     eprintln!("Building trie with {} entries...", builder.entry_count());
@@ -254,6 +296,7 @@ fn cmd_merge(dict_path: &Path, input: &Path, output: Option<&Path>) -> io::Resul
     }
     let new_count = builder.entry_count() - old_count;
     eprintln!("Added {} new entries", new_count);
+    builder.check_context_ids()?;
 
     // リビルド（プログレスバー付き）
     eprintln!("Building trie with {} entries...", builder.entry_count());
@@ -374,42 +417,75 @@ fn cmd_bench(dict_path: &Path, text: &str, iterations: usize) -> io::Result<()> 
     Ok(())
 }
 
-fn cmd_repair(
-    dict_path: &Path,
-    output: Option<&Path>,
+/// `hasami repair` のオプション
+struct RepairOptions<'a> {
+    drop_invalid_context_ids: bool,
+    repair_pronunciation: bool,
     drop_ortho_variants: bool,
     drop_numeral_misreadings: bool,
-    remove: &[PathBuf],
-    merge: &[PathBuf],
-) -> io::Result<()> {
+    remove: &'a [PathBuf],
+    merge: &'a [PathBuf],
+}
+
+/// 辞書を読み込み、次の順で修復して書き出す
+///
+/// 1. 範囲外の文脈 ID を持つエントリの除去（`--drop-invalid-context-ids`）。発音の修復が
+///    これらを借用元に使わないよう、最初に落とす
+/// 2. 壊れた発音の修復（`--no-pronunciation-repair` を付けなければ常に行う）
+/// 3. 汎用フィルタによる除去（`--drop-ortho-variants` / `--drop-numeral-misreadings`）
+/// 4. 削除リスト CSV の適用（`--remove`）
+/// 5. CSV の追加マージ（`--merge`）
+fn cmd_repair(dict_path: &Path, output: Option<&Path>, opts: RepairOptions<'_>) -> io::Result<()> {
     eprintln!("Loading dictionary: {}", dict_path.display());
     let start = Instant::now();
 
     let mut builder = DictBuilder::new();
     builder.load_hsd(dict_path)?;
 
-    let fixed = builder.repair_pronunciation();
-    eprintln!("Fixed {} entries with non-katakana pronunciation", fixed);
-
     let mut dropped = 0;
-    if drop_ortho_variants {
+    if opts.drop_invalid_context_ids {
+        let n = builder.drop_invalid_context_ids();
+        eprintln!("Dropped {} entries with out-of-range context IDs", n);
+        dropped += n;
+    }
+    // 範囲外の ID が残っていると書き出しで失敗するので、時間のかかる処理の前に止める
+    builder.check_context_ids()?;
+
+    let fixed = if opts.repair_pronunciation {
+        let n = builder.repair_pronunciation();
+        eprintln!("Fixed {} entries with non-katakana pronunciation", n);
+        n
+    } else {
+        0
+    };
+
+    if opts.drop_ortho_variants {
         let n = builder.drop_conflicting_ortho_variants();
         eprintln!("Dropped {} conflicting ortho-variant entries", n);
         dropped += n;
     }
-    if drop_numeral_misreadings {
+    if opts.drop_numeral_misreadings {
         let n = builder.drop_numeral_misreadings();
         eprintln!("Dropped {} numeral misreading entries", n);
         dropped += n;
     }
-    for path in remove {
-        let n = builder.drop_entries_from_csv(path)?;
-        eprintln!("Dropped {} entries listed in {}", n, path.display());
-        dropped += n;
+    for path in opts.remove {
+        let stats = builder.drop_entries_from_csv(path)?;
+        eprintln!(
+            "Dropped {} entries listed in {} ({} rows, {} rows matched nothing)",
+            stats.dropped,
+            path.display(),
+            stats.rows,
+            stats.unmatched_rows
+        );
+        for sample in &stats.unmatched_samples {
+            eprintln!("  unmatched: line {}", sample);
+        }
+        dropped += stats.dropped;
     }
 
     let mut added = 0;
-    for path in merge {
+    for path in opts.merge {
         let before = builder.entry_count();
         if path.is_dir() {
             builder.add_csv_dir(path)?;
@@ -425,6 +501,7 @@ fn cmd_repair(
         eprintln!("No entries to fix. Skipping rebuild.");
         return Ok(());
     }
+    builder.check_context_ids()?;
 
     // リビルド
     eprintln!("Rebuilding trie with {} entries...", builder.entry_count());
@@ -453,6 +530,29 @@ fn cmd_repair(
         );
     }
 
+    Ok(())
+}
+
+fn cmd_export(dict_path: &Path, output: Option<&Path>) -> io::Result<()> {
+    let start = Instant::now();
+    let dict = hasami::MmapDictionary::load(dict_path)?;
+    let count = match output {
+        Some(path) => {
+            let file = std::fs::File::create(path)?;
+            dict.write_lexicon_csv(io::BufWriter::new(file))?
+        }
+        // `| head` などで読み手が先に閉じたら、そこで静かに終える
+        None => match dict.write_lexicon_csv(io::BufWriter::new(io::stdout().lock())) {
+            Err(e) if e.kind() == io::ErrorKind::BrokenPipe => return Ok(()),
+            result => result?,
+        },
+    };
+    eprintln!(
+        "Exported {} entries in {:.2}s{}",
+        count,
+        start.elapsed().as_secs_f64(),
+        output.map_or_else(String::new, |p| format!(" -> {}", p.display()))
+    );
     Ok(())
 }
 

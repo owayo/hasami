@@ -17,7 +17,7 @@ Rust製の日本語形態素解析エンジン。外部エンジン（MeCab等�
 hasami/
 ├── src/
 │   ├── lib.rs          # ライブラリエントリポイント
-│   ├── main.rs         # CLI (build, merge, tokenize, bench, info)
+│   ├── main.rs         # CLI (build, merge, repair, export, tokenize, bench, info)
 │   ├── trie.rs         # Double-Array Trie
 │   ├── dict.rs         # Dictionary, DictEntry, DictBuilder（ビルド時中間構造体）
 │   ├── mmap_dict.rs    # mmap-native 辞書 (.hsd) - Pod構造体、StringPool、FeaturePool
@@ -29,10 +29,15 @@ hasami/
 │   ├── ipadic.hsd      # IPAdic 単体
 │   ├── ipadic-neologd.hsd  # IPAdic + NEologd
 │   ├── ipadic-neologd-sudachi.hsd  # IPAdic + NEologd + SudachiDict（推奨・最大語彙）
-│   └── user/           # ユーザー辞書CSV（make dict-neologd でマージ）
+│   ├── user/           # ユーザー辞書CSV（make dict-neologd でマージ）
+│   ├── user-remove/    # repair --remove に渡す削除リスト（make dict-repair で全件適用）
+│   └── foreign-names/  # 外国人名の許可・拒否リストと、任意で適用するフルネームの削除リスト
 │       ※ unidic-cwj.hsd / unidic-csj.hsd は同梱されず make dict-unidic-cwj/csj でビルド
 ├── scripts/
-│   └── convert-unidic-csv.py  # UniDic CSV → IPAdic互換フォーマット変換
+│   ├── build-dict.sh          # 配布辞書 3 つを上流の固定版から作る（Makefile の dict 系と CI が呼ぶ）
+│   ├── convert_sudachi_raw.py # SudachiDict の raw CSV → IPAdic 体系の MeCab CSV
+│   ├── convert-unidic-csv.py  # UniDic CSV → IPAdic互換フォーマット変換
+│   └── find_foreign_names.py  # 外国人名の削除リストを生成（Unihan の字音と照合）
 ├── hasami-python/      # Python バインディング (PyO3)
 │   ├── src/lib.rs
 │   ├── build.rs        # PyO3 拡張モジュール向けリンク設定
@@ -60,6 +65,8 @@ hasami/
 - `hasami tokenize` - 形態素解析
 - `hasami bench` - ベンチマーク
 - `hasami info` - 辞書情報表示
+- `hasami repair` - 誤読エントリの修復・除去（範囲外の文脈 ID、表記ゆれ、漢数字の人名、削除リスト）
+- `hasami export` - 辞書のエントリを MeCab 形式 CSV に書き出す（活用型・活用形は .hsd に無いので `*`）
 
 ## ビルド・テスト
 ```bash
@@ -68,8 +75,9 @@ cargo build --workspace   # Python バインディングを含むワークスペ
 cargo test --workspace --exclude hasami-python  # テスト実行（hasami-python は extension-module のため
                                                 # macOS/Linux でリンク不可。clippy --workspace で検証）
 cargo clippy --workspace --all-targets -- -D warnings  # lint（hasami-python のコンパイル検証を含む）
-make dict                 # 全辞書ビルド（IPAdic, NEologd, UniDic）
-make dict-clean           # ダウンロードした辞書ソースを削除
+make dict                 # 配布辞書 3 つを上流から作り直す（= scripts/build-dict.sh）
+make dict-sudachi         # 推奨辞書だけ（dict-ipadic / dict-neologd も同様）
+make dict-clean           # ダウンロードした辞書ソースと中間辞書を削除
 ```
 
 ## 辞書ソースの既知の欠陥
@@ -84,6 +92,8 @@ make dict-clean           # ダウンロードした辞書ソースを削除
 | NEologd / SudachiDict | 漢数字だけで綴られた人名・地名 | 「十五」→「トウゴ」、「二十八」→「ツチヤ」 | `repair --drop-numeral-misreadings` |
 | SudachiDict | 代名詞と同じ表層の 1 文字の人名 | 「何なのか」→「ガナノカ」 | `repair --drop-ortho-variants` |
 | NEologd `mecab-user-dict-seed` | 読みが別語のものに差し替わっているエントリが散在する | 「最終面接」→「イチジメンセツ」、「目標数値」→「スウチモクヒョウ」、「情報収集」→「ジョホウシュウシュウ」 | `dict/user-remove/misreading-entries.csv` に列挙して `repair --remove` |
+| SudachiDict | IPAdic の文脈 ID に写し漏れ、SudachiDict の文脈 ID（接続行列の範囲外）のまま入った重複が 137 万件ある | 範囲外の ID は接続コスト 0 として扱われ、UniDic 体系の品詞の語が不当に勝つ | `repair --drop-invalid-context-ids`（build / merge / repair は範囲外 ID をエラーにする） |
+| IPAdic / NEologd / SudachiDict | 中国・朝鮮系の姓・名（1 文字姓の音読み、朝鮮語・普通話の字音で読む名、カタカナの外国人名） | 「金がない」→「キムガナイ」（朝鮮の姓の「金(キム)」）。「何なのか」→「ガナノカ」 | `dict/user-remove/foreign-names.csv` を `repair --remove`。生成は `scripts/find_foreign_names.py`（README の「外国人名の除去」） |
 
 `convert_sudachi_to_mecab.py` は現在 `pronunciation = reading` で出力するが、
 `.dict-src/sudachi/sudachi.csv` は旧版スクリプトの出力が残っているため上記の欠陥を持つ。

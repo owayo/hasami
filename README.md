@@ -102,23 +102,37 @@ cargo build --workspace
 
 ### 辞書のローカルビルド
 
-3つの辞書ソースをダウンロード・統合してビルドします。`curl`, `tar`, `xz`, `unzip`, `python3` が必要です。
+配布辞書 3 つは `scripts/build-dict.sh` が上流のソースから作る。`git`, `curl`, `xz`, `unzip`, `python3` が必要。
 
 ```bash
-# 全辞書をビルド（IPAdic, IPAdic+NEologd, UniDic CWJ/CSJ）
-make dict
+# 配布辞書 3 つをすべて作る（dict/ に書き出す）
+make dict                 # = scripts/build-dict.sh
 
-# 個別にビルド
-make dict-ipadic      # IPAdic のみ
-make dict-neologd     # IPAdic + NEologd
-make dict-unidic-cwj  # UniDic CWJ（書き言葉）
-make dict-unidic-csj  # UniDic CSJ（話し言葉）
+# 個別に作る
+make dict-ipadic          # IPAdic のみ
+make dict-neologd         # IPAdic + NEologd
+make dict-sudachi         # IPAdic + NEologd + SudachiDict（推奨）
 
-# ダウンロードしたソースを削除
+# 配布しない辞書
+make dict-unidic-cwj      # UniDic CWJ（書き言葉）
+make dict-unidic-csj      # UniDic CSJ（話し言葉）
+
+# ダウンロードしたソースと中間成果物を削除
 make dict-clean
 ```
 
-ソースファイルは `.dict-src/` にキャッシュされ、2回目以降は再ダウンロードされません。
+| 辞書 | 作り方 |
+| --- | --- |
+| `ipadic.hsd` | IPAdic を build し、外国人名の姓・名だけを除く（発音の修復は掛けない） |
+| `ipadic-neologd.hsd` | IPAdic に NEologd の seed を merge し、repair 一式（範囲外 ID・表記ゆれ・漢数字の人名・`dict/user-remove/*.csv`）を掛けてから `dict/user/*.csv` を足す |
+| `ipadic-neologd-sudachi.hsd` | IPAdic + NEologd に SudachiDict を変換して merge し、同じ repair 一式を掛ける |
+
+上流はすべて版を固定している（IPAdic・NEologd は git の commit、SudachiDict はダウンロードの SHA-256）。
+取得物と、repair を掛ける前の中間辞書は `.dict-src/` に置き、取得物は 2 回目以降は再取得しない。
+3 辞書の作り直しは取得済みなら数分で終わる（推奨辞書の repair は 1 回 30 秒ほど）。
+
+`dict/user/*.csv` には `#` で始まるコメント行を書ける。`#` で始まってもエントリの列数（13 列）が
+そろった行は語として読む（NEologd には `#` で始まるハッシュタグの語がある）。
 
 ### 辞書の手動構築
 
@@ -141,22 +155,71 @@ hasami merge --dict dict.hsd --input ./extra_dict/ --output merged.hsd
 ```bash
 hasami repair --dict dict/ipadic-neologd-sudachi.hsd \
     --output dict/repaired.hsd \
+    --drop-invalid-context-ids \
     --drop-ortho-variants \
     --drop-numeral-misreadings \
     --remove dict/user-remove/misreading-entries.csv \
+    --remove dict/user-remove/foreign-names.csv \
     --merge dict/user/english-reading-fixes.csv
 ```
 
 | 対象 | 内容 |
 | --- | --- |
-| 壊れた発音（常時） | 発音フィールドに表層形が入っているエントリ（SudachiDict 由来）を、同じ (表層形, 読み) を持つ健全なエントリの発音形で置き換える。借用できなければ読みを使い、読みもラテン文字のままなら空にして解析時の読み補完に委ねる |
+| `--drop-invalid-context-ids` | 接続行列の範囲外の文脈 ID を持つエントリを削除する。範囲外の ID は接続コスト 0 として扱われ、他の候補に不当に勝つ。推奨辞書には、SudachiDict の文脈 ID のまま混入した重複が 137 万件ある |
+| 壊れた発音（常時） | 発音フィールドに表層形が入っているエントリ（SudachiDict 由来）を、同じ (表層形, 読み) を持つ健全なエントリの発音形で置き換える。借用できなければ読みを使い、読みもラテン文字のままなら空にして解析時の読み補完に委ねる。発音も読みもカタカナでない記号（「、」「「」等）の読みも空になる。`--no-pronunciation-repair` で省ける（削除リストだけを適用したいとき） |
 | `--drop-ortho-variants` | 活用語・機能語と衝突する名詞エントリを削除する。「高い」→「高位(コウイ)」、「学ぶ」→「学部(ガクブ)」等が形容詞・動詞に勝って誤読になるのを防ぐ。代名詞と衝突する 1 文字の人名（「何」→姓の「ガ」）も落とす |
 | `--drop-numeral-misreadings` | 漢数字だけで綴られた固有名詞を削除する。「十五(トウゴ)」「二十八(ツチヤ)」等が数詞に勝つのを防ぐ。「万一」「八百万」のような一般語・副詞は残す |
-| `--remove <CSV>` | `表層形,読み` の CSV に列挙したエントリを削除する。汎用フィルタで拾えない個別の誤読用 |
+| `--remove <CSV>` | CSV に列挙したエントリを削除する。列は `表層形,読み[,品詞]`。3 列目の品詞 (例 `"名詞,固有名詞,人名"`) を書くと、その品詞で始まるエントリだけを消す。品詞は `,` で区切った要素ごとに前から比べる。3 列目を省くと品詞を問わず消す。どのエントリにも当たらなかった行は件数と例を表示する |
 | `--merge <PATH>` | 修復後に MeCab 形式 CSV を追加マージする。trie の再構築が 1 回で済むので、`repair` と `merge` を続けて実行するより速い |
+
+処理は「範囲外 ID の削除 → 壊れた発音の修復 → `--drop-*` → `--remove` → `--merge`」の順に行う。
+範囲外 ID のエントリを発音の借用元に使わないよう、最初に落とす。
 
 `dict/user-remove/` に削除リスト、`dict/user/` に追加エントリを置いてある。
 `make dict-neologd` は最後にこの修復を実行する（`make dict-repair DICT=...` で個別実行も可）。
+
+`hasami build` / `merge` / `repair` は、trie を作る前に全エントリの文脈 ID が接続行列の範囲内かを検査する。
+範囲外があればエラーで止まるので、既存の辞書は `--drop-invalid-context-ids` を付けて修復する。
+`build` は matrix.def を CSV より先に読むので、CSV の行番号付きでエラーになる。
+
+#### 外国人名の除去
+
+中国・朝鮮系の 1 文字姓は日常語と衝突して誤読を招く（「金がない」→ 朝鮮の姓の「金(キム)」で「キムガナイ」、
+「何なのか」→ 中国の姓の「何(ガ)」で「ガナノカ」）。日本語の読み上げに特化するため、日本の姓名でない
+人名エントリを削除リストで落とす。
+
+| ファイル | 中身 | 適用 |
+| --- | --- | --- |
+| `dict/user-remove/foreign-names.csv` | 外国人の姓・名のエントリ（林=リン、金=キム、王=ワン、在訓=ジェフン、カタカナの ジョンソン・ブライアン 等）と、1 文字の外国人名 | `make dict-repair` で常に適用 |
+| `dict/foreign-names/full-names.csv` | 外国人のフルネーム（毛沢東=モウタクトウ、金正日=キムジョンイル、劉備=リュウビ 等） | 任意（`--remove` に足す） |
+
+フルネームを既定で消さないのは、文中の外国人名の読みが崩れるため。推奨辞書で試すと、「李白」が「スモモシロ」、
+「諸葛亮」が「モロクズアキラ」、「金正日」が「カネマサビ」、「毛沢東」が「ケタクトウ」になる。
+フルネームは日常語とほとんど衝突しないので、残しても誤読の原因になりにくい。
+
+削除リストは `scripts/find_foreign_names.py` が生成する。人名エントリの読みを Unicode Unihan の字音と照合し、
+次の候補を挙げる。
+
+- 全漢字が朝鮮語の字音か普通話で読まれ、日本語の字音では説明できない名前（由美=ユミ のように日本語でも読めるものは挙げない）
+- 1 文字姓の音読み（日本の姓として使われる 伴=バン・菅=カン などは許可リストで残す）
+- 中国の複姓（司馬、諸葛）
+- 日本人名の読みに無いカタカナの姓・名
+
+判定の誤りは `dict/foreign-names/allow.csv`（日本人名として残す）と `deny.csv`（規則で拾えない外国人名）に書いて再生成する。
+
+```bash
+hasami export --dict dict/ipadic-neologd-sudachi.hsd --output /tmp/lex.csv
+python3 scripts/find_foreign_names.py /tmp/lex.csv \
+    --parts dict/user-remove/foreign-names.csv \
+    --full dict/foreign-names/full-names.csv \
+    --audit /tmp/foreign-names-audit.tsv   # 全候補と判定理由（レビュー用）
+```
+
+削除リストは 3 列目で品詞を人名に限っている。品詞を限らずに消すと、同じ表層形・読みの人名以外の語
+（接頭辞「高(コウ)」、助数詞「金(キン)」、国名「周(シュウ)」、名詞「パン」など、推奨辞書で 978 件）まで消える。
+
+Unihan は初回に `.dict-src/unihan/` へダウンロードし、SHA-256 を検証する（Unicode 18.0.0、
+[Unicode License v3](https://www.unicode.org/license.txt)）。Unihan のデータ自体はリポジトリに含めない。
 
 ## 使い方
 
