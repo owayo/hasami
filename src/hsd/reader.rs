@@ -240,12 +240,12 @@ impl Dictionary {
 
         let meta = Meta::parse(section(SectionId::Meta))?;
         let pruned = layout.flags & FLAG_PRUNED_DOMINATED != 0;
-        if let Some(v) = meta.get(meta::KEY_PRUNED_DOMINATED) {
-            if (v == "true") != pruned {
-                return Err(DictError::corrupt(
-                    "META pruned_dominated disagrees with the header flag",
-                ));
-            }
+        if let Some(v) = meta.get(meta::KEY_PRUNED_DOMINATED)
+            && (v == "true") != pruned
+        {
+            return Err(DictError::corrupt(
+                "META pruned_dominated disagrees with the header flag",
+            ));
         }
 
         const U16_TABLE: usize = u16::MAX as usize + 1;
