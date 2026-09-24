@@ -81,6 +81,7 @@ hasami/
 - **ビルド**: MeCab互換CSV + matrix.def + char.def + unk.def → .hsd
 - **フォーマット**: v4。64B ヘッダ + セクション表（id で引く）+ 64B 境界のセクション 17 種。リトルエンディアン機専用
   - 規範は `~/.claude/skills/hsd-format-redesign/references/v4-spec.md`（第 3 版の追記 A〜K が正）と `src/hsd/*.rs` の冒頭コメント
+  - v3 → v4 で測ったこと・試したこと・見送ったことと最終の計測は `docs/hsd-format.md`。形式を見直すときはここから始める
   - v1〜v3 の .hsd は読めない（`scripts/build-dict.sh` で作り直すよう案内するエラー）
   - 接続行列は転置して持つ: `costs[left_id * num_right + right_id]`（matrix.def の 1 行目は「right_id の数 left_id の数」）
   - matrix.def なしで作った辞書は、使われている文脈 ID を覆うゼロ行列を置き、メタデータに `zero_matrix=true` を書く
@@ -108,7 +109,8 @@ cargo test --workspace --exclude hasami-python  # テスト実行（hasami-pytho
 cargo clippy --workspace --all-targets -- -D warnings  # lint（hasami-python のコンパイル検証を含む）
 make dict                 # 配布辞書 3 つを上流から作り直す（= scripts/build-dict.sh）
 make dict-sudachi         # 推奨辞書だけ（dict-ipadic / dict-neologd も同様）
-make dict-clean           # ダウンロードした辞書ソースと中間辞書を削除
+make dict-clean           # ダウンロードした辞書ソースを削除（build-dict.sh の中間辞書は実行ごとに消える。
+                          # repair 前の辞書が要るときは scripts/build-dict.sh --keep-intermediate）
 ```
 
 ## 辞書ソースの既知の欠陥
