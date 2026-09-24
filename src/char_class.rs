@@ -29,14 +29,21 @@ impl UnkGrouping {
         length: 0,
     };
 
+    /// 並び全体を候補にするか（[`UnkGrouping::for_each_len`] が最初に渡す長さが並び全体）
+    #[inline]
+    pub(crate) fn group(&self) -> bool {
+        self.group
+    }
+
     /// 同じ文字種の文字が `run` 文字（1 以上）続く位置で作る未知語の候補の長さ（文字数）を、作る順に渡す
     ///
-    /// MeCab の tokenizer と同じ: group なら並び全体（並びが [`MAX_GROUPING_SIZE`] + 1 字まで）を 1 つ、
-    /// 続けて 1〜length 字の接頭辞（並び全体と同じ長さは除く）。候補が 1 つも無く、その位置から始まる
-    /// 既知語も無いときに 1 文字の未知語を足すのは呼び出し側。
+    /// MeCab の tokenizer と同じ: group なら並び全体を 1 つ、続けて 1〜length 字の接頭辞（並び全体と
+    /// 同じ長さは除く）。候補が 1 つも無く、その位置から始まる既知語も無いときに 1 文字の未知語を足すのは
+    /// 呼び出し側。MeCab は並びが 25 字を超えると並び全体の候補を作らない（`max-grouping-size`）が、
+    /// hasami は長さによらず作る（32 字の英字の ID が 1 字ずつと既知語の断片に割れないように）。
     #[inline]
     pub(crate) fn for_each_len(&self, run: u32, mut cb: impl FnMut(u32)) {
-        if self.group && run - 1 <= MAX_GROUPING_SIZE {
+        if self.group {
             cb(run);
         }
         for len in 1..=run.min(self.length) {
@@ -46,10 +53,6 @@ impl UnkGrouping {
         }
     }
 }
-
-/// MeCab の `max-grouping-size` の既定値。group の文字種の並びは、先頭の後ろがこの文字数以下のときだけ
-/// 1 つの候補にする
-const MAX_GROUPING_SIZE: u32 = 24;
 
 /// 文字分類器
 #[derive(Clone, Debug)]
@@ -98,7 +101,7 @@ pub const ALL_CHAR_TYPES: [CharType; 9] = [
 
 /// CharType → 配列インデックス変換
 #[inline]
-pub fn type_index(ct: CharType) -> usize {
+pub const fn type_index(ct: CharType) -> usize {
     match ct {
         CharType::Hiragana => 0,
         CharType::Katakana => 1,
@@ -576,10 +579,9 @@ mod tests {
         assert_eq!(unk_lens(true, 2, 7), [7, 1, 2]);
         assert_eq!(unk_lens(true, 1, 3), [3, 1]);
         assert_eq!(unk_lens(true, 0, 3), [3]);
-        // 並び全体は 25 字まで（先頭の後ろが max-grouping-size = 24 字以下）
-        assert_eq!(unk_lens(true, 0, 25), [25]);
-        assert!(unk_lens(true, 0, 26).is_empty());
-        assert_eq!(unk_lens(true, 2, 26), [1, 2]);
+        // 並び全体は長さによらず 1 つ（MeCab は 25 字まで）
+        assert_eq!(unk_lens(true, 0, 26), [26]);
+        assert_eq!(unk_lens(true, 2, 40), [40, 1, 2]);
         // group でない: 1〜length 字
         assert_eq!(unk_lens(false, 2, 1), [1]);
         assert_eq!(unk_lens(false, 2, 5), [1, 2]);
