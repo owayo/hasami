@@ -66,9 +66,10 @@ enum Commands {
 
     /// テキストを形態素解析
     Tokenize {
-        /// 辞書ファイルのパス (.hsd)
+        /// 辞書ファイルのパス (.hsd)。省略時は環境変数 HASAMI_DICT、
+        /// $XDG_DATA_HOME/hasami/（未設定なら ~/.local/share/hasami/）の *.hsd の順に探す
         #[arg(short, long)]
-        dict: PathBuf,
+        dict: Option<PathBuf>,
 
         /// 出力形式
         #[arg(short, long, value_enum, default_value_t = OutputFormat::Mecab)]
@@ -102,6 +103,21 @@ enum Commands {
         /// 全体を検証する（全 trie ノード・全エントリ群・全素性レコード。時間がかかる）
         #[arg(long)]
         verify: bool,
+    },
+
+    /// 文分割の例外表（文末記号を含む語）を辞書から抽出する
+    ///
+    /// 出力は src/sentence/builtin_exceptions.txt と同じ書式（先頭にコメント、1 行 1 語）。
+    /// 組み込みの表は推奨辞書から作る:
+    /// `hasami export-sentence-exceptions --dict dict/ipadic-neologd-sudachi.hsd --output src/sentence/builtin_exceptions.txt`
+    ExportSentenceExceptions {
+        /// 辞書ファイルのパス (.hsd)
+        #[arg(short, long)]
+        dict: PathBuf,
+
+        /// 出力ファイル。省略時は標準出力
+        #[arg(short, long)]
+        output: Option<PathBuf>,
     },
 
     /// 辞書のエントリを MeCab 形式の CSV（13 列）に書き出す
@@ -208,7 +224,16 @@ fn run() -> io::Result<()> {
             output,
             write,
         } => cmd_merge(&dict, &input, output.as_deref(), &write),
-        Commands::Tokenize { dict, format, text } => cmd_tokenize(&dict, format, text),
+        Commands::Tokenize { dict, format, text } => {
+            let dict = match dict {
+                Some(path) => path,
+                None => hasami::analyzer::default_dict_path()?,
+            };
+            cmd_tokenize(&dict, format, text)
+        }
+        Commands::ExportSentenceExceptions { dict, output } => {
+            cmd_export_sentence_exceptions(&dict, output.as_deref())
+        }
         Commands::Bench {
             dict,
             text,
@@ -643,6 +668,49 @@ fn cmd_repair(
     let mut meta = builder.write_options().meta;
     append_repairs(&mut meta, &ops)?;
     write_dict(&builder, &output_path, meta, write, "Repaired", start)
+}
+
+fn cmd_export_sentence_exceptions(dict_path: &Path, output: Option<&Path>) -> io::Result<()> {
+    let dict = Dictionary::load(dict_path)?;
+    let surfaces = dict.surfaces()?;
+    let words = hasami::sentence::extract_candidates(surfaces.iter().map(String::as_str));
+    let source = dict_path.display();
+    let mut text = String::new();
+    text.push_str("# 文末記号を含む語の例外表（sentence モジュールの組み込みの例外表）\n#\n");
+    text.push_str(&format!("# 生成元: {source} の全表層形\n"));
+    text.push_str("# 生成手順（リポジトリのルートで実行）:\n");
+    text.push_str(&format!(
+        "#   ./target/release/hasami export-sentence-exceptions --dict {source} \\\n"
+    ));
+    text.push_str("#     --output src/sentence/builtin_exceptions.txt\n");
+    text.push_str(
+        "# 抽出規則: sentence::extract_candidates（文末記号 `。！？!?‼⁇⁈⁉．｡` を含む語だけを残し、\n",
+    );
+    text.push_str(
+        "#   記号だけの語・2 文字未満の語・文末記号で始まる語・この書式で書けない語を除く。\n",
+    );
+    text.push_str("#   重複を除いてバイト順に並べる）\n");
+    text.push_str("# 書式: 1 行 1 語。# で始まる行と空行は読み飛ばす\n");
+    text.push_str(&format!(
+        "# 件数: {} 語（辞書の {} 表層形から抽出）\n",
+        words.len(),
+        surfaces.len()
+    ));
+    for word in &words {
+        text.push_str(word);
+        text.push('\n');
+    }
+    match output {
+        Some(path) => std::fs::write(path, text)?,
+        None => io::stdout().lock().write_all(text.as_bytes())?,
+    }
+    eprintln!(
+        "Extracted {} words from {} surfaces{}",
+        words.len(),
+        surfaces.len(),
+        output.map_or_else(String::new, |p| format!(" -> {}", p.display()))
+    );
+    Ok(())
 }
 
 fn cmd_export(dict_path: &Path, output: Option<&Path>) -> io::Result<()> {

@@ -16,6 +16,7 @@
 //! 検査してから無視する。
 
 use super::DictError;
+#[cfg(feature = "build")]
 use std::io::{self, Write};
 
 pub const MAGIC: [u8; 8] = *b"HSMDICT\0";
@@ -297,6 +298,7 @@ pub fn parse(data: &[u8]) -> Result<Layout, DictError> {
 ///
 /// `sections` は (id, 中身) の列。書き出す順はこの順で、各セクションを 64 バイト境界に置く。
 /// Returns: 書き出したバイト数
+#[cfg(feature = "build")]
 pub fn write<W: Write>(
     out: &mut W,
     flags: u32,
@@ -342,7 +344,7 @@ pub fn write<W: Write>(
     Ok(file_len)
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "build"))]
 mod tests {
     use super::*;
 

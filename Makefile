@@ -45,6 +45,7 @@ fmt: ## Format code
 
 check: ## Run clippy and check
 	cargo clippy --workspace --all-targets -- -D warnings
+	cargo clippy --lib --no-default-features -- -D warnings
 	cargo check --workspace
 
 setup-hooks: ## Enable repository hooks and Git LFS for this clone
@@ -72,13 +73,16 @@ dict-neologd: release ## Build IPAdic + NEologd dictionary
 dict-sudachi: release ## Build IPAdic + NEologd + SudachiDict dictionary (recommended)
 	$(BUILD_DICT) sudachi
 
+# 配布辞書をその場で直す。scripts/build-dict.sh の repair 一式から dict/user の追加だけを除いたもの
+# (配布辞書には追加済みなので、足し直すと重複する)。降格の参照には IPAdic 単体の配布辞書を使う
 dict-repair: release ## Repair a dictionary in place (DICT=path/to/dict.hsd)
 	@test -n "$(DICT)" || { echo "usage: make dict-repair DICT=dict/xxx.hsd"; exit 1; }
 	$(HASAMI) repair --dict $(DICT) \
 		--drop-invalid-context-ids \
 		--drop-ortho-variants \
 		--drop-numeral-misreadings \
-		$(foreach f,$(wildcard $(DICT_OUT)/user-remove/*.csv),--remove $(f))
+		$(foreach f,$(wildcard $(DICT_OUT)/user-remove/*.csv),--remove $(f)) \
+		--demote-common-proper-nouns $(DICT_OUT)/ipadic.hsd
 
 dict-unidic-cwj: release dict-download-unidic-cwj ## Build UniDic CWJ (書き言葉) dictionary
 	@mkdir -p $(DICT_SRC)/unidic-cwj-converted $(DICT_OUT)

@@ -1,16 +1,14 @@
 # 文末記号を含む語の例外表（sentence モジュールの組み込みの例外表）
 #
-# 生成元: dict/ipadic-neologd-sudachi.hsd の全エントリの表層形
+# 生成元: dict/ipadic-neologd-sudachi.hsd の全表層形
 # 生成手順（リポジトリのルートで実行）:
-#   cargo build --release --bin hasami --example extract_sentence_exceptions
-#   ./target/release/hasami export --dict dict/ipadic-neologd-sudachi.hsd \
-#     | ./target/release/examples/extract_sentence_exceptions dict/ipadic-neologd-sudachi.hsd \
-#     > src/sentence/builtin_exceptions.txt
+#   ./target/release/hasami export-sentence-exceptions --dict dict/ipadic-neologd-sudachi.hsd \
+#     --output src/sentence/builtin_exceptions.txt
 # 抽出規則: sentence::extract_candidates（文末記号 `。！？!?‼⁇⁈⁉．｡` を含む語だけを残し、
 #   記号だけの語・2 文字未満の語・文末記号で始まる語・この書式で書けない語を除く。
 #   重複を除いてバイト順に並べる）
 # 書式: 1 行 1 語。# で始まる行と空行は読み飛ばす
-# 件数: 22324 語（辞書の 6450491 エントリから抽出）
+# 件数: 22324 語（辞書の 4720957 表層形から抽出）
 '80年未来をこの手に!
 ( )y-( ´)y-( ´-)y-(´ー`)yー∑( ﾟДﾟ)yーｽｹﾞー!!
 ( )y-( ´)y-( ´-)y-(´ｰ`)y━∑( ﾟДﾟ)y━ｽｹﾞｰ!!

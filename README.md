@@ -119,7 +119,7 @@ make dict-clean
 | 辞書 | 作り方 |
 | --- | --- |
 | `ipadic.hsd` | IPAdic を `scripts/prepare_ipadic.py` で整えて build し、外国人名の姓・名だけを除く（発音の修復は掛けない） |
-| `ipadic-neologd.hsd` | IPAdic に NEologd の seed を merge し、repair 一式（範囲外 ID・表記ゆれ・漢数字の人名・`dict/user-remove/*.csv`）を掛けてから `dict/user/*.csv` を足す |
+| `ipadic-neologd.hsd` | IPAdic に NEologd の seed を merge し、repair 一式（範囲外 ID・表記ゆれ・漢数字の人名・`dict/user-remove/*.csv`・一般語の固有名詞の降格）を掛けてから `dict/user/*.csv` を足す |
 | `ipadic-neologd-sudachi.hsd` | IPAdic + NEologd に SudachiDict の raw 辞書を `scripts/convert_sudachi_raw.py` で変換して merge し、同じ repair 一式を掛ける |
 
 `scripts/prepare_ipadic.py` は上流の IPAdic を書き換えずに、次の 2 点を変えたソースを作る（何を変えたかは
@@ -148,7 +148,10 @@ IPAdic・NEologd・`dict/user` に表層形がある語は落とす。品詞は 
 「cafe→カフェ」、複合語「加齢→カレイ」、半角記号が名詞でなく記号になる、など）。
 
 上流はすべて版を固定している（IPAdic・NEologd は git の commit、SudachiDict はダウンロードの SHA-256）。
-取得物と、repair を掛ける前の中間辞書は `.dict-src/` に置き、取得物は 2 回目以降は再取得しない。
+取得物は `.dict-src/` に置き、2 回目以降は再取得しない。中間成果物（repair を掛ける前の辞書、SudachiDict の
+変換結果など）は実行ごとの作業ディレクトリに作って終了時に消すので、`dict/` の配布辞書のほかには残らない。
+repair を手で試し直すために repair 前の辞書が要るときは、`scripts/build-dict.sh --keep-intermediate` で
+`.dict-src/build/*.base.hsd` に残す。
 3 辞書の作り直しは取得済みなら 5 分ほどで終わる（うち SudachiDict の変換が 3 分、最大 RSS は約 3GB）。
 
 `dict/user/*.csv` には `#` で始まるコメント行を書ける。`#` で始まってもエントリの列数（13 列）が
@@ -223,7 +226,8 @@ hasami repair --dict dict/ipadic-neologd-sudachi.hsd \
 `--merge` で足す語は降格の対象にしないので最後に適用する。
 
 `dict/user-remove/` に削除リスト、`dict/user/` に追加エントリを置いてある。
-`make dict-neologd` は最後にこの修復を実行する（`make dict-repair DICT=...` で個別実行も可）。
+`make dict-neologd` / `make dict-sudachi` は最後にこの修復を実行する。配布辞書をその場で直すなら
+`make dict-repair DICT=...`（`dict/user` は配布辞書に追加済みなので足し直さない。降格の参照には `dict/ipadic.hsd` を使う）。
 
 `hasami build` / `merge` / `repair` は、trie を作る前に全エントリの文脈 ID が接続行列の範囲内かを検査する。
 範囲外があればエラーで止まるので、既存の辞書は `--drop-invalid-context-ids` を付けて修復する。
@@ -247,8 +251,10 @@ NEologd は Web 上の見出し語を取り込んでいるので、「成果物�
 
 降格先は `名詞,一般`（「〜化」は `名詞,サ変接続`、「〜的」は `名詞,形容動詞語幹`）で、文脈 ID は IPAdic が
 その品詞に最も多く使う組（1285 / 1283 / 1287）に付け替える。コスト・原形・読み・発音は変えない。
-配布辞書では `ipadic-neologd.hsd` で 146.7 万件中 5,862 件、`ipadic-neologd-sudachi.hsd` で 148.2 万件中
-5,874 件を降格する（`scripts/build-dict.sh` は IPAdic の中間辞書 `.dict-src/build/ipadic.base.hsd` を参照に使う）。
+配布辞書では `ipadic-neologd.hsd` で 146.7 万件中 5,841 件、`ipadic-neologd-sudachi.hsd` で 148.2 万件中
+5,853 件を降格する（`scripts/build-dict.sh` は同じ実行で作る IPAdic の中間辞書（repair 前）を参照に使う）。
+降格した語のうち NEologd の読みが誤っているもの（「必然的(ヒツザンテキ)」「君主制(キョウワセイ)」など 21 語）は、
+降格で文中に出やすくなるので `dict/user-remove/misreading-entries.csv` で落としている。
 
 接尾辞を表層形で限るのは、IPAdic の「名詞,接尾,一般」に固有名詞を作る語も多いため（「〜線」路線名、
 「〜法」法律名、「〜院」寺院名、「〜会」団体名、「〜社」「〜賞」「〜峠」「〜岳」）。許可する接尾辞は、
@@ -320,6 +326,9 @@ hasami tokenize --dict dict/ipadic-neologd.hsd --format json "東京都に住ん
 
 # 標準入力から
 echo "形態素解析のテスト" | hasami tokenize --dict dict/ipadic-neologd.hsd
+
+# --dict を省くと、環境変数 HASAMI_DICT → ~/.local/share/hasami/*.hsd の順に辞書を探す
+HASAMI_DICT=dict/ipadic-neologd-sudachi.hsd hasami tokenize "形態素解析のテスト"
 ```
 
 ### Rust API

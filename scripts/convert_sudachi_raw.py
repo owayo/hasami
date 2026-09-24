@@ -35,9 +35,9 @@ Usage:
         --lex .dict-src/sudachi-raw/core_lex.csv \
         --ipadic-dir .dict-src/mecab/mecab-ipadic \
         --exclude-existing .dict-src/mecab/mecab-ipadic \
-        --exclude-existing .dict-src/neologd-seed \
+        --exclude-existing path/to/neologd-seed \
         --exclude-existing dict/user \
-        --output .dict-src/build/sudachi.csv
+        --output sudachi.csv
 """
 
 import argparse

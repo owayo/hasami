@@ -10,6 +10,7 @@
 //! - レコードは重複を除いて 1 つの領域に並べ、エントリからはバイトオフセットで指す
 
 use super::DictError;
+#[cfg(feature = "build")]
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -25,6 +26,7 @@ const KANA_MAX_BYTE: u8 = 0x5F;
 const FIXED_LEN: usize = 7;
 const MAX_VARINT_LEN: usize = 5;
 
+#[cfg(feature = "build")]
 pub fn push_varint(buf: &mut Vec<u8>, mut v: u32) {
     while v >= 0x80 {
         buf.push((v as u8) | 0x80);
@@ -53,6 +55,7 @@ pub fn read_varint(buf: &[u8], mut pos: usize) -> Option<(u32, usize)> {
 }
 
 /// 文字列がカタカナ詰めにできれば詰めたバイト列を返す（空文字列は詰めない）
+#[cfg(feature = "build")]
 fn pack_kana(s: &str) -> Option<Vec<u8>> {
     if s.is_empty() {
         return None;
@@ -68,6 +71,7 @@ fn pack_kana(s: &str) -> Option<Vec<u8>> {
 }
 
 /// 素性レコードに入れる値
+#[cfg(feature = "build")]
 pub struct FeatureInput<'a> {
     pub pos_id: u16,
     pub conj_type_id: u16,
@@ -79,6 +83,7 @@ pub struct FeatureInput<'a> {
 }
 
 /// レコードを正準形（同じ値なら同じバイト列）で符号化する
+#[cfg(feature = "build")]
 pub fn encode(input: &FeatureInput<'_>, out: &mut Vec<u8>) {
     let mut flags = 0u8;
     let base_is_surface = input.base_form == input.surface;
@@ -121,6 +126,7 @@ pub fn encode(input: &FeatureInput<'_>, out: &mut Vec<u8>) {
 }
 
 /// 素性レコードを重複を除いて並べる
+#[cfg(feature = "build")]
 #[derive(Default)]
 pub struct FeatureTableBuilder {
     blob: Vec<u8>,
@@ -128,6 +134,7 @@ pub struct FeatureTableBuilder {
     scratch: Vec<u8>,
 }
 
+#[cfg(feature = "build")]
 impl FeatureTableBuilder {
     /// レコードを足し、そのバイトオフセットを返す。領域が 4GiB を超えるならエラー
     pub fn intern(&mut self, input: &FeatureInput<'_>) -> Result<u32, DictError> {
@@ -291,7 +298,7 @@ pub fn decode(blob: &[u8], offset: usize) -> Result<FeatureRef<'_>, DictError> {
     })
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "build"))]
 mod tests {
     use super::*;
 
