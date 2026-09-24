@@ -1,7 +1,7 @@
 """配布辞書用に IPAdic のソースを整える.
 
 上流の mecab-ipadic は書き換えず、`hasami build` に渡すディレクトリを別に作る。
-辞書 CSV と matrix.def はリンクを張り、次の 4 点だけを変える。
+辞書 CSV と matrix.def はリンクを張り、次の 5 点だけを変える。
 
 1. 記号の未知語 (char.def・unk.def)
    IPAdic の char.def は U+2000..206F (— 等)・U+3000..303F (全角スペース・。、「」 等)・
@@ -33,11 +33,17 @@
    見て復帰 0x000D の書き間違いなので、0x000D に直す。hasami は MeCab と同じく SPACE の文字を
    読み飛ばす (ノードにしない) ので、そのままだと「Ð」が解析結果から消える。
 
+5. 単位の記号 (units.csv)
+   全角の「％」は 名詞,接尾,助数詞 の語だが、半角の「%」と「‰」「℃」「°」、CJK 互換文字の単位 (「㎏」
+   「㎞」「㌢」「㍍」など) は辞書に無く、未知の記号 (記号,一般) になる。数と単位をまとめる処理で単位が
+   句読点と同じ記号として扱われるので、「％」と同じ品詞・文脈 ID・コストの語として読み付きで足す。
+
 usage: python3 scripts/prepare_ipadic.py <mecab-ipadic のディレクトリ> <出力ディレクトリ>
        変えた内容を 1 行で標準出力に書く (辞書のメタデータ `ipadic_patch` に入れる)
 """
 
 import sys
+import unicodedata
 from pathlib import Path
 
 SYMBOL_CHAR_DEF = "SYMBOL 0 0 0"
@@ -64,6 +70,121 @@ EXTRA_CHAR_RANGES = [
 # 復帰 0x000D の書き間違い。hasami は MeCab と同じく SPACE の文字を読み飛ばすので、そのままだと Ð が消える
 MISTYPED_SPACE = "0x00D0"
 SPACE_FIX = "0x000D SPACE  # CARRIAGE RETURN (IPAdic の 0x00D0 は 0x000D の書き間違い)"
+
+# 数に付く単位の記号 (units.csv)。IPAdic の全角の「％」と同じ 名詞,接尾,助数詞 にする (文脈 ID・コストは「％」の行から
+# 取る)。表層形 → 読み
+UNIT_SYMBOLS = {
+    "%": "パーセント",
+    "‰": "パーミル",
+    "℃": "ド",
+    "℉": "ド",
+    "°": "ド",
+    "°C": "ド",
+    "°F": "ド",
+}
+# CJK 互換文字のカタカナの組文字 (U+3300..U+3357) は、読みを NFKC の形 (「㌢」→「センチ」) から取る。
+# 単位・通貨・接頭辞でない字 (アパート アルファ ガンマ コーポ ハイツ ビル ベータ ホール マンション) は除く
+KATAKANA_SQUARES = range(0x3300, 0x3358)
+NOT_UNIT_KATAKANA_SQUARES = set("㌀㌁㌏㌞㌪㌱㌼㍁㍇")
+# CJK 互換文字のラテン文字の組文字の単位。午前・午後・株式会社・対数など単位でない字と、読みが分かれる字
+# (㏏ kt はノットかカラット、㏿ gal はガロンかガル、㍲ da は接頭辞) は入れない
+LATIN_UNIT_SQUARES = {
+    "㍱": "ヘクトパスカル",
+    "㍳": "エーユー",
+    "㍴": "バール",
+    "㍶": "パーセク",
+    "㍷": "デシメートル",
+    "㍸": "ヘイホウデシメートル",
+    "㍹": "リッポウデシメートル",
+    "㍺": "アイユー",
+    "㎀": "ピコアンペア",
+    "㎁": "ナノアンペア",
+    "㎂": "マイクロアンペア",
+    "㎃": "ミリアンペア",
+    "㎄": "キロアンペア",
+    "㎅": "キロバイト",
+    "㎆": "メガバイト",
+    "㎇": "ギガバイト",
+    "㎈": "カロリー",
+    "㎉": "キロカロリー",
+    "㎊": "ピコファラド",
+    "㎋": "ナノファラド",
+    "㎌": "マイクロファラド",
+    "㎍": "マイクログラム",
+    "㎎": "ミリグラム",
+    "㎏": "キログラム",
+    "㎐": "ヘルツ",
+    "㎑": "キロヘルツ",
+    "㎒": "メガヘルツ",
+    "㎓": "ギガヘルツ",
+    "㎔": "テラヘルツ",
+    "㎕": "マイクロリットル",
+    "㎖": "ミリリットル",
+    "㎗": "デシリットル",
+    "㎘": "キロリットル",
+    "㎙": "フェムトメートル",
+    "㎚": "ナノメートル",
+    "㎛": "マイクロメートル",
+    "㎜": "ミリメートル",
+    "㎝": "センチメートル",
+    "㎞": "キロメートル",
+    "㎟": "ヘイホウミリメートル",
+    "㎠": "ヘイホウセンチメートル",
+    "㎡": "ヘイホウメートル",
+    "㎢": "ヘイホウキロメートル",
+    "㎣": "リッポウミリメートル",
+    "㎤": "リッポウセンチメートル",
+    "㎥": "リッポウメートル",
+    "㎦": "リッポウキロメートル",
+    "㎧": "メートルマイビョウ",
+    "㎨": "メートルマイビョウマイビョウ",
+    "㎩": "パスカル",
+    "㎪": "キロパスカル",
+    "㎫": "メガパスカル",
+    "㎬": "ギガパスカル",
+    "㎭": "ラジアン",
+    "㎮": "ラジアンマイビョウ",
+    "㎯": "ラジアンマイビョウマイビョウ",
+    "㎰": "ピコビョウ",
+    "㎱": "ナノビョウ",
+    "㎲": "マイクロビョウ",
+    "㎳": "ミリビョウ",
+    "㎴": "ピコボルト",
+    "㎵": "ナノボルト",
+    "㎶": "マイクロボルト",
+    "㎷": "ミリボルト",
+    "㎸": "キロボルト",
+    "㎹": "メガボルト",
+    "㎺": "ピコワット",
+    "㎻": "ナノワット",
+    "㎼": "マイクロワット",
+    "㎽": "ミリワット",
+    "㎾": "キロワット",
+    "㎿": "メガワット",
+    "㏀": "キロオーム",
+    "㏁": "メガオーム",
+    "㏃": "ベクレル",
+    "㏄": "シーシー",
+    "㏅": "カンデラ",
+    "㏆": "クーロンマイキログラム",
+    "㏈": "デシベル",
+    "㏉": "グレイ",
+    "㏊": "ヘクタール",
+    "㏋": "バリキ",
+    "㏌": "インチ",
+    "㏎": "キロメートル",
+    "㏐": "ルーメン",
+    "㏓": "ルクス",
+    "㏔": "ミリバール",
+    "㏕": "ミル",
+    "㏖": "モル",
+    "㏙": "ピーピーエム",
+    "㏛": "ステラジアン",
+    "㏜": "シーベルト",
+    "㏝": "ウェーバ",
+    "㏞": "ボルトマイメートル",
+    "㏟": "アンペアマイメートル",
+}
 
 # 変換表によって写し先が分かれる JIS X 0208 の字: JIS 側 (hasami・iconv) → CP932 側 (Windows)
 CP932_SIDE = {
@@ -151,6 +272,28 @@ def variant_entries(src: Path) -> list[str]:
     return rows
 
 
+def unit_entries(src: Path) -> list[str]:
+    """単位の記号を、IPAdic の「％」(名詞,接尾,助数詞) と同じ文脈 ID・コストの語にする"""
+    template = None
+    for path in sorted(src.glob("*.csv")):
+        for line in decode_like_hasami(path.read_bytes()).splitlines():
+            fields = line.split(",")
+            if fields[0] == "％" and fields[4:7] == ["名詞", "接尾", "助数詞"]:
+                template = fields
+    if template is None:
+        sys.exit("IPAdic: ％ (名詞,接尾,助数詞) not found")
+    units = dict(UNIT_SYMBOLS)
+    for cp in KATAKANA_SQUARES:
+        c = chr(cp)
+        if c not in NOT_UNIT_KATAKANA_SQUARES:
+            units[c] = unicodedata.normalize("NFKC", c)
+    units.update(LATIN_UNIT_SQUARES)
+    return [
+        ",".join([surface, *template[1:10], surface, reading, reading])
+        for surface, reading in units.items()
+    ]
+
+
 def main() -> None:
     if len(sys.argv) != 3:
         sys.exit(__doc__)
@@ -174,11 +317,16 @@ def main() -> None:
     (out / "variants.csv").write_text(
         "".join(f"{row}\n" for row in variants), encoding="utf-8"
     )
+    units = unit_entries(src)
+    (out / "units.csv").write_text(
+        "".join(f"{row}\n" for row in units), encoding="utf-8"
+    )
 
     print(
         f"char.def {SYMBOL_CHAR_DEF}, {', '.join(CATEGORY_CHAR_DEF.values())}, "
         f"U+30FB/U+00D7/U+00F7 SYMBOL, 0x000D SPACE (not 0x00D0); unk.def SYMBOL=記号,一般; "
-        f"{len(variants)} CP932-side variants of dashes, tildes and minus signs"
+        f"{len(variants)} CP932-side variants of dashes, tildes and minus signs; "
+        f"{len(units)} unit symbols as 名詞,接尾,助数詞"
     )
 
 
