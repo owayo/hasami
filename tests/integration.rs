@@ -179,9 +179,13 @@ fn test_newline_as_boundary() {
     let dict = build_test_dictionary();
     let mut analyzer = Analyzer::from_dict(dict);
 
+    // 改行は区間の区切りで、トークンにしない（MeCab と同じく空白として読み飛ばす）
     let tokens = analyzer.tokenize("猫\n猫");
-    let reconstructed: String = tokens.iter().map(|t| &*t.surface).collect();
-    assert_eq!(reconstructed, "猫\n猫");
+    let spans: Vec<(&str, usize, usize)> = tokens
+        .iter()
+        .map(|t| (&*t.surface, t.start, t.end))
+        .collect();
+    assert_eq!(spans, [("猫", 0, 3), ("猫", 4, 7)]);
 }
 
 // ==========================================================================
@@ -320,8 +324,9 @@ fn test_numbers_only() {
 fn test_whitespace_only() {
     let dict = build_test_dictionary();
     let mut analyzer = Analyzer::from_dict(dict);
+    // 半角空白はトークンにしない（MeCab と同じ）
     let tokens = analyzer.tokenize("   ");
-    assert!(!tokens.is_empty());
+    assert!(tokens.is_empty());
 }
 
 #[test]
