@@ -12,8 +12,20 @@
 //!
 //! 同点のときは先に追加した前ノードが勝つ（`<` の先勝ち）。ノードは、開始位置の昇順、trie が報告する順
 //! （短い語から）、群の中のエントリの順、未知語は既知語の後（並び全体、続けて短い接頭辞から）に追加する。
+//!
+//! 未知語の候補は MeCab と同じ（char.def の group・length、`UnkGrouping::for_each_len`）だが、カタカナの
+//! 並び全体の候補には 2 つの規則を足す（外来語の複合語は区切らずに書くので、単語コストが一律の並び全体の
+//! 未知語が、既知語 2 語以上の複合語に勝ってしまう）。
+//!
+//! - 並び全体の候補（3 字以上）は、3 字以上の既知語で隙間なく覆えるなら作らない（[`RunCover`]）。
+//!   「オススメアプリ」を 1 つの未知語にせず「オススメ / アプリ」にする。2 字以下の語は数えないので、
+//!   辞書にない人名などは断片（ドミ / ニク）に割れず 1 語（ドミニク）のまま
+//! - 最良パスに残ったカタカナの未知語（3 字以上）と同じ表層の語が辞書にあれば、その語の素性で出す
+//!   （[`dictionary_word_for_unknown`]）。単語コストが高い既知語（IPAdic の「キャンプ」16437）は未知語に
+//!   負けるが、分け方は MeCab と同じまま品詞・読みを辞書から取る
 
-use crate::char_class::ALL_CHAR_TYPES;
+use crate::char_class::{ALL_CHAR_TYPES, CharType, type_index};
+use crate::hsd::reader::DictView;
 use crate::hsd::trie::Trie;
 use crate::hsd::{DictError, Dictionary};
 use std::sync::Arc;
@@ -437,6 +449,15 @@ struct Node {
 const BOUNDARY_ID: u32 = u32::MAX;
 const UNK_FLAG: u32 = 0x8000_0000;
 
+/// カタカナの文字種の番号
+const KATAKANA: usize = type_index(CharType::Katakana);
+
+/// カタカナの並び全体の候補の規則を当てる長さの下限。並びを覆う既知語もこの字数以上のものだけを数える
+///
+/// 2 字の語まで数えると、辞書にない人名が断片に割れる（ドミ / ニク、ゲイ / リー）。2 字のカタカナ語は
+/// 普通名詞にも断片が多く（メン、ジャ、エリ）、品詞では分けられない。
+const COMPOUND_MIN_CHARS: usize = 3;
+
 impl Node {
     const BOS: Node = Node {
         cost: 0,
@@ -466,6 +487,145 @@ pub struct LatticeWorkspace {
     lattice: Lattice,
     /// トークンを作る（既知語のキャッシュと、トークンに入れる文字列の解析器ごとの写し）
     tokens: TokenBuilder,
+    /// カタカナの並び全体の候補を作るかの表
+    cover: RunCover,
+    /// 位置ごとに辞書を引いた (語の終わり, 群) の作業用の列
+    hits: Vec<(u32, u32)>,
+}
+
+/// カタカナの並びで、各位置から並びの終わりまでの未知語の候補（並び全体）を作らないかの表
+///
+/// 位置 p の候補 [p, e)（e は並びの終わり）は、[`COMPOUND_MIN_CHARS`] 字以上の既知語を隙間なく並べて
+/// 覆えるなら作らない。最初の語は p より前から始まってよく（「音ゲー / アプリ」の「音ゲー」は並びの左の
+/// 境界をまたぐ）、最後の語は e より後で終わってよい（「スパッと」は「スパッ」の並びの右の境界をまたぐ）。
+/// 字数は語の全体で数える。[p, e) と同じ表層の語 1 語だけでは覆えたことにしない（単語コストが高い語は
+/// 未知語に負けるので、候補を消すと断片に割れる。候補は残し、出力で辞書の素性にする）。
+///
+/// 並び（3 字以上）に入った位置で、並びの各位置の辞書引きを先に済ませて表を作る。引いた結果は、並びの
+/// 中の位置でラティスにノードを足すときにそのまま使う（同じ位置を 2 度引かない）。並びより前から始まる語は、
+/// ラティスにあるノード（辿り着ける位置から作ったもの）から拾う。
+#[derive(Default)]
+struct RunCover {
+    /// 表を作った範囲 [start, end)。end が 0 なら表が無い
+    start: usize,
+    end: usize,
+    /// `suppress[p - start]`: 位置 p の並び全体の候補を作らない
+    suppress: Vec<bool>,
+    /// 並びの各位置から引いた (語の終わり, 群) を位置の順に並べたもの
+    hits: Vec<(u32, u32)>,
+    /// `hits[hit_starts[p - start]..hit_starts[p - start + 1]]` が位置 p から引いたもの
+    hit_starts: Vec<u32>,
+    /// 作業用: `tiles[q - start]` = [q, end) を q から始まる語で覆える（`tiles[end - start]` は true）
+    tiles: Vec<bool>,
+}
+
+impl RunCover {
+    /// チャンクの解析を始めるときに呼ぶ（位置はチャンクごとの文字の番号なので、前の表は使えない）
+    fn reset(&mut self) {
+        self.end = 0;
+        shrink_retained(&mut self.suppress, 0);
+        shrink_retained(&mut self.hits, 0);
+        shrink_retained(&mut self.hit_starts, 0);
+        shrink_retained(&mut self.tiles, 0);
+    }
+
+    /// 位置 i の表があるか
+    #[inline]
+    fn contains(&self, i: usize) -> bool {
+        (self.start..self.end).contains(&i)
+    }
+
+    /// 位置 i から引いた (語の終わり, 群)。表の外なら None
+    #[inline]
+    fn hits_at(&self, i: usize) -> Option<&[(u32, u32)]> {
+        self.contains(i).then(|| {
+            let k = i - self.start;
+            &self.hits[self.hit_starts[k] as usize..self.hit_starts[k + 1] as usize]
+        })
+    }
+
+    /// 位置 i から並びの終わりまでの候補を作らないか（表の外なら false）
+    #[inline]
+    fn suppresses(&self, i: usize) -> bool {
+        self.contains(i) && self.suppress[i - self.start]
+    }
+
+    /// 並び [s, e) の表を作る。位置 s でノードを足す前に呼ぶ
+    ///
+    /// `rest[k]` は位置 s + 1 + k で終わるノードの列（位置 s より前から作ったもの）。`known_reach` は
+    /// 位置 s より前から始まる既知語の終わりの最大
+    #[allow(clippy::too_many_arguments)]
+    fn build(
+        &mut self,
+        s: usize,
+        e: usize,
+        input: &str,
+        chars: &ChunkChars,
+        trie: &Trie<'_>,
+        rest: &[Vec<Node>],
+        known_reach: usize,
+    ) -> Result<(), DictError> {
+        let len = e - s;
+        self.start = s;
+        self.end = e;
+        let hits = &mut self.hits;
+        hits.clear();
+        self.hit_starts.clear();
+        for j in s..e {
+            self.hit_starts.push(hits.len() as u32);
+            trie.common_prefix_search_codes(input, &chars.codes, &chars.offsets, j, |q, g| {
+                hits.push((q as u32, g))
+            })?;
+        }
+        self.hit_starts.push(hits.len() as u32);
+        let starts = &self.hit_starts;
+        // 位置 j から始まる、COMPOUND_MIN_CHARS 字以上の語の終わり
+        let long_words = |j: usize| {
+            hits[starts[j - s] as usize..starts[j - s + 1] as usize]
+                .iter()
+                .map(|&(q, _)| q as usize)
+                .filter(move |&q| q - j >= COMPOUND_MIN_CHARS)
+        };
+        // [q, e) を q から始まる語で覆えるか（右から決める）
+        let tiles = &mut self.tiles;
+        tiles.clear();
+        tiles.resize(len + 1, false);
+        tiles[len] = true;
+        for j in (s..e).rev() {
+            tiles[j - s] = long_words(j).any(|q| q >= e || tiles[q - s]);
+        }
+        // 並び全体をまたぐ既知語（並びより前から始まり、並びの後で終わる）があれば、どの位置も覆える
+        let suppress = &mut self.suppress;
+        suppress.clear();
+        suppress.resize(len, known_reach > e);
+        for j in s..e {
+            for q in long_words(j) {
+                if q < e && !tiles[q - s] {
+                    continue;
+                }
+                // j から始まる並べ方（[j, e) と同じ表層の 1 語だけは除く）
+                if q != e {
+                    suppress[j - s] = true;
+                }
+                // j < p < q の位置 p は、左の境界をまたぐ語で覆える
+                suppress[j + 1 - s..q.min(e) - s].fill(true);
+            }
+        }
+        // 並びより前から始まり、並びの中か終わりで終わる語
+        for q in s + 1..=e {
+            if q < e && !tiles[q - s] {
+                continue;
+            }
+            let crosses = rest[q - s - 1].iter().any(|n| {
+                let start = n.start as usize;
+                start < s && q - start >= COMPOUND_MIN_CHARS && n.unknown_type().is_none()
+            });
+            if crosses {
+                suppress[..q - s].fill(true);
+            }
+        }
+        Ok(())
+    }
 }
 
 /// 解析するチャンクの文字ごとの情報（チャンクごとに 1 回だけ作る）
@@ -775,6 +935,8 @@ impl LatticeWorkspace {
             chars: ChunkChars::default(),
             lattice: Lattice::new(),
             tokens: TokenBuilder::new(),
+            cover: RunCover::default(),
+            hits: Vec::new(),
         }
     }
 
@@ -808,6 +970,11 @@ impl LatticeWorkspace {
         let n = chars.len();
         let lattice = &mut self.lattice;
         lattice.reset(n);
+        let cover = &mut self.cover;
+        cover.reset();
+        let scratch_hits = &mut self.hits;
+        // これまでの位置から始まる既知語の終わりの最大（カタカナの並びをまたぐ語があるかに使う）
+        let mut known_reach = 0;
 
         // 各文字位置から辞書引き + 未知語生成。ノードは開始位置の昇順に追加するので、位置 i に来た
         // ときには i で終わるノードがすべて揃っていて、追加するノードの最良の前ノードをその場で決められる
@@ -819,64 +986,77 @@ impl LatticeWorkspace {
             if prevs.is_empty() {
                 continue;
             }
-            // rest[k] は位置 i + 1 + k で終わるノードの列
-            let mut push = |end: usize, node: Node| rest[end - i - 1].push(node);
-            let mut has_known = false;
-            let mut corrupt: Option<DictError> = None;
-
+            let type_idx = chars.types[i] as usize;
+            let unk = dict.unk_info(type_idx);
+            let run = chars.runs[i];
+            // カタカナの並び（3 字以上）に入ったら、並びの各位置の辞書引きを先に済ませて表を作る
+            if type_idx == KATAKANA
+                && unk.grouping.group()
+                && run as usize >= COMPOUND_MIN_CHARS
+                && !cover.contains(i)
+            {
+                cover.build(
+                    i,
+                    i + run as usize,
+                    input,
+                    chars,
+                    &view.trie,
+                    rest,
+                    known_reach,
+                )?;
+            }
+            // この位置から引いた (語の終わり, 群)。カタカナの並びの中なら表を作るときに引いたもの
+            let hits = match cover.hits_at(i) {
+                Some(hits) => hits,
+                None => {
+                    scratch_hits.clear();
+                    view.trie.common_prefix_search_codes(
+                        input,
+                        &chars.codes,
+                        &chars.offsets,
+                        i,
+                        |end, group| scratch_hits.push((end as u32, group)),
+                    )?;
+                    &scratch_hits[..]
+                }
+            };
+            let has_known = !hits.is_empty();
             // 群 = trie の値が指すエントリから、群の最後の印が立つエントリまで
-            view.trie.common_prefix_search_codes(
-                input,
-                &chars.codes,
-                &chars.offsets,
-                i,
-                |end, group| {
-                    if corrupt.is_some() {
-                        return;
+            for &(end, group) in hits {
+                let end = end as usize;
+                known_reach = known_reach.max(end);
+                // rest[k] は位置 i + 1 + k で終わるノードの列
+                let list = &mut rest[end - i - 1];
+                let mut id = group as usize;
+                loop {
+                    let Some(e) = view.entries.get(id) else {
+                        return Err(DictError::corrupt(format!(
+                            "group at {group} runs past the last entry"
+                        )));
+                    };
+                    let (left_id, right_id) = (e.left_id(), e.right_id);
+                    if left_id as usize >= view.num_left || right_id as usize >= view.num_right {
+                        return Err(DictError::corrupt(format!(
+                            "entry {id} has context IDs outside the matrix"
+                        )));
                     }
-                    let mut id = group as usize;
-                    loop {
-                        let Some(e) = view.entries.get(id) else {
-                            corrupt = Some(DictError::corrupt(format!(
-                                "group at {group} runs past the last entry"
-                            )));
-                            return;
-                        };
-                        let (left_id, right_id) = (e.left_id(), e.right_id);
-                        if left_id as usize >= view.num_left || right_id as usize >= view.num_right
-                        {
-                            corrupt = Some(DictError::corrupt(format!(
-                                "entry {id} has context IDs outside the matrix"
-                            )));
-                            return;
-                        }
-                        let (cost, prev) = best_prev(prevs, view.matrix_row(left_id));
-                        push(
-                            end,
-                            Node {
-                                cost: cost + e.cost as i64,
-                                entry: id as u32,
-                                prev,
-                                start: i as u32,
-                                right_id,
-                                word_cost: e.cost,
-                            },
-                        );
-                        has_known = true;
-                        if e.is_last() {
-                            break;
-                        }
-                        id += 1;
+                    let (cost, prev) = best_prev(prevs, view.matrix_row(left_id));
+                    list.push(Node {
+                        cost: cost + e.cost as i64,
+                        entry: id as u32,
+                        prev,
+                        start: i as u32,
+                        right_id,
+                        word_cost: e.cost,
+                    });
+                    if e.is_last() {
+                        break;
                     }
-                },
-            )?;
-            if let Some(e) = corrupt {
-                return Err(e);
+                    id += 1;
+                }
             }
 
             // 未知語処理（文字種ごとの先頭のテンプレートだけを使う）
-            let type_idx = chars.types[i] as usize;
-            let unk = dict.unk_info(type_idx);
             if unk.invoke || !has_known {
                 // この位置の未知語は left_id が同じなので、最良の前ノードは 1 度だけ求める
                 let (cost, prev) = best_prev(prevs, view.matrix_row(unk.left_id));
@@ -888,14 +1068,23 @@ impl LatticeWorkspace {
                     right_id: unk.right_id,
                     word_cost: unk.cost,
                 };
+                // カタカナの並び全体の候補は、3 字以上の既知語で覆えるなら作らない
+                let skip_group = type_idx == KATAKANA
+                    && unk.grouping.group()
+                    && run as usize >= COMPOUND_MIN_CHARS
+                    && cover.suppresses(i);
                 let mut added = false;
-                unk.grouping.for_each_len(chars.runs[i], |len| {
+                unk.grouping.for_each_len(run, |len| {
+                    // group のときは、並び全体と同じ長さの候補は並び全体の候補だけ
+                    if skip_group && len == run {
+                        return;
+                    }
                     added = true;
-                    push(i + len as usize, node);
+                    rest[len as usize - 1].push(node);
                 });
                 // 候補が無く、この位置から始まる既知語も無いときだけ 1 文字の未知語（MeCab と同じ）
                 if !added && !has_known {
-                    push(i + 1, node);
+                    rest[0].push(node);
                 }
             }
         }
@@ -917,19 +1106,46 @@ impl LatticeWorkspace {
 
         // --- トークン生成（表層形は入力の部分文字列から作る） ---
         let first = out.len();
-        out.reserve(lattice.path.len());
+        let path = &lattice.path;
+        out.reserve(path.len());
         self.tokens.prepare(dict);
-        for &(end_pos, idx) in lattice.path.iter().rev() {
+        // path は末尾のノードから並んでいる（k - 1 が次のノード）
+        for k in (0..path.len()).rev() {
+            let (end_pos, idx) = path[k];
             let node = lattice.ends[end_pos as usize][idx as usize];
-            let start = chars.offsets[node.start as usize] as usize;
-            let end = chars.offsets[end_pos as usize] as usize;
+            let (node_start, node_end) = (node.start as usize, end_pos as usize);
+            let start = chars.offsets[node_start] as usize;
+            let end = chars.offsets[node_end] as usize;
             let surface = &input[start..end];
             let (start, end) = (offset + start, offset + end);
-            out.push(match node.unknown_type() {
-                None => self
-                    .tokens
-                    .known(dict, node.entry, surface, start, end, node.word_cost)?,
-                Some(type_idx) => {
+            // カタカナの未知語（3 字以上）と同じ表層の語が辞書にあれば、その語の素性で出す
+            let dict_word = match node.unknown_type() {
+                Some(KATAKANA) if node_end - node_start >= COMPOUND_MIN_CHARS => {
+                    // 前の語（BOS を含む）の right_id と、次の語（無ければ EOS の 0）の left_id
+                    let prev_right = lattice.ends[node_start][node.prev as usize].right_id;
+                    let next_left = match k.checked_sub(1) {
+                        Some(k) => {
+                            let (pos, idx) = path[k];
+                            left_id(&view, dict, &lattice.ends[pos as usize][idx as usize])
+                        }
+                        None => 0,
+                    };
+                    dictionary_word_for_unknown(
+                        &view, input, chars, node_start, node_end, prev_right, next_left,
+                    )?
+                }
+                _ => None,
+            };
+            out.push(match (node.unknown_type(), dict_word) {
+                (None, _) => {
+                    self.tokens
+                        .known(dict, node.entry, surface, start, end, node.word_cost)?
+                }
+                (Some(_), Some(entry)) => {
+                    self.tokens
+                        .known(dict, entry, surface, start, end, node.word_cost)?
+                }
+                (Some(type_idx), None) => {
                     self.tokens
                         .unknown(dict, type_idx, surface, start, end, node.word_cost)
                 }
@@ -938,6 +1154,59 @@ impl LatticeWorkspace {
         apply_contextual_readings(&mut out[first..]);
         Ok(())
     }
+}
+
+/// ノードの左文脈 ID（未知語は文字種のテンプレートのもの）
+fn left_id(view: &DictView<'_>, dict: &Dictionary, node: &Node) -> u16 {
+    match node.unknown_type() {
+        Some(type_idx) => dict.unk_info(type_idx).left_id,
+        // エントリはラティスを作るときに範囲を確かめてある
+        None => view.entries[node.entry as usize].left_id(),
+    }
+}
+
+/// カタカナの未知語 [start, end)（文字位置）と同じ表層の辞書の語があれば、その語のエントリのうち
+/// 前の語の right_id・次の語の left_id との接続コストと単語コストの和が最小のもの（同点は辞書の順で先）
+///
+/// 単語コストだけで選ぶと、同じ表層の品詞の違うエントリ（名詞と接尾など）で前後とつながらないものを
+/// 選びうる。ラティスの上では未知語のコスト・文脈 ID で最良パスに残ったので、分け方は変えない。
+fn dictionary_word_for_unknown(
+    view: &DictView<'_>,
+    input: &str,
+    chars: &ChunkChars,
+    start: usize,
+    end: usize,
+    prev_right: u16,
+    next_left: u16,
+) -> Result<Option<u32>, DictError> {
+    let mut group = None;
+    view.trie
+        .common_prefix_search_codes(input, &chars.codes, &chars.offsets, start, |q, g| {
+            if q == end {
+                group = Some(g);
+            }
+        })?;
+    let Some(group) = group else {
+        return Ok(None);
+    };
+    let next_row = view.matrix_row(next_left);
+    let mut best: Option<(i64, u32)> = None;
+    let mut id = group as usize;
+    loop {
+        // 未知語の開始位置から辞書を引いたときに、群のエントリと文脈 ID の範囲を確かめてある
+        let e = &view.entries[id];
+        let score = view.matrix_row(e.left_id())[prev_right as usize] as i64
+            + e.cost as i64
+            + next_row[e.right_id as usize] as i64;
+        if best.is_none_or(|(b, _)| score < b) {
+            best = Some((score, id as u32));
+        }
+        if e.is_last() {
+            break;
+        }
+        id += 1;
+    }
+    Ok(best.map(|(_, id)| id))
 }
 
 impl Default for LatticeWorkspace {
@@ -949,7 +1218,7 @@ impl Default for LatticeWorkspace {
 #[cfg(all(test, feature = "build"))]
 mod tests {
     use super::*;
-    use crate::dict::{DictBuilder, DictEntry};
+    use crate::dict::{ConnectionMatrix, DictBuilder, DictEntry};
 
     fn make_test_dict() -> Dictionary {
         let mut builder = DictBuilder::new();
@@ -1222,6 +1491,140 @@ mod tests {
         let tokens = ws.tokenize("東京ABCに", &dict).unwrap();
         let reconstructed: String = tokens.iter().map(|t| &*t.surface).collect();
         assert_eq!(reconstructed, "東京ABCに");
+    }
+
+    /// (表層形, 単語コスト, 品詞) の辞書。文脈 ID はすべて 1 で接続コストは 0、未知語はテンプレートの
+    /// 既定値（カタカナは 5000、英字は 6000）
+    fn cost_dict(words: &[(&str, i16, &str)]) -> Dictionary {
+        let mut builder = DictBuilder::new();
+        for &(surface, cost, pos) in words {
+            builder.add_entry(DictEntry {
+                surface: surface.into(),
+                left_id: 1,
+                right_id: 1,
+                cost,
+                pos: pos.into(),
+                base_form: surface.into(),
+                reading: surface.into(),
+                pronunciation: surface.into(),
+                ..Default::default()
+            });
+        }
+        builder.build().unwrap()
+    }
+
+    /// 表層形の列（未知語は末尾に *）
+    fn segments(dict: &Dictionary, text: &str) -> Vec<String> {
+        LatticeWorkspace::new()
+            .tokenize(text, dict)
+            .unwrap()
+            .iter()
+            .map(|t| format!("{}{}", t.surface, if t.is_known { "" } else { "*" }))
+            .collect()
+    }
+
+    const NOUN: &str = "名詞,一般,*,*";
+
+    #[test]
+    fn test_katakana_compound_of_long_words_is_split() {
+        // 並び全体の未知語（5000）は既知語 2 語（6000）より安いが、3 字以上の語で覆えるので作らない
+        let dict = cost_dict(&[("オススメ", 3000, NOUN), ("アプリ", 3000, NOUN)]);
+        assert_eq!(segments(&dict, "オススメアプリ"), ["オススメ", "アプリ"]);
+    }
+
+    #[test]
+    fn test_katakana_word_over_short_fragments_stays_unknown() {
+        // 2 字の語は数えないので、辞書にない人名は断片に割れない
+        let dict = cost_dict(&[("ドミ", 3000, NOUN), ("ニク", 3000, NOUN)]);
+        assert_eq!(segments(&dict, "ドミニク"), ["ドミニク*"]);
+    }
+
+    #[test]
+    fn test_katakana_cover_may_cross_the_run_boundaries() {
+        // 並びの左の境界をまたぐ語（音ゲー）から覆う。並びの途中から始まる候補（ーアプリ）も作らない
+        let dict = cost_dict(&[
+            ("音", 1000, NOUN),
+            ("音ゲー", 3500, NOUN),
+            ("アプリ", 3000, NOUN),
+        ]);
+        assert_eq!(segments(&dict, "音ゲーアプリ"), ["音ゲー", "アプリ"]);
+        // 右の境界をまたぐ語（スパッと）
+        let dict = cost_dict(&[("スパッと", 6000, "副詞,一般,*,*"), ("と", 500, NOUN)]);
+        assert_eq!(segments(&dict, "スパッと"), ["スパッと"]);
+    }
+
+    #[test]
+    fn test_katakana_unknown_takes_features_of_the_same_dictionary_word() {
+        // 単語コストの高い既知語（IPAdic の「キャンプ」）は未知語に負ける。分け方はそのまま、素性は辞書の語
+        let dict = cost_dict(&[("キャンプ", 9000, "名詞,サ変接続,*,*")]);
+        let tokens = LatticeWorkspace::new().tokenize("キャンプ", &dict).unwrap();
+        assert_eq!(tokens.len(), 1);
+        assert!(tokens[0].is_known);
+        assert_eq!(&*tokens[0].pos, "名詞,サ変接続,*,*");
+        assert_eq!(&*tokens[0].reading, "キャンプ");
+        // 単語コストはラティスで使った未知語のもの
+        assert_eq!(tokens[0].word_cost, 5000);
+        // 2 字の未知語はそのまま
+        let dict = cost_dict(&[("ナビ", 9000, NOUN)]);
+        assert_eq!(segments(&dict, "ナビ"), ["ナビ*"]);
+    }
+
+    #[test]
+    fn test_katakana_unknown_picks_the_entry_that_fits_the_context() {
+        // 同じ表層のエントリは、前後の語との接続コストと単語コストの和で選ぶ（単語コストだけなら固有名詞）
+        let mut builder = DictBuilder::new();
+        for (surface, id, cost, pos) in [
+            ("キャンプ", 10, 9000, "名詞,サ変接続,*,*"),
+            ("キャンプ", 11, 8900, "名詞,固有名詞,一般,*"),
+            ("する", 12, 1000, "動詞,自立,*,*"),
+        ] {
+            builder.add_entry(DictEntry {
+                surface: surface.into(),
+                left_id: id,
+                right_id: id,
+                cost,
+                pos: pos.into(),
+                base_form: surface.into(),
+                ..Default::default()
+            });
+        }
+        let mut matrix = ConnectionMatrix::zeros(13, 13);
+        // 「キャンプ」の右文脈 → 「する」の左文脈 12
+        matrix.costs[12 * 13 + 10] = -500;
+        matrix.costs[12 * 13 + 11] = 500;
+        builder.set_matrix(matrix);
+        let dict = builder.build().unwrap();
+        let tokens = LatticeWorkspace::new()
+            .tokenize("キャンプする", &dict)
+            .unwrap();
+        let got: Vec<(&str, &str, bool)> = tokens
+            .iter()
+            .map(|t| (&*t.surface, &*t.pos, t.is_known))
+            .collect();
+        assert_eq!(
+            got,
+            [
+                ("キャンプ", "名詞,サ変接続,*,*", true),
+                ("する", "動詞,自立,*,*", true)
+            ]
+        );
+    }
+
+    #[test]
+    fn test_cover_rules_are_only_for_katakana() {
+        // 英字の並びは、3 字以上の既知語で覆えても 1 つの未知語のまま（SoftBank を Soft / Bank に割らない）
+        let dict = cost_dict(&[("Soft", 3500, NOUN), ("Bank", 3500, NOUN)]);
+        assert_eq!(segments(&dict, "SoftBank"), ["SoftBank*"]);
+    }
+
+    #[test]
+    fn test_long_run_is_one_unknown_word() {
+        // MeCab は 25 字を超える並びを 1 つの候補にしないが、hasami は長さによらず 1 語にする
+        let dict = make_test_dict();
+        let id = "ookhcbgokankfmjafalglpofmolfopek";
+        assert_eq!(segments(&dict, id), [format!("{id}*")]);
+        let katakana = "カ".repeat(40);
+        assert_eq!(segments(&dict, &katakana), [format!("{katakana}*")]);
     }
 
     fn reading_token(surface: &str, pos: &str, reading: &str) -> Token {
