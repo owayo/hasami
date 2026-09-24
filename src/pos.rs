@@ -342,6 +342,10 @@ fn is_symbol_only(surface: &str) -> bool {
 /// 補助記号,句点。細分類の無い記号はここで見分け直して、辞書をまたいで同じ値にする。
 /// 全部の字が句点（または読点・開き括弧・閉じ括弧）のときだけその分類にし、混ざれば `Symbol`。
 fn symbol_by_surface(surface: &str) -> CoarsePos {
+    // 数に付く単位の記号は、全角の「％」（IPAdic の 名詞,接尾,助数詞）と同じく名詞の接尾辞にする
+    if !surface.is_empty() && surface.chars().all(is_unit_symbol) {
+        return CoarsePos::NounSuffix;
+    }
     let mut chars = surface.chars();
     let Some(first) = chars.next() else {
         return CoarsePos::Symbol;
@@ -351,6 +355,29 @@ fn symbol_by_surface(surface: &str) -> CoarsePos {
         kind
     } else {
         CoarsePos::Symbol
+    }
+}
+
+/// 数に付く単位の記号か（`%` `％` `‰` `℃` `℉` `°` と、CJK 互換文字の単位）
+///
+/// 配布辞書は `scripts/prepare_ipadic.py` がこれらを 名詞,接尾,助数詞 の語として足すので品詞からも決まるが、
+/// 語を持たない辞書（UniDic 系、利用者が作った辞書）でも同じ値にするために表層形で見分ける。CJK 互換文字は
+/// カタカナの組文字（U+3300..U+3357）のうち建物・ギリシャ文字の名前でないものと、ラテン文字の組文字の単位
+/// （午前・午後・株式会社・対数など単位でない字と、読みの分かれる ㏏ ㏿ ㍲ を除く）。字の集合は
+/// `prepare_ipadic.py` の `UNIT_SYMBOLS`・`KATAKANA_SQUARES`・`LATIN_UNIT_SQUARES` と同じ（全角の `％` は IPAdic にもとからある）。
+fn is_unit_symbol(c: char) -> bool {
+    match c {
+        '%' | '％' | '‰' | '℃' | '℉' | '°' => true,
+        '\u{3300}'..='\u{3357}' => !matches!(
+            c,
+            '㌀' | '㌁' | '㌏' | '㌞' | '㌪' | '㌱' | '㌼' | '㍁' | '㍇'
+        ),
+        '\u{3371}' | '\u{3373}'..='\u{3374}' | '\u{3376}'..='\u{337A}' => true,
+        '\u{3380}'..='\u{33DF}' => !matches!(
+            c,
+            '㏂' | '㏇' | '㏍' | '㏏' | '㏑' | '㏒' | '㏗' | '㏘' | '㏚'
+        ),
+        _ => false,
     }
 }
 
@@ -1107,5 +1134,37 @@ mod tests {
         assert!(has(1, "こと", CoarsePos::FormalNoun));
         assert!(has(2, "れる", CoarsePos::AuxVerb));
         assert!(has(3, "そう", CoarsePos::AuxVerb));
+    }
+
+    #[test]
+    fn test_unit_symbols_are_noun_suffixes() {
+        // 単位の記号は、辞書の語（名詞,接尾,助数詞）でも、記号の語・未知語（IPAdic の 記号,一般、UniDic の
+        // 補助記号,一般）でも名詞の接尾辞
+        for surface in [
+            "%", "％", "‰", "℃", "℉", "°", "㎏", "㎞", "㌢", "㍍", "㎡", "㏄", "㍱",
+        ] {
+            for t in [
+                token(surface, "名詞,接尾,助数詞,*", surface),
+                token(surface, "記号,一般,*,*", surface),
+                token(surface, "補助記号,一般,*,*", surface),
+                unknown(surface, "記号,一般,*,*"),
+                unknown(surface, "名詞,サ変接続,*,*"),
+            ] {
+                assert_eq!(t.coarse_pos(), CoarsePos::NounSuffix, "{surface} {}", t.pos);
+            }
+        }
+        // 単位でない記号・組文字はそのまま
+        for surface in ["＄", "′", "㍻", "㍿", "㏂", "㌀", "※"] {
+            assert_eq!(
+                unknown(surface, "記号,一般,*,*").coarse_pos(),
+                CoarsePos::Symbol,
+                "{surface}"
+            );
+        }
+        // 句点・括弧と混ざれば記号
+        assert_eq!(
+            unknown("%。", "記号,一般,*,*").coarse_pos(),
+            CoarsePos::Symbol
+        );
     }
 }
