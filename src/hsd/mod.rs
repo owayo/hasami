@@ -28,6 +28,9 @@ pub use reader::{Dictionary, VerifyReport};
 #[cfg(feature = "build")]
 pub use writer::{WriteOptions, WriteStats};
 
+/// この hasami が読み書きする辞書の形式の版（リリースの目録の `format_version`）
+pub const FORMAT_VERSION: u32 = container::VERSION;
+
 /// 辞書の読み込み・書き出し・解析で起きるエラー
 #[derive(Debug)]
 pub enum DictError {
@@ -84,7 +87,8 @@ impl fmt::Display for DictError {
             DictError::Invalid(m) => write!(f, "{m}"),
             DictError::NotFound(searched) => write!(
                 f,
-                "no dictionary found (searched: {}); set {} to a .hsd file or put one in the data directory",
+                "no dictionary found (searched: {}); run `hasami dict download` to put the recommended \
+                 dictionary in the data directory, or set {} to a .hsd file",
                 searched.join(", "),
                 crate::analyzer::DICT_ENV
             ),

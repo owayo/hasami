@@ -10,12 +10,11 @@ use std::sync::Arc;
 /// 既定の辞書のパスを指す環境変数
 pub const DICT_ENV: &str = "HASAMI_DICT";
 
-/// 既定の辞書のディレクトリで優先して選ぶ辞書（推奨順）
-const PREFERRED_DICTS: [&str; 3] = [
-    "ipadic-neologd-sudachi.hsd",
-    "ipadic-neologd.hsd",
-    "ipadic.hsd",
-];
+/// 辞書の置き場所（ディレクトリ）を指す環境変数。[`data_dir`] が最初に見る
+pub const DATA_DIR_ENV: &str = "HASAMI_DATA_DIR";
+
+/// 配布辞書の名前（推奨順。ファイル名は `<名前>.hsd`）。置き場所に複数あれば、既定の探索はこの順に選ぶ
+pub const DISTRIBUTED_DICTS: [&str; 3] = ["ipadic-neologd-sudachi", "ipadic-neologd", "ipadic"];
 
 /// 形態素解析器
 ///
@@ -201,27 +200,47 @@ impl Analyzer {
     }
 }
 
+/// 辞書の置き場所（[`default_dict_path`] が探し、`hasami dict download` が辞書を置くディレクトリ）
+///
+/// 1. 環境変数 `HASAMI_DATA_DIR`
+/// 2. `$XDG_DATA_HOME/hasami`
+/// 3. Windows では `%LOCALAPPDATA%\hasami`（`HOME` を設定するシェルから起動しても同じ場所になるよう、
+///    `HOME` より先に見る）
+/// 4. `$HOME/.local/share/hasami`
+///
+/// 空の値は設定されていないものとみなす。どれも無ければ `None`。
+pub fn data_dir() -> Option<PathBuf> {
+    data_dir_from(|key| std::env::var_os(key), cfg!(windows))
+}
+
+/// [`data_dir`] の本体（環境変数の読み方を受け取る。テストで環境を書き換えずに済むように分ける）
+fn data_dir_from(var: impl Fn(&str) -> Option<OsString>, windows: bool) -> Option<PathBuf> {
+    let var = |key: &str| var(key).filter(|v| !v.is_empty()).map(PathBuf::from);
+    if let Some(dir) = var(DATA_DIR_ENV) {
+        return Some(dir);
+    }
+    if let Some(data) = var("XDG_DATA_HOME") {
+        return Some(data.join("hasami"));
+    }
+    if windows && let Some(local) = var("LOCALAPPDATA") {
+        return Some(local.join("hasami"));
+    }
+    var("HOME").map(|home| home.join(".local").join("share").join("hasami"))
+}
+
 /// 既定の辞書の場所を探す
 ///
 /// 1. 環境変数 `HASAMI_DICT`（辞書ファイルのパス）。設定されていて辞書が無ければ、ほかを探さずにエラー
-/// 2. `$XDG_DATA_HOME/hasami/`（未設定なら `~/.local/share/hasami/`）の `*.hsd`。複数あれば推奨順
+/// 2. 置き場所（[`data_dir`]。既定は `~/.local/share/hasami/`）の `*.hsd`。複数あれば推奨順
 ///    （ipadic-neologd-sudachi → ipadic-neologd → ipadic → そのほかの名前順）
 ///
 /// 見つからなければ、探した場所を並べた [`DictError::NotFound`] を返す。
 pub fn default_dict_path() -> Result<PathBuf, DictError> {
-    let data_home = std::env::var_os("XDG_DATA_HOME")
-        .filter(|v| !v.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| {
-            std::env::var_os("HOME")
-                .filter(|v| !v.is_empty())
-                .map(|home| PathBuf::from(home).join(".local").join("share"))
-        });
-    find_dict(std::env::var_os(DICT_ENV), data_home)
+    find_dict(std::env::var_os(DICT_ENV), data_dir())
 }
 
-/// [`default_dict_path`] の本体（環境変数の値を受け取る。テストで環境を書き換えずに済むように分ける）
-fn find_dict(env_dict: Option<OsString>, data_home: Option<PathBuf>) -> Result<PathBuf, DictError> {
+/// [`default_dict_path`] の本体（環境変数の値と置き場所を受け取る。テストで環境を書き換えずに済むように分ける）
+fn find_dict(env_dict: Option<OsString>, dir: Option<PathBuf>) -> Result<PathBuf, DictError> {
     if let Some(path) = env_dict.filter(|v| !v.is_empty()) {
         let path = PathBuf::from(path);
         if path.is_file() {
@@ -233,27 +252,37 @@ fn find_dict(env_dict: Option<OsString>, data_home: Option<PathBuf>) -> Result<P
         )]));
     }
     let mut searched = vec![format!("{DICT_ENV} (not set)")];
-    if let Some(dir) = data_home.map(|d| d.join("hasami")) {
-        if let Some(path) = PREFERRED_DICTS
-            .iter()
-            .map(|name| dir.join(name))
-            .find(|p| p.is_file())
-        {
-            return Ok(path);
-        }
-        let mut others: Vec<PathBuf> = std::fs::read_dir(&dir)
-            .into_iter()
-            .flatten()
-            .filter_map(|e| e.ok().map(|e| e.path()))
-            .filter(|p| p.extension().is_some_and(|ext| ext == "hsd") && p.is_file())
-            .collect();
-        others.sort();
-        if let Some(path) = others.into_iter().next() {
-            return Ok(path);
-        }
-        searched.push(format!("{}/*.hsd", dir.display()));
+    let Some(dir) = dir else {
+        searched.push(format!(
+            "data directory ({DATA_DIR_ENV}, XDG_DATA_HOME{} and HOME are not set)",
+            if cfg!(windows) { ", LOCALAPPDATA" } else { "" }
+        ));
+        return Err(DictError::NotFound(searched));
+    };
+    if let Some(path) = preferred_dict_in(&dir) {
+        return Ok(path);
     }
+    searched.push(format!("{}", dir.join("*.hsd").display()));
     Err(DictError::NotFound(searched))
+}
+
+/// ディレクトリ `dir` の辞書のうち、既定の探索が選ぶもの（配布辞書の推奨順 → そのほかの `*.hsd` の名前順）
+pub fn preferred_dict_in(dir: &Path) -> Option<PathBuf> {
+    if let Some(path) = DISTRIBUTED_DICTS
+        .iter()
+        .map(|name| dir.join(format!("{name}.hsd")))
+        .find(|p| p.is_file())
+    {
+        return Some(path);
+    }
+    let mut others: Vec<PathBuf> = std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.extension().is_some_and(|ext| ext == "hsd") && p.is_file())
+        .collect();
+    others.sort();
+    others.into_iter().next()
 }
 
 /// MeCab互換の出力フォーマット
@@ -419,10 +448,20 @@ mod tests {
         std::fs::create_dir_all(&hasami).unwrap();
 
         // 何も無ければ、探した場所を並べて NotFound
-        match find_dict(None, Some(dir.clone())) {
+        match find_dict(None, Some(hasami.clone())) {
             Err(DictError::NotFound(searched)) => {
                 assert!(
                     searched.iter().any(|s| s.contains("hasami")),
+                    "{searched:?}"
+                )
+            }
+            other => panic!("{other:?}"),
+        }
+        // 置き場所が決まらなければ、決める環境変数を挙げて NotFound
+        match find_dict(None, None) {
+            Err(DictError::NotFound(searched)) => {
+                assert!(
+                    searched.iter().any(|s| s.contains(DATA_DIR_ENV)),
                     "{searched:?}"
                 )
             }
@@ -432,28 +471,74 @@ mod tests {
         std::fs::write(hasami.join("zzz.hsd"), b"").unwrap();
         std::fs::write(hasami.join("custom.hsd"), b"").unwrap();
         assert_eq!(
-            find_dict(None, Some(dir.clone())).unwrap(),
+            find_dict(None, Some(hasami.clone())).unwrap(),
             hasami.join("custom.hsd")
         );
         // 推奨順の辞書が優先
         std::fs::write(hasami.join("ipadic.hsd"), b"").unwrap();
         std::fs::write(hasami.join("ipadic-neologd-sudachi.hsd"), b"").unwrap();
         assert_eq!(
-            find_dict(None, Some(dir.clone())).unwrap(),
+            find_dict(None, Some(hasami.clone())).unwrap(),
             hasami.join("ipadic-neologd-sudachi.hsd")
+        );
+        assert_eq!(
+            preferred_dict_in(&hasami),
+            Some(hasami.join("ipadic-neologd-sudachi.hsd"))
         );
         // 環境変数が最優先。指した先が無ければ、ほかを探さずにエラー
         let explicit = hasami.join("custom.hsd");
         assert_eq!(
-            find_dict(Some(explicit.clone().into()), Some(dir.clone())).unwrap(),
+            find_dict(Some(explicit.clone().into()), Some(hasami.clone())).unwrap(),
             explicit
         );
         let missing = hasami.join("missing.hsd");
         assert!(matches!(
-            find_dict(Some(missing.into()), Some(dir.clone())),
+            find_dict(Some(missing.into()), Some(hasami.clone())),
             Err(DictError::NotFound(_))
         ));
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn test_data_dir_order() {
+        let env = |pairs: &'static [(&'static str, &'static str)]| {
+            move |key: &str| {
+                pairs
+                    .iter()
+                    .find(|(k, _)| *k == key)
+                    .map(|(_, v)| OsString::from(v))
+            }
+        };
+        let all: &[(&str, &str)] = &[
+            (DATA_DIR_ENV, "own"),
+            ("XDG_DATA_HOME", "xdg"),
+            ("LOCALAPPDATA", "local"),
+            ("HOME", "home"),
+        ];
+        let under_home = Path::new("home")
+            .join(".local")
+            .join("share")
+            .join("hasami");
+        // HASAMI_DATA_DIR はそのまま（hasami を足さない）
+        assert_eq!(data_dir_from(env(all), false), Some(PathBuf::from("own")));
+        assert_eq!(
+            data_dir_from(env(&all[1..]), false),
+            Some(Path::new("xdg").join("hasami"))
+        );
+        // Windows では HOME より %LOCALAPPDATA% を先に見る
+        assert_eq!(
+            data_dir_from(env(&all[2..]), true),
+            Some(Path::new("local").join("hasami"))
+        );
+        assert_eq!(
+            data_dir_from(env(&all[2..]), false),
+            Some(under_home.clone())
+        );
+        assert_eq!(data_dir_from(env(&all[3..]), true), Some(under_home));
+        // 空の値は設定されていないものとみなす
+        let empty: &[(&str, &str)] = &[(DATA_DIR_ENV, ""), ("XDG_DATA_HOME", ""), ("HOME", "")];
+        assert_eq!(data_dir_from(env(empty), true), None);
+        assert_eq!(data_dir_from(env(&[]), false), None);
     }
 
     #[test]

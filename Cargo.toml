@@ -27,20 +27,41 @@ required-features = ["cli"]
 default = ["cli"]
 # 形態素解析（Analyzer・Dictionary・Token・品詞の正規化・C FFI）
 analyzer = ["dep:memmap2", "dep:bytemuck"]
+# リリースに添付した配布辞書の取得（hasami::download）。HTTP・TLS・SHA-256・zstd の展開の依存を引くので、
+# 解析だけを使うなら入れない
+download = [
+  "analyzer",
+  "dep:ureq",
+  "dep:sha2",
+  "dep:tempfile",
+  "dep:serde",
+  "dep:serde_json",
+  "dep:ruzstd",
+]
 # 辞書の構築・修復・書き出し（DictBuilder、MeCab 形式 CSV の読み書き、EUC-JP の変換）
 build = ["analyzer", "dep:csv", "dep:encoding_rs", "dep:glob"]
 # hasami コマンド
-cli = ["build", "dep:clap", "dep:indicatif", "dep:serde_json"]
+cli = ["build", "download", "dep:clap", "dep:indicatif", "dep:serde_json"]
 
 [dependencies]
 memmap2 = { version = "0.9.11", optional = true }
 bytemuck = { version = "1.25.2", features = ["derive"], optional = true }
 csv = { version = "1.4.0", optional = true }
-encoding_rs = { version = "0.8.35", optional = true }
+encoding_rs = { version = "0.8.41", optional = true }
 glob = { version = "0.3.4", optional = true }
 clap = { version = "4.6.6", features = ["derive"], optional = true }
 indicatif = { version = "0.18.6", optional = true }
 serde_json = { version = "1.0.151", optional = true }
+# 配布辞書の取得（download）。TLS は rustls で、社内の CA を OS に入れた環境（TLS を検査するプロキシの下など）
+# でも通るよう OS の証明書ストアで検証する（platform-verifier）。zstd は自分で展開するので gzip は切る
+ureq = { version = "3.4.2", default-features = false, features = ["rustls", "platform-verifier"], optional = true }
+sha2 = { version = "0.11.0", optional = true }
+# 取得した辞書を同じディレクトリの一時ファイルに書き、確かめてから rename で置く
+tempfile = { version = "3.27.0", optional = true }
+serde = { version = "1.0.229", features = ["derive"], optional = true }
+# リリースの圧縮版（.hsd.zst）の展開。C のライブラリを使わない実装。中身は SHA-256 で確かめるので、
+# フレームのチェックサム（xxhash）は使わない
+ruzstd = { version = "0.9.0", default-features = false, features = ["std"], optional = true }
 
 [profile.release]
 opt-level = 3
