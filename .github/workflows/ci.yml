@@ -39,6 +39,13 @@ jobs:
       - name: Run clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
+      # ライブラリとして解析だけに使う構成（default-features = false）が CLI・CSV 系の依存なしで
+      # ビルドでき、警告も出ないことを確かめる
+      - name: Check library without default features
+        run: |
+          cargo clippy --lib --no-default-features -- -D warnings
+          cargo test --lib --no-default-features
+
       - name: Check formatting
         run: cargo fmt --all -- --check
 

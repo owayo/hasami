@@ -6,18 +6,21 @@
 #   ipadic-neologd-sudachi.hsd   上の IPAdic + NEologd に SudachiDict を足したもの。repair 一式を適用
 #
 # 上流はすべて版を固定し、git は commit、ダウンロードは SHA-256 で検証する。
-# 取得物と中間成果物 (repair 前の辞書) は --src の下に置き、取得物は 2 回目以降は再取得しない。
-# repair 前の中間辞書は、`hasami repair` を手で試し直すときの入力に使える。
+# 取得物は --src の下に置き、2 回目以降は再取得しない。中間成果物 (整えた IPAdic のソース・展開した
+# NEologd の seed・SudachiDict の変換結果・repair 前の辞書) は実行ごとの作業ディレクトリに作り、終了時に消す。
+# 前回の中間辞書を使い回すと、hasami や scripts/*.py を直した後も古い土台から作ってしまうため。
 #
 # usage: scripts/build-dict.sh [options] [ipadic|neologd|sudachi ...]
-#   対象を省くと 3 辞書すべてを作る。neologd は ipadic の、sudachi は neologd の中間辞書を使う
-#   (無ければ先に作る)。
+#   対象を省くと 3 辞書すべてを作る。neologd は ipadic の、sudachi は neologd の中間辞書 (repair 前) を
+#   土台にする。土台は同じ実行の中で作り、書き換える配布辞書は対象に挙げたものだけ。
 #
 # options:
-#   --out DIR      配布辞書の出力先 (既定: dict)
-#   --src DIR      取得物と中間成果物の置き場所 (既定: .dict-src)
-#   --hasami PATH  使う hasami のバイナリ (既定: cargo build --release して target/release/hasami)
-#   -h, --help     このヘルプを出す
+#   --out DIR            配布辞書の出力先 (既定: dict)
+#   --src DIR            取得物の置き場所 (既定: .dict-src)
+#   --hasami PATH        使う hasami のバイナリ (既定: cargo build --release して target/release/hasami)
+#   --keep-intermediate  repair 前の中間辞書 (*.base.hsd) を --src の build/ に残す
+#                        (`hasami repair` を手で試し直すときの入力に使う)
+#   -h, --help           このヘルプを出す
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -57,6 +60,7 @@ SOURCE_SUDACHI=sudachi-raw@$SUDACHI_VERSION/$SUDACHI_SCOPE
 OUT=dict
 SRC=.dict-src
 HASAMI=
+KEEP_INTERMEDIATE=0
 TARGETS=()
 
 usage() { sed -n '2,/^set -euo/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; }
@@ -66,6 +70,7 @@ while [ $# -gt 0 ]; do
     --out) OUT=$2; shift 2 ;;
     --src) SRC=$2; shift 2 ;;
     --hasami) HASAMI=$2; shift 2 ;;
+    --keep-intermediate) KEEP_INTERMEDIATE=1; shift ;;
     -h | --help) usage; exit 0 ;;
     ipadic | neologd | sudachi) TARGETS+=("$1"); shift ;;
     *) echo "unknown argument: $1" >&2; usage >&2; exit 2 ;;
@@ -73,8 +78,11 @@ while [ $# -gt 0 ]; do
 done
 [ ${#TARGETS[@]} -eq 0 ] && TARGETS=(ipadic neologd sudachi)
 
-WORK=$SRC/build
-mkdir -p "$OUT" "$WORK"
+mkdir -p "$OUT" "$SRC"
+# 中間成果物の作業ディレクトリ。--src の下に作る (既定では --out と同じファイルシステムなので、
+# 配布辞書への mv が rename になる)
+WORK=$(mktemp -d "$SRC/build.XXXXXX")
+trap 'rm -rf "$WORK"' EXIT
 
 log() { printf '[%s] %s\n' "$(date +%H:%M:%S)" "$*" >&2; }
 
@@ -150,8 +158,11 @@ FULL_REPAIR=(
 
 # ---------------------------------------------------------------- 辞書
 
-# IPAdic の中間辞書 (repair 前)。NEologd を含む辞書の土台と、固有名詞の降格の参照に使う
-build_ipadic_base() {
+# 中間辞書 (repair 前) と展開した seed は、同じ実行の中で 1 回だけ作る
+
+# IPAdic の中間辞書。NEologd を含む辞書の土台と、固有名詞の降格の参照に使う
+ensure_ipadic_base() {
+  [ -f "$WORK/ipadic.base.hsd" ] && return
   fetch_git "$IPADIC_REPO" "$IPADIC_COMMIT" "$SRC/mecab" mecab-ipadic
   # 記号の未知語の扱いと、EUC-JP の変換差を埋める別表記を整えたソースを作る (scripts/prepare_ipadic.py)
   local patch
@@ -161,21 +172,12 @@ build_ipadic_base() {
     --meta name=ipadic --meta "sources=$SOURCE_IPADIC" --meta "ipadic_patch=$patch"
 }
 
-build_ipadic() {
-  build_ipadic_base
-  # IPAdic 単体は発音の修復を掛けない (記号の読みを残す)。外国人名の姓・名だけを除く
-  "$HASAMI" repair --dict "$WORK/ipadic.base.hsd" --output "$WORK/ipadic.tmp.hsd" \
-    --drop-invalid-context-ids --no-pronunciation-repair \
-    --remove dict/user-remove/foreign-names.csv
-  install_dict "$WORK/ipadic.tmp.hsd" "$OUT/ipadic.hsd"
-}
-
-prepare_neologd_seed() {
+# NEologd の seed のうち、除外しないものを展開する
+ensure_neologd_seed() {
+  [ -d "$WORK/neologd-seed" ] && return
   fetch_git "$NEOLOGD_REPO" "$NEOLOGD_COMMIT" "$SRC/mecab-ipadic-neologd" seed
-  local seed=$SRC/neologd-seed
-  rm -rf "$seed"
+  local seed=$WORK/neologd-seed xzfile base
   mkdir -p "$seed"
-  local xzfile base
   for xzfile in "$SRC"/mecab-ipadic-neologd/seed/*.csv.xz; do
     base=$(basename "$xzfile" .xz)
     if printf '%s\n' "${NEOLOGD_EXCLUDE[@]}" | grep -qxF "$base"; then
@@ -186,24 +188,36 @@ prepare_neologd_seed() {
   done
 }
 
-build_neologd() {
-  [ -f "$WORK/ipadic.base.hsd" ] || build_ipadic
-  prepare_neologd_seed
+# IPAdic + NEologd の中間辞書。SudachiDict を足す辞書の土台
+ensure_neologd_base() {
+  [ -f "$WORK/ipadic-neologd.base.hsd" ] && return
+  ensure_ipadic_base
+  ensure_neologd_seed
   log "merge neologd"
-  "$HASAMI" merge --dict "$WORK/ipadic.base.hsd" --input "$SRC/neologd-seed" \
+  "$HASAMI" merge --dict "$WORK/ipadic.base.hsd" --input "$WORK/neologd-seed" \
     --output "$WORK/ipadic-neologd.base.hsd" \
     --meta name=ipadic-neologd --meta "sources=$SOURCE_IPADIC,$SOURCE_NEOLOGD"
+}
+
+build_ipadic() {
+  ensure_ipadic_base
+  # IPAdic 単体は発音の修復を掛けない (記号の読みを残す)。外国人名の姓・名だけを除く
+  "$HASAMI" repair --dict "$WORK/ipadic.base.hsd" --output "$WORK/ipadic.tmp.hsd" \
+    --drop-invalid-context-ids --no-pronunciation-repair \
+    --remove dict/user-remove/foreign-names.csv
+  install_dict "$WORK/ipadic.tmp.hsd" "$OUT/ipadic.hsd"
+}
+
+build_neologd() {
+  # repair の固有名詞の降格が参照する IPAdic の中間辞書も、ここで作られる
+  ensure_neologd_base
   "$HASAMI" repair --dict "$WORK/ipadic-neologd.base.hsd" --output "$WORK/ipadic-neologd.tmp.hsd" \
     "${FULL_REPAIR[@]}"
   install_dict "$WORK/ipadic-neologd.tmp.hsd" "$OUT/ipadic-neologd.hsd"
 }
 
 build_sudachi() {
-  [ -f "$WORK/ipadic-neologd.base.hsd" ] || build_neologd
-  # repair の固有名詞の降格が参照する
-  [ -f "$WORK/ipadic.base.hsd" ] || build_ipadic_base
-  # IPAdic・NEologd に既にある語を除くため、両方のソースを参照する
-  [ -d "$SRC/neologd-seed" ] || prepare_neologd_seed
+  ensure_neologd_base
   local raw=$SRC/sudachi-raw/$SUDACHI_VERSION entry name hash
   mkdir -p "$raw"
   for entry in "${SUDACHI_FILES[@]}"; do
@@ -212,12 +226,13 @@ build_sudachi() {
     unzip -oq "$raw/$name" -d "$raw"
   done
   log "convert sudachi (scope: $SUDACHI_SCOPE)"
+  # IPAdic・NEologd・dict/user に既にある語を除く
   python3 scripts/convert_sudachi_raw.py \
     --lex "$raw/small_lex.csv" \
     --lex "$raw/core_lex.csv" \
     --ipadic-dir "$SRC/mecab/mecab-ipadic" \
     --exclude-existing "$SRC/mecab/mecab-ipadic" \
-    --exclude-existing "$SRC/neologd-seed" \
+    --exclude-existing "$WORK/neologd-seed" \
     --exclude-existing dict/user \
     --scope "$SUDACHI_SCOPE" \
     --output "$WORK/sudachi.csv"
@@ -234,4 +249,12 @@ build_sudachi() {
 for t in "${TARGETS[@]}"; do
   "build_$t"
 done
+
+if [ "$KEEP_INTERMEDIATE" = 1 ]; then
+  mkdir -p "$SRC/build"
+  for f in "$WORK"/*.base.hsd; do
+    mv "$f" "$SRC/build/"
+    log "kept $SRC/build/$(basename "$f")"
+  done
+fi
 log "done"
