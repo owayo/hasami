@@ -60,16 +60,25 @@ impl Storage {
     }
 }
 
-/// 文字種ごとの未知語の設定（先頭のテンプレート）
+/// 文字種ごとの未知語の設定
 #[derive(Clone)]
 pub(crate) struct UnkInfo {
     pub invoke: bool,
+    /// この文字種のテンプレート（unk.def の順）の、[`Dictionary::unk_template`] の番号の範囲（空でない）
+    pub templates: std::ops::Range<u32>,
+    /// 同じ文字種の並びから作る候補（char.def の group・length）
+    pub grouping: UnkGrouping,
+}
+
+/// 未知語のテンプレート（unk.def の 1 行）。MeCab と同じく、未知語の候補ごとにテンプレートの数だけノードを作る
+#[derive(Clone)]
+pub(crate) struct UnkTemplateInfo {
     pub left_id: u16,
     pub right_id: u16,
     pub cost: i16,
     pub pos: Arc<str>,
-    /// 同じ文字種の並びから作る候補（char.def の group・length）
-    pub grouping: UnkGrouping,
+    /// 文字種の番号（`type_index` の値）
+    pub char_type: u8,
 }
 
 /// 解析の最内側で使う型付きスライス（解析 1 回ごとに作る）
@@ -123,6 +132,7 @@ pub struct Dictionary {
     /// U+0000〜U+FFFF の文字種（`classifier.classify_char` と同じ結果を表で引く）
     bmp_char_types: Box<[u8]>,
     unk: Vec<UnkInfo>,
+    unk_templates: Vec<UnkTemplateInfo>,
     entry_count: usize,
     num_left: usize,
     num_right: usize,
@@ -345,7 +355,7 @@ impl Dictionary {
         }
         let classifier = CharClassifier::from_definitions(classes, range_defs);
 
-        // 未知語テンプレート（文字種ごとに先頭の 1 つを使う）
+        // 未知語テンプレート（文字種ごとに unk.def の順で並ぶ）
         let buckets: &[UnkBucket] = cast(section(SectionId::UnkBuckets), SectionId::UnkBuckets)?;
         let templates: &[UnkTemplate] =
             cast(section(SectionId::UnkTemplates), SectionId::UnkTemplates)?;
@@ -367,6 +377,7 @@ impl Dictionary {
             }
         }
         let mut unk = Vec::with_capacity(buckets.len());
+        let mut unk_templates = Vec::with_capacity(templates.len());
         for (b, &char_type) in buckets.iter().zip(&ALL_CHAR_TYPES) {
             let start = b.template_start as usize;
             let end = start + b.template_count as usize;
@@ -375,13 +386,18 @@ impl Dictionary {
                     "unknown-word bucket is empty or out of range",
                 ));
             }
-            let t = &templates[start];
-            unk.push(UnkInfo {
-                invoke: b.invoke != 0,
+            // 文字種ごとに写す（NUMERIC のように 2 つの文字種が同じテンプレートを指すこともある）
+            let first = unk_templates.len() as u32;
+            unk_templates.extend(templates[start..end].iter().map(|t| UnkTemplateInfo {
                 left_id: t.left_id,
                 right_id: t.right_id,
                 cost: t.cost,
                 pos: Arc::clone(&pos[t.pos_id as usize]),
+                char_type: type_index(char_type) as u8,
+            }));
+            unk.push(UnkInfo {
+                invoke: b.invoke != 0,
+                templates: first..unk_templates.len() as u32,
                 grouping: classifier.unk_grouping(char_type),
             });
         }
@@ -403,6 +419,7 @@ impl Dictionary {
             classifier,
             bmp_char_types,
             unk,
+            unk_templates,
             entry_count,
             num_left,
             num_right,
@@ -457,6 +474,23 @@ impl Dictionary {
 
     pub(crate) fn unk_info(&self, char_type_index: usize) -> &UnkInfo {
         &self.unk[char_type_index]
+    }
+
+    /// 未知語のテンプレート（番号は [`UnkInfo::templates`] の範囲）
+    #[inline]
+    pub(crate) fn unk_template(&self, index: usize) -> &UnkTemplateInfo {
+        &self.unk_templates[index]
+    }
+
+    /// 文字種の未知語のテンプレート（unk.def の順）
+    #[inline]
+    pub(crate) fn unk_templates(&self, info: &UnkInfo) -> &[UnkTemplateInfo] {
+        &self.unk_templates[info.templates.start as usize..info.templates.end as usize]
+    }
+
+    /// 未知語のテンプレートの数（全文字種）
+    pub(crate) fn unk_template_count(&self) -> usize {
+        self.unk_templates.len()
     }
 
     pub fn meta(&self) -> &Meta {

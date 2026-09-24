@@ -13,18 +13,21 @@
 //! 同点のときは先に追加した前ノードが勝つ（`<` の先勝ち）。ノードは、開始位置の昇順、trie が報告する順
 //! （短い語から）、群の中のエントリの順、未知語は既知語の後（並び全体、続けて短い接頭辞から）に追加する。
 //!
+//! 空白（char.def の SPACE の文字）はノードにせず、空白の後ろから始まる語を空白の前の位置につなぐ。未知語は
+//! 候補ごとに文字種のテンプレート（unk.def）の数だけノードを作り、品詞は接続コストで決まる（どちらも MeCab と同じ）。
+//!
 //! 未知語の候補は MeCab と同じ（char.def の group・length、`UnkGrouping::for_each_len`）だが、カタカナの
 //! 並び全体の候補には 2 つの規則を足す（外来語の複合語は区切らずに書くので、単語コストが一律の並び全体の
 //! 未知語が、既知語 2 語以上の複合語に勝ってしまう）。
 //!
-//! - 並び全体の候補（3 字以上）は、3 字以上の既知語で隙間なく覆えるなら作らない（[`RunCover`]）。
+//! - 並び全体の候補（3 字以上）は、3 字以上の既知語で隙間なく覆えるなら作らない（`RunCover`）。
 //!   「オススメアプリ」を 1 つの未知語にせず「オススメ / アプリ」にする。2 字以下の語は数えないので、
 //!   辞書にない人名などは断片（ドミ / ニク）に割れず 1 語（ドミニク）のまま
 //! - 最良パスに残ったカタカナの未知語（3 字以上）と同じ表層の語が辞書にあれば、その語の素性で出す
-//!   （[`dictionary_word_for_unknown`]）。単語コストが高い既知語（IPAdic の「キャンプ」16437）は未知語に
+//!   （`dictionary_word_for_unknown`）。単語コストが高い既知語（IPAdic の「キャンプ」16437）は未知語に
 //!   負けるが、分け方は MeCab と同じまま品詞・読みを辞書から取る
 
-use crate::char_class::{ALL_CHAR_TYPES, CharType, type_index};
+use crate::char_class::{CharType, type_index};
 use crate::hsd::reader::DictView;
 use crate::hsd::trie::Trie;
 use crate::hsd::{DictError, Dictionary};
@@ -436,11 +439,13 @@ fn alphabet_reading(surface: &str) -> Option<Arc<str>> {
 struct Node {
     /// BOS からこのノードの終わりまでの最小の累積コスト
     cost: i64,
-    /// 辞書エントリの番号。BOUNDARY_ID = BOS、`UNK_FLAG | 文字種の番号` = 未知語
+    /// 辞書エントリの番号。BOUNDARY_ID = BOS、`UNK_FLAG | テンプレートの番号` = 未知語
+    /// （`Dictionary::unk_template` の番号）
     entry: u32,
-    /// 最良の前ノードの、開始位置で終わるノードの列（`ends[start]`）の中での番号
+    /// 最良の前ノードの、つなぐ位置で終わるノードの列（`ends[start]`）の中での番号
     prev: u32,
-    /// 開始の文字位置
+    /// つなぐ文字位置（前ノードが終わる位置）。表層は空白を読み飛ばした位置
+    /// （`ChunkChars::skip_spaces`）から始まる
     start: u32,
     right_id: u16,
     word_cost: i16,
@@ -476,9 +481,9 @@ impl Node {
         self.entry == BOUNDARY_ID
     }
 
-    /// 未知語なら文字種の番号
+    /// 未知語ならテンプレートの番号
     #[inline]
-    fn unknown_type(&self) -> Option<usize> {
+    fn unknown_template(&self) -> Option<usize> {
         (self.entry & UNK_FLAG != 0).then_some((self.entry & !UNK_FLAG) as usize)
     }
 }
@@ -494,6 +499,8 @@ pub struct LatticeWorkspace {
     cover: RunCover,
     /// 位置ごとに辞書を引いた (語の終わり, 群) の作業用の列
     hits: Vec<(u32, u32)>,
+    /// 位置ごとの未知語のノード（テンプレートごと）の作業用の列
+    unk_nodes: Vec<Node>,
 }
 
 /// カタカナの並びで、各位置から並びの終わりまでの未知語の候補（並び全体）を作らないかの表
@@ -622,7 +629,7 @@ impl RunCover {
             let crosses = rest[q - s - 1].iter().any(|n| {
                 // ノードの start はつなぐ位置なので、表層の開始は空白を読み飛ばした位置
                 let start = chars.skip_spaces(n.start as usize);
-                start < s && q - start >= COMPOUND_MIN_CHARS && n.unknown_type().is_none()
+                start < s && q - start >= COMPOUND_MIN_CHARS && n.unknown_template().is_none()
             });
             if crosses {
                 suppress[..q - s].fill(true);
@@ -739,7 +746,7 @@ struct TokenBuilder {
     pos: Vec<Option<Arc<str>>>,
     conj_types: Vec<Option<Arc<str>>>,
     conj_forms: Vec<Option<Arc<str>>>,
-    /// 文字種ごとの未知語の品詞
+    /// 未知語のテンプレートごとの品詞
     unk_pos: Vec<Option<Arc<str>>>,
     /// 既知語のトークンのキャッシュ（エントリ番号, トークン）
     slots: Vec<Option<(u32, Token)>>,
@@ -791,7 +798,7 @@ impl TokenBuilder {
         reset(&mut self.pos, dict.pos_count());
         reset(&mut self.conj_types, dict.conj_type_count());
         reset(&mut self.conj_forms, dict.conj_form_count());
-        reset(&mut self.unk_pos, ALL_CHAR_TYPES.len());
+        reset(&mut self.unk_pos, dict.unk_template_count());
         self.slots.clear();
         self.slots.resize(TOKEN_CACHE_SLOTS, None);
     }
@@ -870,7 +877,7 @@ impl TokenBuilder {
     fn unknown(
         &mut self,
         dict: &Dictionary,
-        type_idx: usize,
+        template: usize,
         surface: &str,
         start: usize,
         end: usize,
@@ -880,9 +887,9 @@ impl TokenBuilder {
         let empty = &self.empty;
         Token {
             pos: local_str(
-                &mut self.unk_pos[type_idx],
+                &mut self.unk_pos[template],
                 empty,
-                &dict.unk_info(type_idx).pos,
+                &dict.unk_template(template).pos,
             ),
             conj_type: Arc::clone(empty),
             conj_form: Arc::clone(empty),
@@ -953,6 +960,7 @@ impl LatticeWorkspace {
             tokens: TokenBuilder::new(),
             cover: RunCover::default(),
             hits: Vec::new(),
+            unk_nodes: Vec::new(),
         }
     }
 
@@ -989,6 +997,7 @@ impl LatticeWorkspace {
         let cover = &mut self.cover;
         cover.reset();
         let scratch_hits = &mut self.hits;
+        let unk_nodes = &mut self.unk_nodes;
         // これまでの位置から始まる既知語の終わりの最大（カタカナの並びをまたぐ語があるかに使う）
         let mut known_reach = 0;
 
@@ -1078,18 +1087,22 @@ impl LatticeWorkspace {
                 }
             }
 
-            // 未知語処理（文字種ごとの先頭のテンプレートだけを使う）
+            // 未知語処理。MeCab と同じく、候補ごとに文字種のテンプレート（unk.def の順）の数だけノードを作る
             if unk.invoke || !has_known {
-                // この位置の未知語は left_id が同じなので、最良の前ノードは 1 度だけ求める
-                let (cost, prev) = best_prev(prevs, view.matrix_row(unk.left_id));
-                let node = Node {
-                    cost: cost + unk.cost as i64,
-                    entry: UNK_FLAG | type_idx as u32,
-                    prev,
-                    start: i as u32,
-                    right_id: unk.right_id,
-                    word_cost: unk.cost,
-                };
+                // この位置のテンプレートごとの未知語。候補の長さによらず left_id が同じなので、最良の前ノードは
+                // テンプレートごとに 1 度だけ求める
+                unk_nodes.clear();
+                for (t, template) in unk.templates.clone().zip(dict.unk_templates(unk)) {
+                    let (cost, prev) = best_prev(prevs, view.matrix_row(template.left_id));
+                    unk_nodes.push(Node {
+                        cost: cost + template.cost as i64,
+                        entry: UNK_FLAG | t,
+                        prev,
+                        start: i as u32,
+                        right_id: template.right_id,
+                        word_cost: template.cost,
+                    });
+                }
                 // カタカナの並び全体の候補は、3 字以上の既知語で覆えるなら作らない
                 let skip_group = type_idx == KATAKANA
                     && unk.grouping.group()
@@ -1102,11 +1115,11 @@ impl LatticeWorkspace {
                         return;
                     }
                     added = true;
-                    rest[p + len as usize - i - 1].push(node);
+                    rest[p + len as usize - i - 1].extend_from_slice(unk_nodes);
                 });
                 // 候補が無く、この位置から始まる既知語も無いときだけ 1 文字の未知語（MeCab と同じ）
                 if !added && !has_known {
-                    rest[p - i].push(node);
+                    rest[p - i].extend_from_slice(unk_nodes);
                 }
             }
         }
@@ -1147,8 +1160,11 @@ impl LatticeWorkspace {
             let surface = &input[start..end];
             let (start, end) = (offset + start, offset + end);
             // カタカナの未知語（3 字以上）と同じ表層の語が辞書にあれば、その語の素性で出す
-            let dict_word = match node.unknown_type() {
-                Some(KATAKANA) if node_end - node_start >= COMPOUND_MIN_CHARS => {
+            let dict_word = match node.unknown_template() {
+                Some(t)
+                    if dict.unk_template(t).char_type as usize == KATAKANA
+                        && node_end - node_start >= COMPOUND_MIN_CHARS =>
+                {
                     // 前の語（BOS を含む）の right_id と、次の語（無ければ EOS の 0）の left_id
                     let prev_right = lattice.ends[node.start as usize][node.prev as usize].right_id;
                     let next_left = match k.checked_sub(1) {
@@ -1164,7 +1180,7 @@ impl LatticeWorkspace {
                 }
                 _ => None,
             };
-            out.push(match (node.unknown_type(), dict_word) {
+            out.push(match (node.unknown_template(), dict_word) {
                 (None, _) => {
                     self.tokens
                         .known(dict, node.entry, surface, start, end, node.word_cost)?
@@ -1173,9 +1189,9 @@ impl LatticeWorkspace {
                     self.tokens
                         .known(dict, entry, surface, start, end, node.word_cost)?
                 }
-                (Some(type_idx), None) => {
+                (Some(template), None) => {
                     self.tokens
-                        .unknown(dict, type_idx, surface, start, end, node.word_cost)
+                        .unknown(dict, template, surface, start, end, node.word_cost)
                 }
             });
         }
@@ -1184,10 +1200,10 @@ impl LatticeWorkspace {
     }
 }
 
-/// ノードの左文脈 ID（未知語は文字種のテンプレートのもの）
+/// ノードの左文脈 ID（未知語はテンプレートのもの）
 fn left_id(view: &DictView<'_>, dict: &Dictionary, node: &Node) -> u16 {
-    match node.unknown_type() {
-        Some(type_idx) => dict.unk_info(type_idx).left_id,
+    match node.unknown_template() {
+        Some(template) => dict.unk_template(template).left_id,
         // エントリはラティスを作るときに範囲を確かめてある
         None => view.entries[node.entry as usize].left_id(),
     }
@@ -1246,7 +1262,7 @@ impl Default for LatticeWorkspace {
 #[cfg(all(test, feature = "build"))]
 mod tests {
     use super::*;
-    use crate::dict::{ConnectionMatrix, DictBuilder, DictEntry};
+    use crate::dict::{ConnectionMatrix, DictBuilder, DictEntry, UnkEntry};
 
     fn make_test_dict() -> Dictionary {
         let mut builder = DictBuilder::new();
@@ -1708,6 +1724,58 @@ mod tests {
                 ("で", "助詞,格助詞,一般,*")
             ]
         );
+    }
+
+    #[test]
+    fn test_unknown_word_uses_every_template() {
+        // 未知語は候補ごとに unk.def のテンプレートの数だけノードを作り、品詞は接続コストで決まる（MeCab と同じ）。
+        // 先頭の 名詞,一般 は単語コストが低いが、「の」への接続は 名詞,固有名詞,組織 の方が安い
+        let mut builder = DictBuilder::new();
+        builder.add_entry(DictEntry {
+            surface: "の".into(),
+            left_id: 3,
+            right_id: 3,
+            cost: 1000,
+            pos: "助詞,連体化,*,*".into(),
+            base_form: "の".into(),
+            ..Default::default()
+        });
+        let template = |left_id, cost, pos: &str| UnkEntry {
+            char_class: "ALPHA".into(),
+            left_id,
+            right_id: left_id,
+            cost,
+            pos: pos.into(),
+        };
+        builder.set_unk_entries(
+            [(
+                "ALPHA".to_string(),
+                vec![
+                    template(1, 5000, "名詞,一般,*,*"),
+                    template(2, 5500, "名詞,固有名詞,組織,*"),
+                ],
+            )]
+            .into(),
+        );
+        let mut matrix = ConnectionMatrix::zeros(4, 4);
+        matrix.costs[3 * 4 + 2] = -1000; // 組織 → の
+        builder.set_matrix(matrix);
+        let dict = builder.build().unwrap();
+        let tokens = LatticeWorkspace::new().tokenize("Zoomの", &dict).unwrap();
+        let got: Vec<(&str, &str, i16, bool)> = tokens
+            .iter()
+            .map(|t| (&*t.surface, &*t.pos, t.word_cost, t.is_known))
+            .collect();
+        assert_eq!(
+            got,
+            [
+                ("Zoom", "名詞,固有名詞,組織,*", 5500, false),
+                ("の", "助詞,連体化,*,*", 1000, true)
+            ]
+        );
+        // 後ろに語が無ければ単語コストの低い 名詞,一般
+        let tokens = LatticeWorkspace::new().tokenize("Zoom", &dict).unwrap();
+        assert_eq!(&*tokens[0].pos, "名詞,一般,*,*");
     }
 
     #[test]
