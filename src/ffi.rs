@@ -289,7 +289,7 @@ pub unsafe extern "C" fn hasami_last_error(handle: *const HasamiAnalyzer) -> *co
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "build"))]
 mod tests {
     use super::*;
     use crate::dict::{DictBuilder, DictEntry};

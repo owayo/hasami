@@ -1,4 +1,6 @@
 //! インテグレーションテスト: 辞書構築→解析→出力の一貫性検証
+//! （辞書を組み立てるので `build` feature が要る）
+#![cfg(feature = "build")]
 
 use hasami::Dictionary;
 use hasami::analyzer::{Analyzer, format_mecab, format_wakachi};
