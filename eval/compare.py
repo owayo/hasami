@@ -20,7 +20,6 @@ HASAMI_DICTS = [
     ("hasami (ipadic)", "dict/ipadic.hsd"),
     ("hasami (neologd)", "dict/ipadic-neologd.hsd"),
     ("hasami (unified)", "dict/ipadic-neologd-sudachi.hsd"),
-    ("hasami (sudachi)", "dict/sudachi.hsd"),
 ]
 
 # sudachi.rs 設定

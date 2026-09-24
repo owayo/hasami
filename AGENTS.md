@@ -29,7 +29,6 @@ hasami/
 │   ├── ipadic.hsd      # IPAdic 単体
 │   ├── ipadic-neologd.hsd  # IPAdic + NEologd
 │   ├── ipadic-neologd-sudachi.hsd  # IPAdic + NEologd + SudachiDict（推奨・最大語彙）
-│   ├── sudachi.hsd     # SudachiDict Core 単体
 │   └── user/           # ユーザー辞書CSV（make dict-neologd でマージ）
 │       ※ unidic-cwj.hsd / unidic-csj.hsd は同梱されず make dict-unidic-cwj/csj でビルド
 ├── scripts/

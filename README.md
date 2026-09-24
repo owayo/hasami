@@ -92,7 +92,6 @@ cargo build --workspace
 | `dict/ipadic.hsd` | IPAdic 単体 | 軽量・基本用途 |
 | `dict/ipadic-neologd.hsd` | IPAdic + NEologd | 新語・固有名詞対応 |
 | `dict/ipadic-neologd-sudachi.hsd` | IPAdic + NEologd + SudachiDict | **推奨**（最大語彙） |
-| `dict/sudachi.hsd` | SudachiDict Core 単体 | Sudachi互換解析 |
 
 以下の辞書はリポジトリには同梱されていませんが、ローカルでビルドできます。
 
@@ -413,7 +412,7 @@ make dict
 
 NEologd は Apache License 2.0 に加え、IPAdic のライセンス条件も適用されます。
 
-#### SudachiDict (`dict/sudachi.hsd`, `dict/ipadic-neologd-sudachi.hsd`)
+#### SudachiDict (`dict/ipadic-neologd-sudachi.hsd`)
 
 [SudachiDict](https://github.com/WorksApplications/SudachiDict) Core の語彙データを変換して構築。統合辞書では品詞体系を IPAdic 互換にリマッピングしています。
 
