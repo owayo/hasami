@@ -25,7 +25,7 @@ TEST_SENTENCES = [
 ITERATIONS_SPEED = 3000
 WARMUP = 100
 
-HASAMI_DICT = Path(__file__).parent / "hasami-dict.hsd"
+HASAMI_DICT = Path(__file__).parent.parent / "dict" / "ipadic.hsd"
 HASAMI_BIN = Path(__file__).parent.parent / "target" / "release" / "hasami"
 
 # sudachi.rs のパスを自動検出（隣接リポジトリまたは環境変数で指定可能）
