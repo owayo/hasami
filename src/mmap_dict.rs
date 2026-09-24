@@ -953,6 +953,54 @@ impl MmapDictionary {
         self.feature_count_val
     }
 
+    /// 全エントリを MeCab 形式の CSV（13 列）で書き出す
+    ///
+    /// 列は `表層形,左文脈ID,右文脈ID,コスト,品詞1..4,活用型,活用形,原形,読み,発音`。
+    /// 活用型・活用形は .hsd に保存していないので `*` を出す。品詞が 4 要素に満たない
+    /// ときは `*` で埋め、5 要素以上なら 4 列目に残りをまとめる（[`crate::dict::DictBuilder::add_csv`]
+    /// で読み戻すと同じ品詞文字列になる）。書き出すのはエントリだけで、接続行列・
+    /// 文字種定義・未知語テンプレートは含まない。
+    ///
+    /// Returns: 書き出したエントリ数
+    pub fn write_lexicon_csv<W: io::Write>(&self, writer: W) -> io::Result<u32> {
+        let mut wtr = csv::WriterBuilder::new()
+            .has_headers(false)
+            .flexible(true)
+            .from_writer(writer);
+        let count = self.entry_count();
+        for id in 0..count {
+            let (left_id, right_id, cost) = self.entry_cost_info(id);
+            let left_id = left_id.to_string();
+            let right_id = right_id.to_string();
+            let cost = cost.to_string();
+            let pos = self.entry_pos(id);
+            let mut parts = pos.splitn(4, ',');
+            let pos_cols: [&str; 4] = std::array::from_fn(|_| parts.next().unwrap_or("*"));
+            wtr.write_record([
+                self.entry_surface(id),
+                left_id.as_str(),
+                right_id.as_str(),
+                cost.as_str(),
+                pos_cols[0],
+                pos_cols[1],
+                pos_cols[2],
+                pos_cols[3],
+                "*",
+                "*",
+                self.entry_base_form(id),
+                self.entry_reading(id),
+                self.entry_pronunciation(id),
+            ])
+            .map_err(|e| match e.into_kind() {
+                // 書き込み先の io エラーは種類 (BrokenPipe 等) を保ったまま返す
+                csv::ErrorKind::Io(err) => err,
+                kind => io::Error::other(format!("{kind:?}")),
+            })?;
+        }
+        wtr.flush()?;
+        Ok(count)
+    }
+
     /// 未知語エントリをエクスポート（マージ用）
     pub fn export_unk_entries(&self, target: &mut HashMap<String, Vec<crate::dict::UnkEntry>>) {
         use crate::char_class::ALL_CHAR_TYPES;

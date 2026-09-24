@@ -2,7 +2,7 @@
 
 use crate::char_class::{CharClass, CharClassifier};
 use crate::trie::DoubleArrayTrie;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::io;
 use std::path::Path;
 use std::sync::Arc;
@@ -30,6 +30,17 @@ where
             ),
         )
     })
+}
+
+/// MeCab 形式 CSV の 1 エントリの列数
+const MECAB_CSV_COLUMNS: usize = 13;
+
+/// MeCab 形式 CSV の行がコメントかどうか
+///
+/// `#` で始まり、エントリの列数に満たない行をコメントとみなす。NEologd には `#` で始まる
+/// ハッシュタグの語（13 列そろったエントリ）があるので、先頭の文字だけでは判定しない。
+fn is_comment_record(record: &csv::StringRecord) -> bool {
+    record.len() < MECAB_CSV_COLUMNS && record.get(0).is_some_and(|f| f.starts_with('#'))
 }
 
 /// 文字列が全てカタカナ（U+30A0〜U+30FF）かどうか判定する
@@ -213,6 +224,42 @@ fn is_kansuji(c: char) -> bool {
 /// 異表記エントリ削除時にログへ出すサンプル件数
 const ORTHO_VARIANT_SAMPLE: usize = 20;
 
+/// 削除リストのうち、どのエントリにも一致しなかった行を記録する件数
+const UNMATCHED_SAMPLE: usize = 10;
+
+/// 文脈 ID の範囲外エラーに載せるエントリの件数
+const INVALID_CONTEXT_ID_SAMPLE: usize = 5;
+
+/// 品詞 `pos` が `prefix` の要素列で始まるかどうか判定する
+///
+/// `,` で区切った要素単位の前方一致をとる。文字列としての前方一致ではないので、
+/// `名詞,固有名詞,人` は `名詞,固有名詞,人名,姓` に一致しない。`prefix` が空なら常に真。
+fn pos_has_prefix(pos: &str, prefix: &[String]) -> bool {
+    let mut parts = pos.split(',');
+    prefix.iter().all(|p| parts.next() == Some(p.as_str()))
+}
+
+/// [`DictBuilder::drop_entries_from_csv`] で CSV を適用した結果
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RemovalStats {
+    /// 削除条件として読んだ行数（コメント行・空行を除く）
+    pub rows: usize,
+    /// 削除したエントリ数
+    pub dropped: usize,
+    /// どのエントリにも一致しなかった行数
+    pub unmatched_rows: usize,
+    /// 一致しなかった行の先頭の数件（`行番号: 行の内容`）
+    pub unmatched_samples: Vec<String>,
+}
+
+/// 削除リスト CSV の 1 行
+struct RemovalRule {
+    line_no: u64,
+    text: String,
+    /// 品詞の接頭辞（`,` で区切った要素）。空なら品詞を問わない
+    pos_prefix: Vec<String>,
+}
+
 /// 品詞が「本来の語」（表記ゆれ正規化エントリではありえない語）かどうか判定する
 ///
 /// 活用語と機能語、および代名詞を対象とする。これらの表層形と衝突する名詞エントリは
@@ -271,6 +318,16 @@ pub struct ConnectionMatrix {
 }
 
 impl ConnectionMatrix {
+    /// 文脈 ID がこの行列で引ける範囲にあるかどうか
+    ///
+    /// 行は前の語の `right_id`、列は次の語の `left_id` で引くので、`left_id` は
+    /// `left_size` 未満、`right_id` は `right_size` 未満でなければならない。範囲外の ID は
+    /// 解析時に接続コストが引けず 0 として扱われ、そのエントリが不当に有利になる。
+    #[inline]
+    pub fn contains_ids(&self, left_id: u16, right_id: u16) -> bool {
+        left_id < self.left_size && right_id < self.right_size
+    }
+
     /// 接続コストを取得
     /// prev_right_id: 前のトークンの right_id
     /// next_left_id: 次のトークンの left_id
@@ -382,10 +439,13 @@ impl DictBuilder {
             });
         }
 
-        // 接続行列もインポート（まだ設定されていなければ）
-        if self.matrix.is_none() {
-            let left_size = dict.matrix_left_size();
-            let right_size = dict.matrix_right_size();
+        // 接続行列もインポート（まだ設定されていなければ）。matrix.def なしで作った辞書は
+        // build が置く 1x1 の仮の行列しか持たないので、行列なしとして扱う。本物の行列として
+        // 取り込むと、全エントリの文脈 ID が範囲外と判定されてしまう
+        let left_size = dict.matrix_left_size();
+        let right_size = dict.matrix_right_size();
+        let placeholder = left_size <= 1 && right_size <= 1;
+        if self.matrix.is_none() && !placeholder {
             let total = left_size as usize * right_size as usize;
             let mut costs = Vec::with_capacity(total);
             for r in 0..right_size {
@@ -644,36 +704,204 @@ impl DictBuilder {
 
     /// CSV で指定されたエントリを辞書から削除する
     ///
-    /// 汎用の異表記フィルタ（[`Self::drop_conflicting_ortho_variants`]）では拾えない
-    /// 個別の誤読エントリを落とすために使う。CSV は `表層形,読み` の 2 列で、
-    /// 3 列目以降があっても無視する。`#` で始まる行と空行はコメントとして読み飛ばす。
+    /// 汎用のフィルタ（[`Self::drop_conflicting_ortho_variants`] 等）では拾えない個別の
+    /// 誤読エントリや、外国人名のように判定を別に済ませた語の集合を落とすために使う。
     ///
-    /// Returns: 削除されたエントリ数
-    pub fn drop_entries_from_csv<P: AsRef<Path>>(&mut self, path: P) -> io::Result<usize> {
+    /// CSV は `表層形,読み[,品詞]` で、4 列目以降は無視する。3 列目に品詞を書くと、
+    /// その品詞で始まるエントリだけを削除する。品詞は `"名詞,固有名詞,人名"` のように
+    /// 引用符で 1 つの列にまとめ、`,` で区切った要素単位で前方一致をとる
+    /// （`名詞,固有名詞,人` は `名詞,固有名詞,人名,姓` に一致しない）。3 列目が無いか空なら
+    /// 品詞を問わない。`#` で始まる行と空行は読み飛ばす。
+    ///
+    /// Returns: 読んだ行数・削除したエントリ数・どのエントリにも一致しなかった行
+    pub fn drop_entries_from_csv<P: AsRef<Path>>(&mut self, path: P) -> io::Result<RemovalStats> {
         let path = path.as_ref();
         let raw_bytes = std::fs::read(path)?;
         let content = Self::decode_to_utf8(&raw_bytes);
 
-        let mut targets: HashSet<(String, String)> = HashSet::new();
-        for line in content.lines() {
+        // 表層形 → 読み → その組に対応する行の添字
+        let mut rules: Vec<RemovalRule> = Vec::new();
+        let mut index: HashMap<String, HashMap<String, Vec<usize>>> = HashMap::new();
+        // 行番号を正確に出すため 1 行ずつ読む (CSV リーダーの行位置は空行やコメント行を数えない)。
+        // 削除リストは小さく、1 つの値が行をまたぐこともない
+        for (idx, line) in content.lines().enumerate() {
+            let line_no = (idx + 1) as u64;
             let line = line.trim();
             if line.is_empty() || line.starts_with('#') {
                 continue;
             }
-            let mut fields = line.splitn(3, ',');
-            let (Some(surface), Some(reading)) = (fields.next(), fields.next()) else {
+            let mut rdr = csv::ReaderBuilder::new()
+                .has_headers(false)
+                .flexible(true)
+                .trim(csv::Trim::All)
+                .from_reader(line.as_bytes());
+            let record = match rdr.records().next() {
+                Some(Ok(record)) => record,
+                Some(Err(e)) => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("{}:{}: CSV parse error: {}", path.display(), line_no, e),
+                    ));
+                }
+                None => continue,
+            };
+            if record.len() < 2 {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
-                    format!("{}: expected `surface,reading`: {}", path.display(), line),
+                    format!(
+                        "{}:{}: expected `surface,reading[,pos]`: {}",
+                        path.display(),
+                        line_no,
+                        &record[0]
+                    ),
                 ));
+            }
+            let pos = record.get(2).unwrap_or("");
+            let text = if pos.is_empty() {
+                format!("{},{}", &record[0], &record[1])
+            } else {
+                format!("{},{},\"{}\"", &record[0], &record[1], pos)
             };
-            targets.insert((surface.trim().to_string(), reading.trim().to_string()));
+            let pos_prefix = if pos.is_empty() {
+                Vec::new()
+            } else {
+                pos.split(',').map(|p| p.trim().to_string()).collect()
+            };
+            index
+                .entry(record[0].to_string())
+                .or_default()
+                .entry(record[1].to_string())
+                .or_default()
+                .push(rules.len());
+            rules.push(RemovalRule {
+                line_no,
+                text,
+                pos_prefix,
+            });
         }
 
+        let mut matched = vec![false; rules.len()];
         let before = self.entries.len();
-        self.entries
-            .retain(|e| !targets.contains(&(e.surface.to_string(), e.reading.to_string())));
-        Ok(before - self.entries.len())
+        self.entries.retain(|e| {
+            let Some(ids) = index.get(&*e.surface).and_then(|m| m.get(&*e.reading)) else {
+                return true;
+            };
+            let mut keep = true;
+            for &i in ids {
+                if pos_has_prefix(&e.pos, &rules[i].pos_prefix) {
+                    matched[i] = true;
+                    keep = false;
+                }
+            }
+            keep
+        });
+
+        let mut stats = RemovalStats {
+            rows: rules.len(),
+            dropped: before - self.entries.len(),
+            ..RemovalStats::default()
+        };
+        for (rule, _) in rules.iter().zip(&matched).filter(|(_, m)| !**m) {
+            stats.unmatched_rows += 1;
+            if stats.unmatched_samples.len() < UNMATCHED_SAMPLE {
+                stats
+                    .unmatched_samples
+                    .push(format!("{}: {}", rule.line_no, rule.text));
+            }
+        }
+        Ok(stats)
+    }
+
+    /// 接続行列の範囲外の文脈 ID を持つエントリを取り除く
+    ///
+    /// 範囲外の ID は解析時に接続コストが引けず 0 として扱われるため、そのエントリは
+    /// 前後の語との接続で不当に有利になる。配布していた統合辞書には、IPAdic の文脈 ID に
+    /// 写し替えられず SudachiDict の文脈 ID のまま残った重複エントリがこの形で含まれていた。
+    ///
+    /// 接続行列が読み込まれていなければ何もしない。
+    ///
+    /// Returns: 削除されたエントリ数
+    pub fn drop_invalid_context_ids(&mut self) -> usize {
+        let Some(matrix) = &self.matrix else {
+            return 0;
+        };
+        let doomed: Vec<bool> = self
+            .entries
+            .iter()
+            .map(|e| !matrix.contains_ids(e.left_id, e.right_id))
+            .collect();
+
+        let removed = doomed.iter().filter(|d| **d).count();
+        if removed > 0 {
+            for (entry, _) in self
+                .entries
+                .iter()
+                .zip(&doomed)
+                .filter(|(_, d)| **d)
+                .take(ORTHO_VARIANT_SAMPLE)
+            {
+                eprintln!(
+                    "  drop: {} ({}) left_id={} right_id={} [{}]",
+                    entry.surface, entry.reading, entry.left_id, entry.right_id, entry.pos
+                );
+            }
+            let mut doomed = doomed.into_iter();
+            self.entries.retain(|_| !doomed.next().unwrap_or(false));
+        }
+        removed
+    }
+
+    /// 全エントリと未知語テンプレートの文脈 ID が接続行列の範囲内か検査する
+    ///
+    /// 範囲外の ID は解析時に接続コスト 0 として扱われ、誤った解析結果を黙って生む。
+    /// 辞書を書き出す前にここで止める。接続行列が読み込まれていなければ検査しない。
+    pub fn check_context_ids(&self) -> io::Result<()> {
+        let Some(matrix) = &self.matrix else {
+            return Ok(());
+        };
+        let mut invalid = 0usize;
+        let mut samples: Vec<String> = Vec::new();
+        for e in &self.entries {
+            if !matrix.contains_ids(e.left_id, e.right_id) {
+                invalid += 1;
+                if samples.len() < INVALID_CONTEXT_ID_SAMPLE {
+                    samples.push(format!(
+                        "{} [{}] left_id={} right_id={}",
+                        e.surface, e.pos, e.left_id, e.right_id
+                    ));
+                }
+            }
+        }
+        let mut classes: Vec<&String> = self.unk_entries.keys().collect();
+        classes.sort();
+        for class in classes {
+            for t in &self.unk_entries[class] {
+                if !matrix.contains_ids(t.left_id, t.right_id) {
+                    invalid += 1;
+                    if samples.len() < INVALID_CONTEXT_ID_SAMPLE {
+                        samples.push(format!(
+                            "unknown-word template {} [{}] left_id={} right_id={}",
+                            t.char_class, t.pos, t.left_id, t.right_id
+                        ));
+                    }
+                }
+            }
+        }
+        if invalid == 0 {
+            return Ok(());
+        }
+        Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "{} entries have context IDs outside the connection matrix \
+                 (left_id < {}, right_id < {}):\n  {}\n\
+                 Remove them with `hasami repair --drop-invalid-context-ids`.",
+                invalid,
+                matrix.left_size,
+                matrix.right_size,
+                samples.join("\n  ")
+            ),
+        ))
     }
 
     /// 接続行列を直接設定
@@ -688,6 +916,10 @@ impl DictBuilder {
 
     /// MeCab形式のCSVファイルからエントリを追加
     /// 形式: surface,left_id,right_id,cost,pos1,pos2,pos3,pos4,conj_type,conj_form,base_form,reading,pronunciation
+    ///
+    /// 接続行列を読み込み済みなら、文脈 ID が行列の範囲内かも行ごとに検査する。
+    /// 範囲外の行はファイル名と行番号付きのエラーにする（黙って取り込むと、解析時に
+    /// 接続コスト 0 として扱われ誤った解析結果を生む）。
     pub fn add_csv<P: AsRef<Path>>(&mut self, path: P) -> io::Result<()> {
         let path = path.as_ref();
 
@@ -700,14 +932,34 @@ impl DictBuilder {
             .flexible(true)
             .from_reader(content.as_bytes());
 
-        for (idx, result) in rdr.records().enumerate() {
-            let line_no = idx + 1;
+        // エラーに出す行番号。CSV リーダーの行位置は読み飛ばした空行を数えないので、
+        // レコードの開始位置までの改行を数えて実際の行番号を求める
+        let bytes = content.as_bytes();
+        let (mut line_no, mut scanned) = (1usize, 0usize);
+        for result in rdr.records() {
             let record = result.map_err(|e| {
                 io::Error::new(
                     io::ErrorKind::InvalidData,
-                    format!("{}:{}: CSV parse error: {}", path.display(), line_no, e),
+                    format!("{}: CSV parse error: {}", path.display(), e),
                 )
             })?;
+            // 位置は読み飛ばした空行の先頭を指すことがあるので、改行の後ろまで進める
+            let mut start = record
+                .position()
+                .map_or(scanned, |p| (p.byte() as usize).min(bytes.len()));
+            while start < bytes.len() && matches!(bytes[start], b'\n' | b'\r') {
+                start += 1;
+            }
+            if start > scanned {
+                line_no += bytes[scanned..start]
+                    .iter()
+                    .filter(|&&b| b == b'\n')
+                    .count();
+                scanned = start;
+            }
+            if is_comment_record(&record) {
+                continue;
+            }
             if record.len() < 5 {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
@@ -724,6 +976,23 @@ impl DictBuilder {
             let left_id: u16 = parse_field(path, line_no, "left_id", &record[1])?;
             let right_id: u16 = parse_field(path, line_no, "right_id", &record[2])?;
             let cost: i16 = parse_field(path, line_no, "cost", &record[3])?;
+            if let Some(matrix) = &self.matrix {
+                if !matrix.contains_ids(left_id, right_id) {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!(
+                            "{}:{}: context ID outside the connection matrix: \
+                             left_id={} (< {}), right_id={} (< {})",
+                            path.display(),
+                            line_no,
+                            left_id,
+                            matrix.left_size,
+                            right_id,
+                            matrix.right_size
+                        ),
+                    ));
+                }
+            }
 
             // 品詞情報を結合
             let pos_parts: Vec<&str> = (4..record.len().min(8))
@@ -1107,6 +1376,32 @@ mod tests {
         // Out of bounds should return 0 or empty
         assert_eq!(matrix.cost(10, 0), 0);
         assert!(matrix.row(10).is_empty());
+    }
+
+    #[test]
+    fn test_connection_matrix_contains_ids() {
+        // 列 (left_id) が 3、行 (right_id) が 2
+        let matrix = ConnectionMatrix {
+            left_size: 3,
+            right_size: 2,
+            costs: vec![0; 6],
+        };
+        assert!(matrix.contains_ids(2, 1));
+        assert!(!matrix.contains_ids(3, 0));
+        assert!(!matrix.contains_ids(0, 2));
+    }
+
+    #[test]
+    fn test_pos_has_prefix_is_element_wise() {
+        let prefix = |s: &str| -> Vec<String> { s.split(',').map(String::from).collect() };
+        let pos = "名詞,固有名詞,人名,姓";
+        assert!(pos_has_prefix(pos, &[]));
+        assert!(pos_has_prefix(pos, &prefix("名詞,固有名詞,人名")));
+        assert!(pos_has_prefix(pos, &prefix("名詞,固有名詞,人名,姓")));
+        // 文字列としては前方一致でも、要素の途中で切れていれば一致しない
+        assert!(!pos_has_prefix(pos, &prefix("名詞,固有名詞,人")));
+        assert!(!pos_has_prefix(pos, &prefix("名詞,固有名詞,人名,姓,*")));
+        assert!(!pos_has_prefix(pos, &prefix("名詞,一般")));
     }
 
     #[test]

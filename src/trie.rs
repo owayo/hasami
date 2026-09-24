@@ -30,7 +30,17 @@ struct SlotAllocator {
     words: Vec<u64>,
     /// 最小の未使用スロット（キャッシュ）
     search_start: usize,
+    /// 子が複数あるノードの base を探し始める位置
+    ///
+    /// 配列がほぼ埋まると、先頭側には全ラベルを収められない小さな穴だけが残る。
+    /// 子が複数あるノードのたびにその穴を先頭から試し直すと、推奨辞書 (3,300 万スロット) では
+    /// 構築が 10 分を超える。走査した区間がほぼ埋まっていたら次回はその先から探す
+    /// (darts の next_check_pos と同じ考え方)。穴は子が 1 つのノードが先頭から埋めていく。
+    multi_start: usize,
 }
+
+/// 走査した区間の使用率がこれ以上なら、子が複数あるノードの探索開始位置を進める
+const DENSE_REGION_RATIO: f64 = 0.95;
 
 impl SlotAllocator {
     fn new(initial_size: usize) -> Self {
@@ -38,6 +48,7 @@ impl SlotAllocator {
         SlotAllocator {
             words: vec![0u64; nwords],
             search_start: 0,
+            multi_start: 0,
         }
     }
 
@@ -95,19 +106,34 @@ impl SlotAllocator {
         self.words.len() * 64
     }
 
-    fn find_base(&self, labels: &[u8]) -> i32 {
+    fn find_base(&mut self, labels: &[u8]) -> i32 {
         let min_label = *labels.iter().min().unwrap() as usize;
 
         // b >= 1 なので pos = b + min_label >= min_label + 1
-        let start = self.search_start.max(min_label + 1);
-        let mut pos = self.next_free_from(start);
+        if labels.len() == 1 {
+            // 子が 1 つなら最初の空きスロットにそのまま入る
+            let pos = self.next_free_from(self.search_start.max(min_label + 1));
+            return (pos - min_label) as i32;
+        }
+
+        let start = self.search_start.max(self.multi_start).max(min_label + 1);
+        let first = self.next_free_from(start);
+        let mut pos = first;
+        let mut free_tried = 0usize;
 
         loop {
             let b = pos - min_label;
+            free_tried += 1;
 
             let all_free = labels.iter().all(|&label| self.is_free(b + label as usize));
 
             if all_free {
+                // [first, pos] の空きスロットはすべて試したので、残りは使用済み
+                let span = pos - first + 1;
+                let used = span - free_tried;
+                if used as f64 >= span as f64 * DENSE_REGION_RATIO {
+                    self.multi_start = pos;
+                }
                 return b as i32;
             }
 
@@ -163,6 +189,13 @@ impl DoubleArrayTrie {
         let mut allocator = SlotAllocator::new(initial_size);
 
         allocator.mark_used(0);
+        // スロット p に置けるのはラベルが p 未満の子だけ (base >= 1 のため)。256 未満には
+        // どのノードも置けない穴が残り、最初の空きスロット (search_start) がそこで止まる。
+        // すると子が 1 つのノードのたびに配列の終わりまで走査し直すことになり、推奨辞書の
+        // 構築が 10 分を超えていた。255 スロットを捨てて先に埋めておく
+        for pos in 1..=u8::MAX as usize {
+            allocator.mark_used(pos);
+        }
 
         let mut node_map = vec![0usize; nodes.len()];
         let mut queue = VecDeque::new();

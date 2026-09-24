@@ -1236,3 +1236,419 @@ fn test_repair_prefers_long_vowel_form_over_reading() {
     assert_eq!(&*entries[1].pronunciation, "リョー");
     assert_eq!(&*entries[2].pronunciation, "オモウ");
 }
+
+// ==========================================================================
+// 削除リスト CSV（品詞で限定する 3 列目）
+// ==========================================================================
+
+/// テスト用の一時ファイルに内容を書き、パスを返す（並列実行で衝突しないよう PID を付ける）
+fn write_temp(name: &str, content: &str) -> std::path::PathBuf {
+    let path = std::env::temp_dir().join(format!("hasami_{}_{}", std::process::id(), name));
+    std::fs::write(&path, content).unwrap();
+    path
+}
+
+/// 同じ表層形・読みで品詞だけ違うエントリを持つビルダー
+fn builder_with_name_collisions() -> DictBuilder {
+    let mut builder = DictBuilder::new();
+    builder.add_entry(entry("林", "名詞,固有名詞,人名,姓", "林", "リン", "リン"));
+    builder.add_entry(entry("林", "名詞,接尾,一般,*", "林", "リン", "リン"));
+    builder.add_entry(entry(
+        "林",
+        "名詞,固有名詞,人名,姓",
+        "林",
+        "ハヤシ",
+        "ハヤシ",
+    ));
+    builder
+}
+
+fn readings_with_pos(builder: &DictBuilder) -> Vec<(String, String)> {
+    builder
+        .entries()
+        .iter()
+        .map(|e| (e.reading.to_string(), e.pos.to_string()))
+        .collect()
+}
+
+#[test]
+fn test_remove_csv_two_columns_matches_every_pos() {
+    let mut builder = builder_with_name_collisions();
+    let csv = write_temp("remove_two_columns.csv", "# 既存の 2 列形式\n\n林,リン\n");
+
+    let stats = builder.drop_entries_from_csv(&csv).unwrap();
+
+    assert_eq!(stats.rows, 1);
+    assert_eq!(stats.dropped, 2);
+    assert_eq!(stats.unmatched_rows, 0);
+    let rest = readings_with_pos(&builder);
+    assert_eq!(
+        rest,
+        vec![("ハヤシ".to_string(), "名詞,固有名詞,人名,姓".to_string())]
+    );
+    let _ = std::fs::remove_file(&csv);
+}
+
+#[test]
+fn test_remove_csv_pos_prefix_limits_removal() {
+    let mut builder = builder_with_name_collisions();
+    let csv = write_temp("remove_pos_prefix.csv", "林,リン,\"名詞,固有名詞,人名\"\n");
+
+    let stats = builder.drop_entries_from_csv(&csv).unwrap();
+
+    // 人名の「林(リン)」だけが落ち、同じ表層形・読みの接尾語と「林(ハヤシ)」は残る
+    assert_eq!(stats.dropped, 1);
+    let rest = readings_with_pos(&builder);
+    assert!(rest.contains(&("リン".to_string(), "名詞,接尾,一般,*".to_string())));
+    assert!(rest.contains(&("ハヤシ".to_string(), "名詞,固有名詞,人名,姓".to_string())));
+    assert_eq!(rest.len(), 2);
+    let _ = std::fs::remove_file(&csv);
+}
+
+#[test]
+fn test_remove_csv_pos_prefix_is_element_wise() {
+    let mut builder = builder_with_name_collisions();
+    // 「人」は「人名」の途中までなので、要素単位の前方一致では一致しない
+    let csv = write_temp(
+        "remove_pos_element_wise.csv",
+        "林,リン,\"名詞,固有名詞,人\"\n",
+    );
+
+    let stats = builder.drop_entries_from_csv(&csv).unwrap();
+
+    assert_eq!(stats.dropped, 0);
+    assert_eq!(stats.unmatched_rows, 1);
+    assert_eq!(builder.entry_count(), 3);
+    let _ = std::fs::remove_file(&csv);
+}
+
+#[test]
+fn test_remove_csv_reports_unmatched_rows_with_line_numbers() {
+    let mut builder = builder_with_name_collisions();
+    let csv = write_temp(
+        "remove_unmatched.csv",
+        "# 外国人名\n\n林,リン,\"名詞,固有名詞,人名\"\n  # 字下げしたコメント\n王,ワン,\"名詞,固有名詞,人名\"\n李,リ\n",
+    );
+
+    let stats = builder.drop_entries_from_csv(&csv).unwrap();
+
+    assert_eq!(stats.rows, 3);
+    assert_eq!(stats.dropped, 1);
+    assert_eq!(stats.unmatched_rows, 2);
+    assert_eq!(
+        stats.unmatched_samples,
+        vec![
+            "5: 王,ワン,\"名詞,固有名詞,人名\"".to_string(),
+            "6: 李,リ".to_string()
+        ]
+    );
+    let _ = std::fs::remove_file(&csv);
+}
+
+#[test]
+fn test_remove_csv_rejects_row_without_reading() {
+    let mut builder = builder_with_name_collisions();
+    let csv = write_temp("remove_short_row.csv", "林,リン\n林\n");
+
+    let err = builder.drop_entries_from_csv(&csv).unwrap_err();
+
+    let msg = err.to_string();
+    assert!(msg.contains(&format!("{}:2:", csv.display())), "{msg}");
+    // エラーのときは 1 件も消さない
+    assert_eq!(builder.entry_count(), 3);
+    let _ = std::fs::remove_file(&csv);
+}
+
+// ==========================================================================
+// 接続行列の範囲外の文脈 ID
+// ==========================================================================
+
+fn entry_with_ids(surface: &str, left_id: u16, right_id: u16) -> DictEntry {
+    DictEntry {
+        left_id,
+        right_id,
+        ..entry(surface, "名詞,一般,*,*", surface, "テスト", "テスト")
+    }
+}
+
+/// 列 (left_id) が 3、行 (right_id) が 2 の接続行列
+fn small_matrix() -> hasami::dict::ConnectionMatrix {
+    hasami::dict::ConnectionMatrix {
+        left_size: 3,
+        right_size: 2,
+        costs: vec![0; 6],
+    }
+}
+
+#[test]
+fn test_drop_invalid_context_ids() {
+    let mut builder = DictBuilder::new();
+    builder.add_entry(entry_with_ids("有効", 2, 1));
+    builder.add_entry(entry_with_ids("左が範囲外", 3, 1));
+    builder.add_entry(entry_with_ids("右が範囲外", 0, 2));
+
+    // 接続行列が無ければ判定できないので何もしない
+    assert_eq!(builder.drop_invalid_context_ids(), 0);
+
+    builder.set_matrix(small_matrix());
+    assert_eq!(builder.drop_invalid_context_ids(), 2);
+    let surfaces: Vec<&str> = builder.entries().iter().map(|e| &*e.surface).collect();
+    assert_eq!(surfaces, vec!["有効"]);
+    assert!(builder.check_context_ids().is_ok());
+}
+
+#[test]
+fn test_check_context_ids_reports_out_of_range_entries() {
+    let mut builder = DictBuilder::new();
+    builder.add_entry(entry_with_ids("有効", 2, 1));
+    builder.add_entry(entry_with_ids("範囲外", 5, 1));
+    // 接続行列が無ければ検査しない
+    assert!(builder.check_context_ids().is_ok());
+
+    builder.set_matrix(small_matrix());
+    let msg = builder.check_context_ids().unwrap_err().to_string();
+    assert!(msg.contains("1 entries have context IDs"), "{msg}");
+    assert!(msg.contains("範囲外"), "{msg}");
+    assert!(msg.contains("--drop-invalid-context-ids"), "{msg}");
+}
+
+#[test]
+fn test_check_context_ids_covers_unknown_word_templates() {
+    let mut builder = DictBuilder::new();
+    builder.set_matrix(small_matrix());
+    let unk = write_temp("unk_out_of_range.def", "DEFAULT,5,1,100,名詞,一般,*,*\n");
+    builder.load_unk(&unk).unwrap();
+
+    let msg = builder.check_context_ids().unwrap_err().to_string();
+    assert!(msg.contains("unknown-word template DEFAULT"), "{msg}");
+    let _ = std::fs::remove_file(&unk);
+}
+
+#[test]
+fn test_add_csv_rejects_out_of_range_ids_with_line_number() {
+    let csv = write_temp(
+        "lex_out_of_range.csv",
+        "猫,1,1,100,名詞,一般,*,*,*,*,猫,ネコ,ネコ\n犬,1,7,100,名詞,一般,*,*,*,*,犬,イヌ,イヌ\n",
+    );
+
+    // 接続行列が無ければ範囲を判定できないので読み込める
+    let mut without_matrix = DictBuilder::new();
+    without_matrix.add_csv(&csv).unwrap();
+    assert_eq!(without_matrix.entry_count(), 2);
+
+    let mut builder = DictBuilder::new();
+    builder.set_matrix(small_matrix());
+    let msg = builder.add_csv(&csv).unwrap_err().to_string();
+    assert!(msg.contains(&format!("{}:2:", csv.display())), "{msg}");
+    assert!(msg.contains("right_id=7"), "{msg}");
+    let _ = std::fs::remove_file(&csv);
+}
+
+// ==========================================================================
+// export（.hsd → MeCab 形式 CSV）
+// ==========================================================================
+
+#[test]
+fn test_export_roundtrip_through_add_csv() {
+    let mut builder = DictBuilder::new();
+    let originals = vec![
+        DictEntry {
+            left_id: 3,
+            right_id: 4,
+            cost: -120,
+            ..entry(
+                "東京",
+                "名詞,固有名詞,地域,一般",
+                "東京",
+                "トウキョウ",
+                "トーキョー",
+            )
+        },
+        // 表層形・品詞に区切り文字を含む語（半角カンマの読点）
+        entry(",", "記号,読点,*,*", ",", "、", "、"),
+        // 原形が表層形と違う活用語
+        entry("食べ", "動詞,自立,*,*", "食べる", "タベ", "タベ"),
+        // 読み・発音が空の語
+        entry("backend", "名詞,一般,*,*", "backend", "", ""),
+        // 引用符を含む語
+        entry(
+            "\"引用\"",
+            "記号,一般,*,*",
+            "\"引用\"",
+            "インヨウ",
+            "インヨー",
+        ),
+    ];
+    for e in &originals {
+        builder.add_entry(e.clone());
+    }
+    let dict = builder.build();
+    let hsd = std::env::temp_dir().join(format!("hasami_{}_export.hsd", std::process::id()));
+    MmapDictBuilder::from_dictionary(&dict).write(&hsd).unwrap();
+
+    let loaded = MmapDictionary::load(&hsd).unwrap();
+    let mut buf = Vec::new();
+    assert_eq!(loaded.write_lexicon_csv(&mut buf).unwrap(), 5);
+    let csv = write_temp("export_roundtrip.csv", std::str::from_utf8(&buf).unwrap());
+
+    let mut restored = DictBuilder::new();
+    restored.add_csv(&csv).unwrap();
+
+    let key = |e: &DictEntry| {
+        (
+            e.surface.to_string(),
+            e.left_id,
+            e.right_id,
+            e.cost,
+            e.pos.to_string(),
+            e.base_form.to_string(),
+            e.reading.to_string(),
+            e.pronunciation.to_string(),
+        )
+    };
+    let mut expected: Vec<_> = originals.iter().map(key).collect();
+    let mut actual: Vec<_> = restored.entries().iter().map(key).collect();
+    expected.sort();
+    actual.sort();
+    assert_eq!(actual, expected);
+
+    let _ = std::fs::remove_file(&hsd);
+    let _ = std::fs::remove_file(&csv);
+}
+
+// ==========================================================================
+// hasami repair の CLI
+// ==========================================================================
+
+/// `hasami repair` を実行し、書き出された辞書の (表層形, 読み) を返す
+fn run_cli_repair(name: &str, extra_args: &[&str]) -> Vec<(String, String)> {
+    let mut builder = DictBuilder::new();
+    builder.add_entry(entry("、", "記号,読点,*,*", "、", "、", "、"));
+    builder.add_entry(entry("林", "名詞,固有名詞,人名,姓", "林", "リン", "リン"));
+    builder.add_entry(entry(
+        "林",
+        "名詞,固有名詞,人名,姓",
+        "林",
+        "ハヤシ",
+        "ハヤシ",
+    ));
+    let dict = builder.build();
+    let dir = std::env::temp_dir();
+    let input = dir.join(format!("hasami_{}_{name}_in.hsd", std::process::id()));
+    let output = dir.join(format!("hasami_{}_{name}_out.hsd", std::process::id()));
+    MmapDictBuilder::from_dictionary(&dict)
+        .write(&input)
+        .unwrap();
+    let list = write_temp(&format!("{name}.csv"), "林,リン,\"名詞,固有名詞,人名\"\n");
+
+    let result = std::process::Command::new(env!("CARGO_BIN_EXE_hasami"))
+        .arg("repair")
+        .arg("--dict")
+        .arg(&input)
+        .arg("--output")
+        .arg(&output)
+        .arg("--remove")
+        .arg(&list)
+        .args(extra_args)
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "hasami repair failed: {}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+
+    let repaired = MmapDictionary::load(&output).unwrap();
+    let entries = (0..repaired.entry_count())
+        .map(|i| {
+            (
+                repaired.entry_surface(i).to_string(),
+                repaired.entry_reading(i).to_string(),
+            )
+        })
+        .collect();
+    for path in [&input, &output, &list] {
+        let _ = std::fs::remove_file(path);
+    }
+    entries
+}
+
+/// `--no-pronunciation-repair` は削除リストだけを適用し、記号の読みを変えない
+#[test]
+fn test_cli_repair_without_pronunciation_repair_keeps_symbol_readings() {
+    let entries = run_cli_repair("cli_repair_keep", &["--no-pronunciation-repair"]);
+    assert!(entries.contains(&("、".into(), "、".into())), "{entries:?}");
+    assert!(
+        entries.contains(&("林".into(), "ハヤシ".into())),
+        "{entries:?}"
+    );
+    assert!(
+        !entries.contains(&("林".into(), "リン".into())),
+        "{entries:?}"
+    );
+}
+
+/// 既定では発音の修復が走り、発音も読みもカタカナでない記号の読みは空になる
+#[test]
+fn test_cli_repair_clears_symbol_readings_by_default() {
+    let entries = run_cli_repair("cli_repair_default", &[]);
+    assert!(
+        entries.contains(&("、".into(), String::new())),
+        "{entries:?}"
+    );
+    assert!(
+        !entries.contains(&("林".into(), "リン".into())),
+        "{entries:?}"
+    );
+}
+
+/// matrix.def なしで作った辞書 (1x1 の仮の行列) を読み込んでも、文脈 ID の検査で
+/// 全エントリが範囲外にならず、`drop_invalid_context_ids` も何も消さない
+#[test]
+fn test_load_hsd_without_matrix_keeps_all_entries() {
+    let mut builder = DictBuilder::new();
+    builder.add_entry(entry("猫", "名詞,一般,*,*", "猫", "ネコ", "ネコ"));
+    builder.add_entry(entry("犬", "名詞,一般,*,*", "犬", "イヌ", "イヌ"));
+    let dict = builder.build();
+    let hsd = std::env::temp_dir().join(format!("hasami_{}_no_matrix.hsd", std::process::id()));
+    MmapDictBuilder::from_dictionary(&dict).write(&hsd).unwrap();
+
+    let mut loaded = DictBuilder::new();
+    loaded.load_hsd(&hsd).unwrap();
+    assert!(loaded.check_context_ids().is_ok());
+    assert_eq!(loaded.drop_invalid_context_ids(), 0);
+    assert_eq!(loaded.entry_count(), 2);
+
+    let _ = std::fs::remove_file(&hsd);
+}
+
+/// MeCab 形式 CSV の `#` で始まる行は、エントリの列数に満たなければコメントとして読み飛ばす。
+/// `#` で始まるハッシュタグの語 (13 列そろった行) は読み込む
+#[test]
+fn test_add_csv_skips_comment_lines_but_keeps_hashtag_entries() {
+    let csv = write_temp(
+        "add_csv_comments.csv",
+        "# 「MySQL」の読みを足す\n\
+         MySQL,1288,1288,-9000,名詞,固有名詞,一般,*,*,*,MySQL,マイエスキューエル,マイエスキューエル\n\
+         \n\
+         #タグ,1288,1288,3942,名詞,固有名詞,一般,*,*,*,#タグ,タグ,タグ\n",
+    );
+    let mut builder = DictBuilder::new();
+    builder.add_csv(&csv).unwrap();
+    let surfaces: Vec<&str> = builder.entries().iter().map(|e| &*e.surface).collect();
+    assert_eq!(surfaces, vec!["MySQL", "#タグ"]);
+    let _ = std::fs::remove_file(&csv);
+}
+
+/// CSV のエラーは空行を含めた実際の行番号で報告する
+#[test]
+fn test_add_csv_reports_physical_line_number() {
+    let csv = write_temp(
+        "add_csv_line_no.csv",
+        "猫,1,1,3000,名詞,一般,*,*,*,*,猫,ネコ,ネコ\n\n\n犬,1,1\n",
+    );
+    let mut builder = DictBuilder::new();
+    let err = builder.add_csv(&csv).unwrap_err().to_string();
+    assert!(err.contains(":4: too few columns"), "{err}");
+    let _ = std::fs::remove_file(&csv);
+}

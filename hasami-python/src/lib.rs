@@ -3,7 +3,7 @@
 use ::hasami::analyzer::{format_mecab, format_wakachi, Analyzer as RustAnalyzer};
 use ::hasami::dict::DictBuilder as RustDictBuilder;
 use ::hasami::lattice::Token as RustToken;
-use pyo3::exceptions::PyIOError;
+use pyo3::exceptions::{PyIOError, PyValueError};
 use pyo3::prelude::*;
 
 /// 形態素解析結果のトークン
@@ -189,7 +189,14 @@ impl DictBuilder {
     }
 
     /// 辞書をビルドして .hsd ファイルに保存
+    ///
+    /// 接続行列の範囲外の文脈 ID を持つエントリがあれば、ビルダーを消費せずに例外を送出する。
     fn build(&mut self, output_path: &str) -> PyResult<()> {
+        self.inner
+            .as_ref()
+            .ok_or_else(|| PyIOError::new_err("Builder already consumed"))?
+            .check_context_ids()
+            .map_err(|e| PyValueError::new_err(format!("Invalid dictionary: {}", e)))?;
         let builder = self
             .inner
             .take()
