@@ -222,7 +222,8 @@ hasami export --dict dict.hsd --output lex.csv
 ### 辞書形式 (.hsd)
 
 `.hsd` は v4 形式（64 バイトのヘッダ + セクション表 + 64 バイト境界のセクション）。mmap してそのまま参照するので、
-ロードはヘッダと小さな表の検査だけで 1ms 前後、解析で触れたページだけが読み込まれる。
+ロードはヘッダと小さな表の検査だけで 1ms 前後、解析で触れたページだけが読み込まれる。実行ファイルに埋め込んだ辞書も、
+`Dictionary::from_static` で複製せずに同じく参照する（Rust API の「実行ファイルに辞書を埋め込む」）。
 
 - 表層形は文字単位の double-array trie（単独の末尾は圧縮）に持ち、エントリは 1 件 6 バイト
 - 品詞・活用型・活用形・読み・発音・原形は重複を除いた素性レコードに持ち、最良パスの語だけ復号する
@@ -398,7 +399,7 @@ hasami = { git = "https://github.com/owayo/hasami", default-features = false, fe
 | feature | 中身 | 追加の依存 |
 | --- | --- | --- |
 | （なし） | 辞書の要らない文分割（`sentence`） | なし |
-| `analyzer` | 解析（`Analyzer`・`Dictionary`・`Token`・品詞の正規化）、C FFI | memmap2, bytemuck |
+| `analyzer` | 解析（`Analyzer`・`Dictionary`・`Token`・品詞の正規化、辞書を埋め込む `include_hsd!`）、C FFI | memmap2, bytemuck |
 | `build` | 辞書の構築・修復・書き出し（`DictBuilder`、`write_lexicon_csv`。`analyzer` を含む） | csv, encoding_rs, glob |
 | `cli` | `hasami` コマンド（`build` を含む） | clap, indicatif, serde_json |
 
@@ -463,6 +464,44 @@ let mut analyzer = match hasami::Analyzer::load_default() {
     Err(hasami::DictError::NotFound(_)) => None, // 辞書なしで動く
     Err(e) => return Err(e.into()),
 };
+```
+
+#### 実行ファイルに辞書を埋め込む
+
+辞書を実行ファイルに埋め込むと、インストールだけで解析できる。`hasami::include_hsd!` で埋め込み、
+`Dictionary::from_static` で読む。埋め込んだバイト列を複製せずに参照するので、`Dictionary::load`（mmap）と同じく
+解析で触れたページだけが読み込まれ、ヒープに辞書の複製を持たない。
+
+```rust
+use hasami::{Analyzer, Dictionary};
+
+// パスはこのファイルからの相対パス（include_bytes! と同じ）
+static IPADIC: &[u8] = hasami::include_hsd!("../dict/ipadic.hsd");
+
+let dict = Dictionary::from_static(IPADIC)?;
+let mut analyzer = Analyzer::from_dict(dict);
+```
+
+- `from_static` は、バイト列の先頭が 8 バイト境界にあることを求める。`include_bytes!` だけでは境界がそろわない
+  （そろうかどうかはビルドごとに変わる）。境界になければ、複製に切り替えずに `DictError::Invalid` を返す
+- `include_hsd!` は 64 バイト境界（キャッシュライン）にそろえる。セクションはファイルの先頭から 64 の倍数の位置に
+  あるので、mmap した辞書と同じくセクションもキャッシュラインの境界に乗る
+- `include_hsd!` は呼び出すたびに別の静的領域になる。同じ辞書は 1 か所の `static` に置いて使い回す
+- `from_bytes` は、どんなバイト列でも 8 バイト境界の所有バッファに複製して読む（`'static` でないバイト列向け）
+- 最初の解析で辞書のページを読み込む待ちを先に払うなら、`analyzer.prewarm()` を呼ぶ
+
+IPAdic（18MB）を埋め込んだ CLI で小さな文書を解析すると、`from_bytes` に比べて起動が約 6ms 速く、
+最大 RSS が約 31MB 少ない（mmap の `load` と同じ。高負荷のマシンでの 60 回の中央値）。
+
+マクロを使わずに書くなら、境界をそろえたラッパーに入れる（最低 8。`include_hsd!` と同じ 64 にしておく）。
+
+```rust
+#[repr(C, align(64))]
+struct Aligned<T: ?Sized>(T);
+
+static IPADIC: &Aligned<[u8]> = &Aligned(*include_bytes!("../dict/ipadic.hsd"));
+
+let dict = hasami::Dictionary::from_static(&IPADIC.0)?;
 ```
 
 #### 文分割（辞書不要）
