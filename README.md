@@ -169,7 +169,7 @@ make dict-clean
 | `ipadic-neologd.hsd` | IPAdic に NEologd の seed を merge し、repair 一式（範囲外 ID・表記ゆれ・漢数字の人名・`dict/user-remove/*.csv`・一般語の固有名詞の降格）を掛けてから `dict/user/*.csv` を足す |
 | `ipadic-neologd-sudachi.hsd` | IPAdic + NEologd に SudachiDict の raw 辞書を `scripts/convert_sudachi_raw.py` で変換して merge し、同じ repair 一式を掛ける |
 
-`scripts/prepare_ipadic.py` は上流の IPAdic を書き換えずに、次の 4 点を変えたソースを作る（何を変えたかは
+`scripts/prepare_ipadic.py` は上流の IPAdic を書き換えずに、次の 5 点を変えたソースを作る（何を変えたかは
 辞書のメタデータ `ipadic_patch` に残る）。
 
 - **記号の未知語**: IPAdic の char.def は `— 。 、 「 ♪ ⇒` などを SYMBOL（まとめて 1 語）にし、unk.def はその未知語を
@@ -186,6 +186,9 @@ make dict-clean
   「―」「～」「－」の別表記を表層形に足す（33 語。「あ〜」と「あ～」のどちらでも感動詞「アー」になる）
 - **空白の文字**: IPAdic の char.def は SPACE に `0x00D0`（Ð）を入れている。ほかの行（タブ・改行）から見て復帰 `0x000D` の
   書き間違いなので `0x000D` に直す（空白は読み飛ばすので、そのままだと「Ð」が解析結果から消える）
+- **単位の記号**: 全角の「％」は 名詞,接尾,助数詞 の語だが、半角の `%` と `‰` `℃` `℉` `°`（`°C` `°F`）、CJK 互換文字の単位
+  （`㎏` `㎞` `㌢` `㍍` など 170 余り）は辞書に無く、未知の記号（記号,一般）になって句読点と同じ扱いになる。「％」と同じ
+  品詞・文脈 ID・コストの語として読み付きで足す（`㎏` はキログラム、`㌢` はセンチ、`℃` はド）
 
 SudachiDict は内容語（名詞・固有名詞・形状詞・連体詞・副詞・接続詞・感動詞・動詞・形容詞）と記号だけを取り込み、
 IPAdic・NEologd・`dict/user` に表層形がある語は落とす。品詞は IPAdic 体系に写し、文脈 ID は IPAdic の left-id.def から
@@ -582,6 +585,8 @@ for (sentence, tokens) in analyzer.tokenize_sentences(text, &SplitOptions::defau
 - 受け身・使役の「れる」「せる」（IPAdic では `動詞,接尾`）と、助動詞の語幹「そう」「よう」「みたい」は `AuxVerb`
 - 記号は句点（。！？!? など）・読点（、，,）・開き括弧・閉じ括弧・そのほかを区別する。辞書によって品詞が違う
   半角の `(` `!` `,` や全角の `！` も、表層形で見分けて同じ値にする
+- 数に付く単位の記号（`%` `％` `‰` `℃` `℉` `°` と CJK 互換文字の単位 `㎏` `㎞` `㌢` `㍍` など）は、記号の語・未知語でも
+  `NounSuffix`（全角の「％」と同じ）
 
 `Token::is_negation` は否定の形態素か（助動詞「ない」「ぬ」「ん」「ず」、形容詞「ない」）を原形で判定する。
 `Token::mora_count` は発音（仮名が無ければ読み）からモーラ数を数える。拗音の小書き文字は直前の仮名と合わせて
