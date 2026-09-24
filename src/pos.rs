@@ -2,23 +2,38 @@
 //!
 //! [`Token::coarse_pos`] は、辞書ごとの品詞体系の違いを吸収した粗い品詞 [`CoarsePos`] を返す。
 //! IPAdic 系（IPAdic 単体と、NEologd・SudachiDict を IPAdic の品詞に写して足した辞書）と
-//! UniDic 系（`scripts/convert-unidic-csv.py` で変換した辞書）の両方を扱い、どの辞書でも
-//! 同じ語が同じ値になるようにそろえる。
+//! UniDic 系（`scripts/convert-unidic-csv.py` で変換した辞書）の両方を扱い、名詞と用言の区別・
+//! 形式名詞・「の」・否定・句読点と括弧が辞書をまたいで同じ値になるようにそろえる。
 //!
 //! 品詞体系は辞書のメタデータ（`pos_scheme`）ではなく、トークンの品詞の文字列から判定する。
 //! 品詞と細分類の組は両体系で重ならない（`名詞,固有名詞` `助詞,格助詞` のように両体系にある組は
-//! 意味も同じ）ので、文字列だけで決まる。
+//! 意味も同じ）ので、文字列だけで決まる。対応表は配布辞書に現れる IPAdic の 69 品詞と、UniDic
+//! 2.1.2 の 52 品詞をすべて網羅している（テストで確かめている）。
 //!
-//! 体系ごとの対応表（`IPADIC_POS_TABLE` / `UNIDIC_POS_TABLE`）のほかに、次の 3 つで
+//! 体系ごとの対応表（`IPADIC_POS_TABLE` / `UNIDIC_POS_TABLE`）のほかに、次の 4 つで
 //! 辞書の間の食い違いをそろえる。
 //!
 //! - UniDic は形式名詞（こと・わけ・ため）を普通名詞と区別しないので、仮名書きの形式名詞を
 //!   表層形で拾う（`UNIDIC_FORMAL_NOUNS`）。IPAdic では 名詞,非自立。
 //! - IPAdic は受け身・使役の「れる」「られる」「せる」「させる」を 動詞,接尾 に置く。UniDic と
 //!   学校文法では助動詞なので助動詞にする（`IPADIC_SUFFIX_AUX_VERBS`）。
+//! - 助動詞の語幹「そう」「よう」「みたい」（降りそうだ・行くようだ・行くみたいだ）は、IPAdic では
+//!   名詞、UniDic では名詞・形状詞に分かれる。学校文法に合わせてどちらも助動詞にする
+//!   （「雨が降りそう。」を名詞で終わる文と取り違えない）。
 //! - 記号は辞書によって同じ字の品詞が違う（半角の `(` `!` は SudachiDict を足した辞書だけが
 //!   括弧開・句点で、ほかは未知語の 記号,一般）。細分類の無い記号（`記号,一般` など）と、
 //!   表層形が記号だけの未知語は、表層形で句点・読点・括弧を見分ける（`symbol_by_surface`）。
+//!
+//! そろえていない食い違いもある。どれも辞書の品詞に従う。
+//!
+//! - 助詞の細分類: 「しか」「さえ」「すら」は IPAdic では係助詞、UniDic では副助詞。並立の「と」
+//!   （りんごとみかん）は IPAdic では並立助詞、UniDic では格助詞。文末の「か」は IPAdic では
+//!   副助詞／並立助詞／終助詞（`OtherParticle`）、UniDic では終助詞。
+//! - 助数詞: 「3回」の「回」は IPAdic では 名詞,接尾,助数詞（`NounSuffix`）、UniDic では
+//!   名詞,普通名詞,助数詞可能（`Noun`）。
+//! - 漢字書きの形式名詞（事・物・時）: IPAdic は文脈で 名詞,非自立 と 名詞,一般 を選び分けるが、
+//!   UniDic では `Noun`。
+//! - 表層形が記号だけの既知語（SudachiDict の絵文字の 名詞,一般 など）は辞書の品詞に従う。
 
 use crate::lattice::Token;
 
@@ -35,13 +50,16 @@ pub enum CoarsePos {
     Numeral,
     /// 名詞の接尾辞（〜的・〜化・〜性、助数詞）
     NounSuffix,
-    /// 形式名詞・非自立の名詞（こと・もの・わけ、「行くのが」の「の」、「降りそうだ」の「そう」）
+    /// 形式名詞・非自立の名詞（こと・もの・わけ・ため、「行くのが」の「の」）
+    ///
+    /// UniDic は形式名詞を普通名詞と区別しないので、仮名書きの形式名詞を表層形で拾う
+    /// （「うちに帰る」の「うち」のような実質名詞の用法も含む）。
     FormalNoun,
     /// 動詞
     Verb,
     /// 形容詞
     Adjective,
-    /// 助動詞（IPAdic が 動詞,接尾 に置く受け身・使役の「れる」「せる」を含む）
+    /// 助動詞（受け身・使役の「れる」「せる」、助動詞の語幹「そう」「よう」「みたい」を含む）
     AuxVerb,
     /// 格助詞（IPAdic の 助詞,連体化 の「の」を含む）
     CaseParticle,
@@ -65,7 +83,10 @@ pub enum CoarsePos {
     Prefix,
     /// 句点（。．！？ など文を終える記号）
     Period,
-    /// 読点
+    /// 読点（、，と半角の ,）
+    ///
+    /// 桁区切りの `,`（1,000）も読点になる（NEologd・SudachiDict を足した辞書は `,` を
+    /// 記号,読点 に登録している）。読点で区画に分けるときは、前後が数字かを呼び出し側で見る。
     Comma,
     /// 開き括弧
     OpenBracket,
@@ -125,10 +146,13 @@ const IPADIC_POS_TABLE: &[PosRule] = &[
     ("名詞", "固有名詞", "", CoarsePos::ProperNoun),
     ("名詞", "代名詞", "", CoarsePos::Pronoun),
     ("名詞", "数", "", CoarsePos::Numeral),
+    // 助動詞の語幹。「雨だそうだ」「降りそうだ」の「そう」、「行くようだ」の「よう」。
+    // UniDic の 名詞,助動詞語幹・形状詞,助動詞語幹 に当たる
+    ("名詞", "特殊", "助動詞語幹", CoarsePos::AuxVerb),
+    ("名詞", "接尾", "助動詞語幹", CoarsePos::AuxVerb),
+    ("名詞", "非自立", "助動詞語幹", CoarsePos::AuxVerb),
+    // 形容動詞語幹の「みたい」は表の前に原形で助動詞にする（「こんなふうに」の「ふう」は形式名詞）
     ("名詞", "非自立", "", CoarsePos::FormalNoun),
-    // 「雨だそうだ」「降りそうだ」の「そう」。UniDic の 名詞,助動詞語幹・形状詞,助動詞語幹 に当たる
-    ("名詞", "特殊", "助動詞語幹", CoarsePos::FormalNoun),
-    ("名詞", "接尾", "助動詞語幹", CoarsePos::FormalNoun),
     ("名詞", "接尾", "", CoarsePos::NounSuffix),
     // 一般・サ変接続・形容動詞語幹・副詞可能・ナイ形容詞語幹・引用文字列（いわく）・
     // 接続詞的（対・兼）・動詞非自立的（ご覧・頂戴。UniDic では普通名詞）
@@ -169,13 +193,13 @@ const UNIDIC_POS_TABLE: &[PosRule] = &[
     ("名詞", "固有名詞", "", CoarsePos::ProperNoun),
     ("名詞", "数詞", "", CoarsePos::Numeral),
     // 「雨だそうだ」の「そう」。IPAdic の 名詞,特殊,助動詞語幹 に当たる
-    ("名詞", "助動詞語幹", "", CoarsePos::FormalNoun),
+    ("名詞", "助動詞語幹", "", CoarsePos::AuxVerb),
     // 普通名詞（一般・サ変可能・形状詞可能・副詞可能・助数詞可能）
     ("名詞", "", "", CoarsePos::Noun),
     ("代名詞", "", "", CoarsePos::Pronoun),
     // 「降りそうだ」「行くようだ」「行くみたいだ」の「そう」「よう」「みたい」。
-    // IPAdic の 名詞,接尾,助動詞語幹・名詞,非自立 に当たる
-    ("形状詞", "助動詞語幹", "", CoarsePos::FormalNoun),
+    // IPAdic の 名詞,接尾,助動詞語幹・名詞,非自立,助動詞語幹・名詞,非自立,形容動詞語幹 に当たる
+    ("形状詞", "助動詞語幹", "", CoarsePos::AuxVerb),
     // 形容動詞の語幹（静か・好き）とタリ活用（堂々）。IPAdic の 名詞,形容動詞語幹 に当たる
     ("形状詞", "", "", CoarsePos::Noun),
     ("接尾辞", "名詞的", "", CoarsePos::NounSuffix),
@@ -220,11 +244,17 @@ const UNIDIC_POS_TABLE: &[PosRule] = &[
 const IPADIC_SUFFIX_AUX_VERBS: &[&str] =
     &["れる", "られる", "せる", "させる", "しめる", "す", "さす"];
 
+/// IPAdic が 名詞,非自立,形容動詞語幹 に置く助動詞の語幹（原形）
+///
+/// 「行くみたいだ」の「みたい」。UniDic では 形状詞,助動詞語幹 で、学校文法では助動詞「みたいだ」。
+/// 同じ品詞の「こんなふうに」の「ふう」は形式名詞のまま。
+const IPADIC_AUX_VERB_STEMS: &[&str] = &["みたい"];
+
 /// UniDic で 名詞,普通名詞 になる形式名詞（表層形）
 ///
 /// IPAdic では 名詞,非自立 に分かれる語。UniDic は形式名詞を普通名詞と区別しないので表層形で
-/// 拾う。漢字書きは実質名詞のことが多いもの（事・物・時・所・方）を除き、ほぼ形式名詞にしか
-/// 使わない「筈」「為」「儘」だけを入れる。
+/// 拾う（語彙素は「積り」のように版で表記が揺れるので使わない）。漢字書きは実質名詞のことが多い
+/// もの（事・物・時・所・方）を除き、ほぼ形式名詞にしか使わない「筈」「為」「儘」だけを入れる。
 const UNIDIC_FORMAL_NOUNS: &[&str] = &[
     "こと",
     "もの",
@@ -252,6 +282,7 @@ const UNIDIC_FORMAL_NOUNS: &[&str] = &[
     "なか",
     "ころ",
     "ゆえ",
+    "ふう",
     "筈",
     "為",
     "儘",
@@ -261,7 +292,8 @@ const UNIDIC_FORMAL_NOUNS: &[&str] = &[
 ///
 /// IPAdic 系は「ない」（なかっ・なく・なけれ も原形は ない）、「無い」、「ぬ」（ず・ざる・ね も
 /// 原形は ぬ）、「ん」（言えません）、関西方言の「へん」「ひん」。UniDic は語彙素で、
-/// 「ぬ」「ん」「ず」はどれも「ず」になる。
+/// 「ぬ」「ん」「ず」はどれも「ず」になる。打消しの推量・意志の「まい」「じ」は、打消しに
+/// 推量・意志が重なった別の助動詞なので入れない。
 const NEGATIVE_AUX_VERBS: &[&str] = &["ない", "無い", "ぬ", "ん", "ず", "へん", "ひん"];
 
 /// 否定の形容詞の原形（「お金がない」「問題は無い」。UniDic の語彙素は「無い」）
@@ -279,7 +311,12 @@ fn lookup(table: &[PosRule], pos1: &str, pos2: &str, pos3: &str) -> CoarsePos {
 
 /// IPAdic 系の品詞から粗い品詞を決める
 fn ipadic_coarse_pos(pos1: &str, pos2: &str, pos3: &str, base_form: &str) -> CoarsePos {
-    if pos1 == "動詞" && pos2 == "接尾" && IPADIC_SUFFIX_AUX_VERBS.contains(&base_form) {
+    let aux_verb = match (pos1, pos2) {
+        ("動詞", "接尾") => IPADIC_SUFFIX_AUX_VERBS.contains(&base_form),
+        ("名詞", "非自立") => IPADIC_AUX_VERB_STEMS.contains(&base_form),
+        _ => false,
+    };
+    if aux_verb {
         return CoarsePos::AuxVerb;
     }
     lookup(IPADIC_POS_TABLE, pos1, pos2, pos3)
@@ -319,22 +356,21 @@ fn symbol_by_surface(surface: &str) -> CoarsePos {
 
 /// 1 字の記号の分類（句点・読点・括弧でなければ `Symbol`）
 ///
-/// 句点と括弧の字は文分割（[`crate::sentence`]）の文末記号・括弧と同じ。ASCII の `.` は小数点・
-/// 略語と区別できないので句点に入れない（辞書が 記号,句点 にしていればそれに従う）。
+/// 句点と括弧の字は文分割（[`crate::sentence`]）の文末記号・括弧をそのまま使う（字の集合を 1 か所で持つ）。
+/// ASCII の `.` は小数点・略語と区別できないので句点に入れない（辞書が 記号,句点 にしていればそれに従う）。
 fn punctuation_kind(c: char) -> CoarsePos {
-    match c {
-        '。' | '．' | '｡' | '！' | '？' | '!' | '?' | '‼' | '⁇' | '⁈' | '⁉' => {
-            CoarsePos::Period
-        }
-        '、' | '，' | '､' | ',' => CoarsePos::Comma,
-        '「' | '『' | '（' | '(' | '〔' | '［' | '[' | '｛' | '{' | '〈' | '《' | '【' | '〖'
-        | '〘' | '〚' | '｟' | '“' | '‘' | '«' | '‹' | '｢' | '〝' => {
+    if crate::sentence::is_sentence_ender(c) {
+        return CoarsePos::Period;
+    }
+    if let Some((_, open)) = crate::sentence::bracket(c) {
+        return if open {
             CoarsePos::OpenBracket
-        }
-        '」' | '』' | '）' | ')' | '〕' | '］' | ']' | '｝' | '}' | '〉' | '》' | '】' | '〗'
-        | '〙' | '〛' | '｠' | '”' | '’' | '»' | '›' | '｣' | '〟' | '〞' => {
+        } else {
             CoarsePos::CloseBracket
-        }
+        };
+    }
+    match c {
+        '、' | '，' | '､' | ',' => CoarsePos::Comma,
         _ => CoarsePos::Symbol,
     }
 }
@@ -382,7 +418,7 @@ impl Token {
     /// 辞書の品詞体系によらない粗い品詞
     ///
     /// IPAdic 系と UniDic 系のどちらの辞書でも、同じ語が同じ値になるようにそろえる
-    /// （対応は [`crate::pos`] のモジュールの説明を参照）。
+    /// （そろえている範囲と、残る食い違いは [`crate::pos`] の説明を参照）。
     ///
     /// - 「の」は IPAdic の 助詞,連体化 と 助詞,格助詞、UniDic の 助詞,格助詞 のどれでも
     ///   [`CoarsePos::CaseParticle`]。「行くのが」の「の」（IPAdic の 名詞,非自立、UniDic の
@@ -521,17 +557,17 @@ mod tests {
         ("名詞,接尾,一般,*", CoarsePos::NounSuffix),
         ("名詞,接尾,人名,*", CoarsePos::NounSuffix),
         ("名詞,接尾,副詞可能,*", CoarsePos::NounSuffix),
-        ("名詞,接尾,助動詞語幹,*", CoarsePos::FormalNoun),
+        ("名詞,接尾,助動詞語幹,*", CoarsePos::AuxVerb),
         ("名詞,接尾,助数詞,*", CoarsePos::NounSuffix),
         ("名詞,接尾,地域,*", CoarsePos::NounSuffix),
         ("名詞,接尾,形容動詞語幹,*", CoarsePos::NounSuffix),
         ("名詞,接尾,特殊,*", CoarsePos::NounSuffix),
         ("名詞,接続詞的,*,*", CoarsePos::Noun),
         ("名詞,数,*,*", CoarsePos::Numeral),
-        ("名詞,特殊,助動詞語幹,*", CoarsePos::FormalNoun),
+        ("名詞,特殊,助動詞語幹,*", CoarsePos::AuxVerb),
         ("名詞,非自立,一般,*", CoarsePos::FormalNoun),
         ("名詞,非自立,副詞可能,*", CoarsePos::FormalNoun),
-        ("名詞,非自立,助動詞語幹,*", CoarsePos::FormalNoun),
+        ("名詞,非自立,助動詞語幹,*", CoarsePos::AuxVerb),
         ("名詞,非自立,形容動詞語幹,*", CoarsePos::FormalNoun),
         ("形容詞,接尾,*,*", CoarsePos::Adjective),
         ("形容詞,自立,*,*", CoarsePos::Adjective),
@@ -565,7 +601,7 @@ mod tests {
         ("助詞,終助詞,*,*", CoarsePos::FinalParticle),
         ("動詞,一般,*,*", CoarsePos::Verb),
         ("動詞,非自立可能,*,*", CoarsePos::Verb),
-        ("名詞,助動詞語幹,*,*", CoarsePos::FormalNoun),
+        ("名詞,助動詞語幹,*,*", CoarsePos::AuxVerb),
         ("名詞,固有名詞,一般,*", CoarsePos::ProperNoun),
         ("名詞,固有名詞,人名,一般", CoarsePos::ProperNoun),
         ("名詞,固有名詞,人名,名", CoarsePos::ProperNoun),
@@ -583,7 +619,7 @@ mod tests {
         ("形容詞,非自立可能,*,*", CoarsePos::Adjective),
         ("形状詞,タリ,*,*", CoarsePos::Noun),
         ("形状詞,一般,*,*", CoarsePos::Noun),
-        ("形状詞,助動詞語幹,*,*", CoarsePos::FormalNoun),
+        ("形状詞,助動詞語幹,*,*", CoarsePos::AuxVerb),
         ("感動詞,フィラー,*,*", CoarsePos::Interjection),
         ("感動詞,一般,*,*", CoarsePos::Interjection),
         ("接尾辞,動詞的,*,*", CoarsePos::Verb),
@@ -679,13 +715,19 @@ mod tests {
 
     #[test]
     fn test_passive_and_causative_suffixes_are_aux_verbs() {
-        for base_form in ["れる", "られる", "せる", "させる"] {
+        for base_form in ["れる", "られる", "せる", "させる", "しめる", "す", "さす"]
+        {
             assert_eq!(
                 token("れ", "動詞,接尾,*,*", base_form).coarse_pos(),
                 CoarsePos::AuxVerb,
                 "{base_form}"
             );
         }
+        // 自立の動詞「する」の活用形「さ」「し」は動詞のまま
+        assert_eq!(
+            token("さ", "動詞,自立,*,*", "する").coarse_pos(),
+            CoarsePos::Verb
+        );
         // 「寒がる」の「がる」は動詞のまま（UniDic の 接尾辞,動詞的 と同じ）
         assert_eq!(
             token("がる", "動詞,接尾,*,*", "がる").coarse_pos(),
@@ -696,6 +738,37 @@ mod tests {
             token("れる", "助動詞,*,*,*", "れる").coarse_pos(),
             CoarsePos::AuxVerb
         );
+    }
+
+    #[test]
+    fn test_auxiliary_verb_stems_are_aux_verbs_in_both_schemes() {
+        for (surface, pos) in [
+            // IPAdic: 伝聞・様態の「そう」、「よう」、形容動詞語幹の「みたい」
+            ("そう", "名詞,特殊,助動詞語幹,*"),
+            ("そう", "名詞,接尾,助動詞語幹,*"),
+            ("よう", "名詞,非自立,助動詞語幹,*"),
+            ("みたい", "名詞,非自立,形容動詞語幹,*"),
+            // UniDic
+            ("そう", "名詞,助動詞語幹,*,*"),
+            ("そう", "形状詞,助動詞語幹,*,*"),
+            ("よう", "形状詞,助動詞語幹,*,*"),
+            ("みたい", "形状詞,助動詞語幹,*,*"),
+        ] {
+            assert_eq!(
+                token(surface, pos, surface).coarse_pos(),
+                CoarsePos::AuxVerb,
+                "{surface} {pos}"
+            );
+        }
+        // 「こんなふうに」の「ふう」は形式名詞（IPAdic は「みたい」と同じ品詞、UniDic は普通名詞）
+        for pos in ["名詞,非自立,形容動詞語幹,*", "名詞,普通名詞,形状詞可能,*"]
+        {
+            assert_eq!(
+                token("ふう", pos, "ふう").coarse_pos(),
+                CoarsePos::FormalNoun,
+                "{pos}"
+            );
+        }
     }
 
     #[test]
@@ -1022,10 +1095,17 @@ mod tests {
                 }
             }
         }
-        // 「こと」は形式名詞、受け身の「れる」は助動詞
-        let first = &expected[1];
-        assert!(first.contains(&("こと".to_string(), CoarsePos::FormalNoun)));
-        let passive = &expected[2];
-        assert!(passive.contains(&("れる".to_string(), CoarsePos::AuxVerb)));
+        let has = |i: usize, surface: &str, coarse: CoarsePos| {
+            expected[i].contains(&(surface.to_string(), coarse))
+        };
+        // 記号は表層形で句点・読点・括弧に分かれる
+        assert!(has(0, "(", CoarsePos::OpenBracket));
+        assert!(has(0, "!", CoarsePos::Period));
+        assert!(has(0, "！", CoarsePos::Period));
+        assert!(has(0, ",", CoarsePos::Comma));
+        // 「こと」は形式名詞、受け身の「れる」と助動詞の語幹「そう」は助動詞
+        assert!(has(1, "こと", CoarsePos::FormalNoun));
+        assert!(has(2, "れる", CoarsePos::AuxVerb));
+        assert!(has(3, "そう", CoarsePos::AuxVerb));
     }
 }
