@@ -18,7 +18,7 @@ pub struct CharClass {
 /// CharType ごとの属性キャッシュ（HashMap 参照を排除するための固定長配列用）
 #[derive(Clone, Copy, Debug)]
 #[allow(dead_code)]
-struct ClassProps {
+pub(crate) struct ClassProps {
     invoke: bool,
     group: bool,
     max_length: u32,
@@ -31,6 +31,35 @@ impl Default for ClassProps {
             invoke: false,
             group: true,
             max_length: 0,
+        }
+    }
+}
+
+impl ClassProps {
+    /// 同じ文字種の文字が `run` 文字（1 以上）続く位置で作る未知語の長さ（文字数）を、作る順に渡す
+    ///
+    /// [`CharClassifier::group_at_cb`] と同じ長さを、並びを走査せずに出す。
+    /// - group: 並び全体を 1 つ。length が 0 でなければ `max(length, 2)` 文字で打ち切る
+    ///   （2 文字目を足してから上限と比べるので、length が 1 でも 2 文字になる）
+    /// - group でない: 1 文字から `min(run, length)` 文字まで（length が 0 なら 1 文字だけ）
+    #[inline]
+    pub(crate) fn for_each_unk_len(&self, run: u32, mut cb: impl FnMut(u32)) {
+        if self.group {
+            let len = if self.max_length == 0 {
+                run
+            } else {
+                run.min(self.max_length.max(2))
+            };
+            cb(len);
+        } else {
+            let max = if self.max_length == 0 {
+                1
+            } else {
+                self.max_length
+            };
+            for len in 1..=run.min(max) {
+                cb(len);
+            }
         }
     }
 }
@@ -214,16 +243,7 @@ impl CharClassifier {
                         continue;
                     }
                     if cp <= end {
-                        return match class_name.as_str() {
-                            "HIRAGANA" => CharType::Hiragana,
-                            "KATAKANA" => CharType::Katakana,
-                            "KANJI" | "KANJINUMERIC" => CharType::Kanji,
-                            "ALPHA" => CharType::Alpha,
-                            "NUMERIC" => CharType::Numeric,
-                            "SYMBOL" => CharType::Symbol,
-                            "SPACE" => CharType::Space,
-                            _ => CharType::Default,
-                        };
+                        return char_type_of_class(class_name);
                     }
                     // 範囲が重ならない場合は早期終了可能
                     // ただし char.def は重複範囲を持つ可能性があるので、
@@ -235,56 +255,36 @@ impl CharClassifier {
             }
         }
 
-        // Unicodeプロパティベースのフォールバック
-        match cp {
-            // 空白
-            0x0020 | 0x3000 | 0x0009..=0x000D => CharType::Space,
-            // ASCII数字
-            0x0030..=0x0039 => CharType::Numeric,
-            // ASCII英字
-            0x0041..=0x005A | 0x0061..=0x007A => CharType::Alpha,
-            // 全角英字
-            0xFF21..=0xFF3A | 0xFF41..=0xFF5A => CharType::Alpha,
-            // 全角数字
-            0xFF10..=0xFF19 => CharType::NumericWide,
-            // ひらがな
-            0x3040..=0x309F => CharType::Hiragana,
-            // カタカナ
-            0x30A0..=0x30FF | 0x31F0..=0x31FF | 0xFF65..=0xFF9F => CharType::Katakana,
-            // CJK統合漢字
-            0x4E00..=0x9FFF | 0x3400..=0x4DBF | 0xF900..=0xFAFF | 0x20000..=0x2A6DF => {
-                CharType::Kanji
+        fallback_char_type(c)
+    }
+
+    /// U+0000〜U+FFFF の文字種の表（[`type_index`] の値）。[`CharClassifier::classify_char`] と同じ結果を返す
+    ///
+    /// 解析の最内側で文字ごとに引く（二分探索とカテゴリ名の照合を毎回しない）。範囲は開始位置の昇順に
+    /// 並んでいる前提（[`CharClassifier::from_definitions`] が並べる）。このとき `classify_char` が見るのは
+    /// 「開始位置が cp 以下の最後の範囲」1 つだけで、それが cp を含まなければ Unicode のブロックによる
+    /// 分類になる。そこで、範囲ごとに「次の範囲の開始位置の手前まで」のうち範囲に含まれる部分を塗る
+    /// （開始位置が同じ範囲は後のものだけが当たる）。
+    pub(crate) fn bmp_type_table(&self) -> Box<[u8]> {
+        let mut table = vec![type_index(CharType::Default) as u8; 0x10000].into_boxed_slice();
+        // Unicode のブロックによる分類。優先度の低い範囲から塗る
+        for &(start, end, t) in FALLBACK_RANGES.iter().rev() {
+            if start <= 0xFFFF {
+                table[start as usize..=end.min(0xFFFF) as usize].fill(type_index(t) as u8);
             }
-            // 漢数字（match で判定、文字列探索を排除）
-            _ if matches!(
-                c,
-                '〇' | '一'
-                    | '二'
-                    | '三'
-                    | '四'
-                    | '五'
-                    | '六'
-                    | '七'
-                    | '八'
-                    | '九'
-                    | '十'
-                    | '百'
-                    | '千'
-                    | '万'
-                    | '億'
-                    | '兆'
-            ) =>
-            {
-                CharType::Kanji
-            }
-            // ASCII記号
-            0x0021..=0x002F | 0x003A..=0x0040 | 0x005B..=0x0060 | 0x007B..=0x007E => {
-                CharType::Symbol
-            }
-            // 全角記号・句読点
-            0x3000..=0x303F | 0xFF01..=0xFF0F | 0xFF1A..=0xFF20 => CharType::Symbol,
-            _ => CharType::Default,
         }
+        for (k, (start, end, name)) in self.ranges.iter().enumerate() {
+            let next = self.ranges.get(k + 1).map_or(u32::MAX, |r| r.0);
+            if next <= *start || *start > 0xFFFF {
+                continue;
+            }
+            let last = (*end).min(next - 1).min(0xFFFF);
+            if last < *start {
+                continue;
+            }
+            table[*start as usize..=last as usize].fill(type_index(char_type_of_class(name)) as u8);
+        }
+        table
     }
 
     /// 文字クラスの定義を取得
@@ -294,10 +294,76 @@ impl CharClassifier {
 
     /// CharType に対応する ClassProps を取得（O(1)）
     #[inline]
-    fn props_for(&self, ct: CharType) -> ClassProps {
+    pub(crate) fn props_for(&self, ct: CharType) -> ClassProps {
         self.props_cache[type_index(ct)]
     }
+}
 
+/// char.def のカテゴリ名を文字種に写す（KANJINUMERIC は漢字、GREEK・CYRILLIC など 9 種に無いものは DEFAULT）
+fn char_type_of_class(name: &str) -> CharType {
+    match name {
+        "HIRAGANA" => CharType::Hiragana,
+        "KATAKANA" => CharType::Katakana,
+        "KANJI" | "KANJINUMERIC" => CharType::Kanji,
+        "ALPHA" => CharType::Alpha,
+        "NUMERIC" => CharType::Numeric,
+        "SYMBOL" => CharType::Symbol,
+        "SPACE" => CharType::Space,
+        _ => CharType::Default,
+    }
+}
+
+/// char.def の範囲に当たらない文字の、Unicode のブロックによる簡易分類（先に書いたものが優先）
+///
+/// 「〇」以外の漢数字（一・二・…・兆）は CJK 統合漢字の範囲に入っている。
+const FALLBACK_RANGES: &[(u32, u32, CharType)] = &[
+    // 空白
+    (0x0020, 0x0020, CharType::Space),
+    (0x3000, 0x3000, CharType::Space),
+    (0x0009, 0x000D, CharType::Space),
+    // ASCII数字
+    (0x0030, 0x0039, CharType::Numeric),
+    // ASCII英字・全角英字
+    (0x0041, 0x005A, CharType::Alpha),
+    (0x0061, 0x007A, CharType::Alpha),
+    (0xFF21, 0xFF3A, CharType::Alpha),
+    (0xFF41, 0xFF5A, CharType::Alpha),
+    // 全角数字
+    (0xFF10, 0xFF19, CharType::NumericWide),
+    // ひらがな
+    (0x3040, 0x309F, CharType::Hiragana),
+    // カタカナ
+    (0x30A0, 0x30FF, CharType::Katakana),
+    (0x31F0, 0x31FF, CharType::Katakana),
+    (0xFF65, 0xFF9F, CharType::Katakana),
+    // CJK統合漢字
+    (0x4E00, 0x9FFF, CharType::Kanji),
+    (0x3400, 0x4DBF, CharType::Kanji),
+    (0xF900, 0xFAFF, CharType::Kanji),
+    (0x20000, 0x2A6DF, CharType::Kanji),
+    // 漢数字の「〇」
+    (0x3007, 0x3007, CharType::Kanji),
+    // ASCII記号
+    (0x0021, 0x002F, CharType::Symbol),
+    (0x003A, 0x0040, CharType::Symbol),
+    (0x005B, 0x0060, CharType::Symbol),
+    (0x007B, 0x007E, CharType::Symbol),
+    // 全角記号・句読点
+    (0x3000, 0x303F, CharType::Symbol),
+    (0xFF01, 0xFF0F, CharType::Symbol),
+    (0xFF1A, 0xFF20, CharType::Symbol),
+];
+
+/// char.def の範囲に当たらない文字の文字種（Unicode のブロックによる簡易分類）
+fn fallback_char_type(c: char) -> CharType {
+    let cp = c as u32;
+    FALLBACK_RANGES
+        .iter()
+        .find(|&&(start, end, _)| (start..=end).contains(&cp))
+        .map_or(CharType::Default, |&(_, _, t)| t)
+}
+
+impl CharClassifier {
     /// テキストの指定位置から、同じ文字種の連続文字列を取得（コールバック方式）
     #[inline]
     pub fn group_at_cb(&self, text: &str, byte_pos: usize, mut cb: impl FnMut(usize, CharType)) {
@@ -648,6 +714,209 @@ mod tests {
     fn test_get_class_nonexistent() {
         let cc = CharClassifier::default_japanese();
         assert!(cc.get_class("NONEXISTENT").is_none());
+    }
+
+    /// IPAdic の char.def に近い、重なりと開始位置の重複を含む範囲
+    fn overlapping_classifier() -> CharClassifier {
+        let mut classes = HashMap::new();
+        for (name, invoke, group, length) in [
+            ("DEFAULT", false, true, 0),
+            ("SPACE", false, true, 0),
+            ("KANJI", false, false, 2),
+            ("SYMBOL", true, true, 0),
+            ("NUMERIC", true, true, 0),
+            ("ALPHA", true, true, 0),
+            ("HIRAGANA", false, true, 2),
+            ("KATAKANA", true, true, 2),
+            ("KANJINUMERIC", true, true, 0),
+            ("GREEK", true, true, 0),
+            ("CYRILLIC", true, true, 0),
+        ] {
+            classes.insert(
+                name.to_string(),
+                CharClass {
+                    name: name.to_string(),
+                    invoke,
+                    group,
+                    length,
+                },
+            );
+        }
+        let ranges = [
+            (0x0020, 0x0020, "SPACE"),
+            (0x00D0, 0x00D0, "SPACE"),
+            (0x0009, 0x000D, "SPACE"),
+            (0x0030, 0x0039, "NUMERIC"),
+            (0x0041, 0x005A, "ALPHA"),
+            (0x0061, 0x007A, "ALPHA"),
+            (0x0021, 0x002F, "SYMBOL"),
+            (0x0391, 0x03C9, "GREEK"),
+            (0x0400, 0x04F9, "CYRILLIC"),
+            (0x3000, 0x303F, "SYMBOL"),
+            (0x3005, 0x3005, "KANJI"),
+            (0x3007, 0x3007, "KANJINUMERIC"),
+            (0x3041, 0x309F, "HIRAGANA"),
+            (0x30A1, 0x30FF, "KATAKANA"),
+            (0x30FC, 0x30FC, "HIRAGANA"),
+            (0x4E00, 0x9FA5, "KANJI"),
+            (0x4E00, 0x4E00, "KANJINUMERIC"),
+            (0x4E8C, 0x4E8C, "KANJINUMERIC"),
+            (0xFF10, 0xFF19, "NUMERIC"),
+            (0xFF21, 0xFF3A, "ALPHA"),
+            (0xFF66, 0xFF9D, "KATAKANA"),
+            (0xFF00, 0xFFEF, "SYMBOL"),
+            (0x20000, 0x2A6DF, "KANJI"),
+            (0x1F300, 0x1F5FF, "SYMBOL"),
+        ];
+        CharClassifier::from_definitions(
+            classes,
+            ranges
+                .iter()
+                .map(|&(s, e, n)| (s, e, n.to_string()))
+                .collect(),
+        )
+    }
+
+    /// 範囲の表にする前の判定（`FALLBACK_RANGES` と同じ結果になることを確かめる）
+    fn reference_fallback(c: char) -> CharType {
+        match c as u32 {
+            // 空白
+            0x0020 | 0x3000 | 0x0009..=0x000D => CharType::Space,
+            // ASCII数字
+            0x0030..=0x0039 => CharType::Numeric,
+            // ASCII英字
+            0x0041..=0x005A | 0x0061..=0x007A => CharType::Alpha,
+            // 全角英字
+            0xFF21..=0xFF3A | 0xFF41..=0xFF5A => CharType::Alpha,
+            // 全角数字
+            0xFF10..=0xFF19 => CharType::NumericWide,
+            // ひらがな
+            0x3040..=0x309F => CharType::Hiragana,
+            // カタカナ
+            0x30A0..=0x30FF | 0x31F0..=0x31FF | 0xFF65..=0xFF9F => CharType::Katakana,
+            // CJK統合漢字
+            0x4E00..=0x9FFF | 0x3400..=0x4DBF | 0xF900..=0xFAFF | 0x20000..=0x2A6DF => {
+                CharType::Kanji
+            }
+            // 漢数字（match で判定、文字列探索を排除）
+            _ if matches!(
+                c,
+                '〇' | '一'
+                    | '二'
+                    | '三'
+                    | '四'
+                    | '五'
+                    | '六'
+                    | '七'
+                    | '八'
+                    | '九'
+                    | '十'
+                    | '百'
+                    | '千'
+                    | '万'
+                    | '億'
+                    | '兆'
+            ) =>
+            {
+                CharType::Kanji
+            }
+            // ASCII記号
+            0x0021..=0x002F | 0x003A..=0x0040 | 0x005B..=0x0060 | 0x007B..=0x007E => {
+                CharType::Symbol
+            }
+            // 全角記号・句読点
+            0x3000..=0x303F | 0xFF01..=0xFF0F | 0xFF1A..=0xFF20 => CharType::Symbol,
+            _ => CharType::Default,
+        }
+    }
+
+    #[test]
+    fn test_fallback_ranges_match_the_reference() {
+        for c in (0..=0x10FFFFu32).filter_map(char::from_u32) {
+            assert_eq!(
+                fallback_char_type(c),
+                reference_fallback(c),
+                "U+{:04X}",
+                c as u32
+            );
+        }
+    }
+
+    fn assert_table_matches(cc: &CharClassifier) {
+        let table = cc.bmp_type_table();
+        assert_eq!(table.len(), 0x10000);
+        for c in (0..=0xFFFFu32).filter_map(char::from_u32) {
+            assert_eq!(
+                table[c as usize] as usize,
+                type_index(cc.classify_char(c)),
+                "U+{:04X}",
+                c as u32
+            );
+        }
+    }
+
+    #[test]
+    fn test_bmp_type_table_matches_classify_char() {
+        assert_table_matches(&CharClassifier::default_japanese());
+        assert_table_matches(&overlapping_classifier());
+
+        // 開始位置と長さをばらばらにした範囲（重なり・開始位置の重複・BMP をまたぐもの）
+        let mut state = 0x2545_F491_4F6C_DD1Du64;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        let names = ["HIRAGANA", "KANJI", "ALPHA", "SYMBOL", "GREEK", "SPACE"];
+        for _ in 0..20 {
+            let mut ranges = Vec::new();
+            for _ in 0..(next() % 60) {
+                let start = (next() % 0x11000) as u32;
+                let len = (next() % 0x800) as u32;
+                let name = names[(next() % names.len() as u64) as usize];
+                ranges.push((start, start + len, name.to_string()));
+                if next() % 4 == 0 {
+                    // 同じ開始位置の範囲
+                    ranges.push((start, start + len / 2, names[0].to_string()));
+                }
+            }
+            let cc = CharClassifier::from_definitions(HashMap::new(), ranges);
+            assert_table_matches(&cc);
+        }
+    }
+
+    #[test]
+    fn test_unk_lengths_match_group_at_cb() {
+        // 文字種の並びの長さと char.def の group・length の組み合わせごとに、group_at_cb と同じ長さを出す
+        let text = "アイウエオカキクケコ漢字漢字漢字ABCDEFGHIJ123456789あいうえおかき。、！";
+        for group in [false, true] {
+            for length in [0, 1, 2, 3, 5] {
+                let mut cc = overlapping_classifier();
+                for class in cc.classes.values_mut() {
+                    class.group = group;
+                    class.length = length;
+                }
+                cc.rebuild_props_cache();
+                let chars: Vec<(usize, char)> = text.char_indices().collect();
+                for (k, &(pos, c)) in chars.iter().enumerate() {
+                    let ct = cc.classify_char(c);
+                    let run = chars[k..]
+                        .iter()
+                        .take_while(|&&(_, c2)| cc.classify_char(c2) == ct)
+                        .count() as u32;
+                    let mut expected = Vec::new();
+                    cc.group_at_cb(text, pos, |len, _| expected.push(len));
+                    let mut actual = Vec::new();
+                    cc.props_for(ct).for_each_unk_len(run, |len| {
+                        // 文字数をバイト数にする
+                        let end = chars.get(k + len as usize).map_or(text.len(), |&(p, _)| p);
+                        actual.push(end - pos);
+                    });
+                    assert_eq!(actual, expected, "group={group} length={length} at {pos}");
+                }
+            }
+        }
     }
 
     #[test]

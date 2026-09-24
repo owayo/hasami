@@ -17,9 +17,8 @@ use super::records::{
 };
 use super::trie::{self, Node, Trie};
 use super::{DictError, strtab};
-use crate::char_class::{ALL_CHAR_TYPES, CharClass, CharClassifier};
+use crate::char_class::{ALL_CHAR_TYPES, CharClass, CharClassifier, ClassProps, type_index};
 use crate::dict::{ConnectionMatrix, DictEntry, UnkEntry};
-use crate::lattice::Token;
 use memmap2::Mmap;
 use std::collections::HashMap;
 use std::path::Path;
@@ -58,6 +57,8 @@ pub(crate) struct UnkInfo {
     pub right_id: u16,
     pub cost: i16,
     pub pos: Arc<str>,
+    /// 同じ文字種の並びのまとめ方（char.def の group・length）
+    pub grouping: ClassProps,
 }
 
 /// 解析の最内側で使う型付きスライス（解析 1 回ごとに作る）
@@ -108,6 +109,8 @@ pub struct Dictionary {
     token_conj_types: Vec<Arc<str>>,
     token_conj_forms: Vec<Arc<str>>,
     classifier: CharClassifier,
+    /// U+0000〜U+FFFF の文字種（`classifier.classify_char` と同じ結果を表で引く）
+    bmp_char_types: Box<[u8]>,
     unk: Vec<UnkInfo>,
     entry_count: usize,
     num_left: usize,
@@ -319,7 +322,7 @@ impl Dictionary {
             }
         }
         let mut unk = Vec::with_capacity(buckets.len());
-        for b in buckets {
+        for (b, &char_type) in buckets.iter().zip(&ALL_CHAR_TYPES) {
             let start = b.template_start as usize;
             let end = start + b.template_count as usize;
             if b.template_count == 0 || end > templates.len() {
@@ -334,8 +337,10 @@ impl Dictionary {
                 right_id: t.right_id,
                 cost: t.cost,
                 pos: Arc::clone(&pos[t.pos_id as usize]),
+                grouping: classifier.props_for(char_type),
             });
         }
+        let bmp_char_types = classifier.bmp_type_table();
 
         let entry_count = entries.len();
         let token_conj_types = to_token_conj(&conj_types);
@@ -351,6 +356,7 @@ impl Dictionary {
             token_conj_types,
             token_conj_forms,
             classifier,
+            bmp_char_types,
             unk,
             entry_count,
             num_left,
@@ -394,8 +400,14 @@ impl Dictionary {
         self.id
     }
 
-    pub(crate) fn classifier(&self) -> &CharClassifier {
-        &self.classifier
+    /// 文字の文字種（[`type_index`] の値）。char.def の範囲による `classify_char` と同じ結果を、
+    /// U+FFFF までは表で引く
+    #[inline]
+    pub(crate) fn char_type_index(&self, c: char) -> u8 {
+        match self.bmp_char_types.get(c as usize) {
+            Some(&t) => t,
+            None => type_index(self.classifier.classify_char(c)) as u8,
+        }
     }
 
     pub(crate) fn unk_info(&self, char_type_index: usize) -> &UnkInfo {
@@ -471,7 +483,8 @@ impl Dictionary {
         std::hint::black_box(sum);
     }
 
-    fn feature(&self, entry_id: usize) -> Result<features::FeatureRef<'_>, DictError> {
+    /// エントリの素性レコード。品詞・活用型・活用形の番号が文字列表の範囲内であることを確かめてある
+    pub(crate) fn feature(&self, entry_id: usize) -> Result<features::FeatureRef<'_>, DictError> {
         let offsets: &[u32] = self.typed(SectionId::FeatureOffsets);
         let offset = *offsets
             .get(entry_id)
@@ -488,45 +501,19 @@ impl Dictionary {
         Ok(f)
     }
 
-    /// 既知語のトークンを作る（表層形は入力の部分文字列から作る）
-    pub(crate) fn known_token(
-        &self,
-        entry_id: u32,
-        surface: &str,
-        start: usize,
-        end: usize,
-        word_cost: i16,
-        scratch: &mut String,
-    ) -> Result<Token, DictError> {
-        let f = self.feature(entry_id as usize)?;
-        let surface: Arc<str> = Arc::from(surface);
-        let reading: Arc<str> = if f.reading.is_empty() {
-            Arc::clone(&EMPTY_ARC)
-        } else {
-            f.reading.to_arc(scratch)
-        };
-        let pronunciation = match f.pronunciation {
-            None => Arc::clone(&reading),
-            Some(p) if p.is_empty() => Arc::clone(&EMPTY_ARC),
-            Some(p) => p.to_arc(scratch),
-        };
-        let base_form = match f.base_form {
-            None => Arc::clone(&surface),
-            Some(b) => b.to_arc(scratch),
-        };
-        Ok(Token {
-            surface,
-            start,
-            end,
-            pos: Arc::clone(&self.pos[f.pos_id as usize]),
-            conj_type: Arc::clone(&self.token_conj_types[f.conj_type_id as usize]),
-            conj_form: Arc::clone(&self.token_conj_forms[f.conj_form_id as usize]),
-            base_form,
-            reading,
-            pronunciation,
-            word_cost,
-            is_known: true,
-        })
+    /// 品詞の文字列（番号は [`Dictionary::feature`] が確かめたもの）
+    pub(crate) fn pos_name(&self, id: u16) -> &str {
+        &self.pos[id as usize]
+    }
+
+    /// `Token` に出す活用型（`*` は空文字列）
+    pub(crate) fn token_conj_type(&self, id: u16) -> &str {
+        &self.token_conj_types[id as usize]
+    }
+
+    /// `Token` に出す活用形（`*` は空文字列）
+    pub(crate) fn token_conj_form(&self, id: u16) -> &str {
+        &self.token_conj_forms[id as usize]
     }
 
     /// `text` の接頭辞に一致する語を引く。Returns: (接頭辞の終わりのバイト位置, その表層形のエントリ) の列

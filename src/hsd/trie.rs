@@ -829,11 +829,57 @@ impl<'a> Trie<'a> {
         let Some(rest) = text.get(start..) else {
             return Ok(());
         };
+        let chars = rest.chars().map(|c| (self.char_code(c), c.len_utf8()));
+        self.search_prefixes(text, start, chars, |end, _, value| cb(end, value))
+    }
+
+    /// [`Trie::common_prefix_search`] の、文字の符号を前もって引いておいた版（解析用）
+    ///
+    /// `codes[i]` は `text` の i 文字目の符号（[`Trie::char_code`]）、`offsets[i]` はそのバイト位置で、
+    /// `offsets` は末尾に `text.len()` を加えた `codes.len() + 1` 要素。`start` 文字目からの接頭辞で
+    /// キーに一致するものごとに `cb(終了の文字位置, 値)` を呼ぶ。報告の順序・検査・エラーは
+    /// [`Trie::common_prefix_search`] と同じ。入力の文字を検索のたびに復号して符号を引く代わりに、
+    /// 呼び出し側が文字ごとに 1 回だけ引いておける。
+    #[inline]
+    pub fn common_prefix_search_codes(
+        &self,
+        text: &str,
+        codes: &[u16],
+        offsets: &[u32],
+        start: usize,
+        mut cb: impl FnMut(usize, u32),
+    ) -> Result<(), TrieError> {
+        let (Some(codes), Some(offsets)) = (codes.get(start..), offsets.get(start..)) else {
+            return Ok(());
+        };
+        let Some(&first) = offsets.first() else {
+            return Ok(());
+        };
+        let chars = codes
+            .iter()
+            .zip(offsets.windows(2))
+            .map(|(&code, w)| (code as u32, w[1].wrapping_sub(w[0]) as usize));
+        self.search_prefixes(text, first as usize, chars, |_, depth, value| {
+            cb(start + depth, value)
+        })
+    }
+
+    /// 共通接頭辞検索の本体。`chars` は `text[start..]` の文字の (符号, バイト長) を先頭から返す
+    ///
+    /// 一致ごとに `cb(終了のバイト位置, 一致した文字数, 値)` を呼ぶ。
+    #[inline(always)]
+    fn search_prefixes(
+        &self,
+        text: &str,
+        start: usize,
+        mut chars: impl Iterator<Item = (u32, usize)>,
+        mut cb: impl FnMut(usize, usize, u32),
+    ) -> Result<(), TrieError> {
         let nodes = self.nodes;
         // INTERNAL の base はこの値未満（base + N < ノード数）
         let base_end = nodes.len().saturating_sub(self.max_code as usize);
-        let mut chars = rest.chars();
         let mut pos = start;
+        let mut depth = 0usize;
         let mut slot = 0usize;
         // root が END を持つ・INTERNAL でない trie は new() が拒むが、from_validated() では来うる。
         // 長さ 0 の一致を報告しないよう、ここでも確かめる
@@ -843,7 +889,7 @@ impl<'a> Trie<'a> {
         };
         loop {
             if kind(node.base) != KIND_INTERNAL {
-                return self.search_end(text, pos, slot, node, cb);
+                return self.search_end(text, pos, depth, slot, node, cb);
             }
             let base = (node.base & BASE_MASK) as usize;
             if base == 0 || base >= base_end {
@@ -852,24 +898,24 @@ impl<'a> Trie<'a> {
             if node.base & HAS_END != 0 {
                 match nodes.get(base) {
                     Some(end) if end.check == slot as u32 && kind(end.base) == KIND_LEAF => {
-                        cb(pos, end.base & PAYLOAD_MASK);
+                        cb(pos, depth, end.base & PAYLOAD_MASK);
                     }
                     _ => return Err(bad_end(slot, base)),
                 }
             }
-            let Some(c) = chars.next() else {
+            let Some((code, len)) = chars.next() else {
                 return Ok(());
             };
-            let code = self.char_code(c) as usize;
             if code == 0 {
                 return Ok(());
             }
-            let next = base + code;
+            let next = base + code as usize;
             match nodes.get(next) {
                 Some(&child) if child.check == slot as u32 => {
                     slot = next;
                     node = child;
-                    pos += c.len_utf8();
+                    pos += len;
+                    depth += 1;
                 }
                 Some(_) => return Ok(()),
                 // 符号が N 以下なら base + 符号 < ノード数。部品が検証済みでないときだけ来る
@@ -884,13 +930,14 @@ impl<'a> Trie<'a> {
         &self,
         text: &str,
         pos: usize,
+        depth: usize,
         slot: usize,
         node: Node,
-        mut cb: impl FnMut(usize, u32),
+        mut cb: impl FnMut(usize, usize, u32),
     ) -> Result<(), TrieError> {
         match kind(node.base) {
             KIND_LEAF => {
-                cb(pos, node.base & PAYLOAD_MASK);
+                cb(pos, depth, node.base & PAYLOAD_MASK);
                 Ok(())
             }
             KIND_TAIL => {
@@ -911,7 +958,10 @@ impl<'a> Trie<'a> {
                             "the bytes are not valid UTF-8 (a match ends inside a character)",
                         ));
                     }
-                    cb(end, value);
+                    // 一致したバイト列は入力の文字の並びなので、文字の先頭バイト（継続バイトでない
+                    // もの）の数が文字数になる
+                    let chars = suffix.iter().filter(|&&b| (b as i8) >= -0x40).count();
+                    cb(end, depth + chars, value);
                 }
                 Ok(())
             }
@@ -1365,6 +1415,32 @@ mod tests {
         found
     }
 
+    /// 文字の符号とバイト位置の列（解析側が前もって作るもの）
+    fn codes_of(trie: &Trie, text: &str) -> (Vec<u16>, Vec<u32>) {
+        let codes = text.chars().map(|c| trie.char_code(c) as u16).collect();
+        let mut offsets: Vec<u32> = text.char_indices().map(|(p, _)| p as u32).collect();
+        offsets.push(text.len() as u32);
+        (codes, offsets)
+    }
+
+    /// [`Trie::common_prefix_search_codes`] で検索し、一致をバイト位置で返す（`start` はバイト位置）
+    fn search_codes(
+        trie: &Trie,
+        text: &str,
+        start: usize,
+    ) -> (Vec<(usize, u32)>, Result<(), TrieError>) {
+        let (codes, offsets) = codes_of(trie, text);
+        let Some(start_char) = offsets.iter().position(|&o| o as usize == start) else {
+            return (Vec::new(), Ok(()));
+        };
+        let mut found = Vec::new();
+        let result =
+            trie.common_prefix_search_codes(text, &codes, &offsets, start_char, |end, v| {
+                found.push((offsets[end] as usize, v))
+            });
+        (found, result)
+    }
+
     /// 総当たりの共通接頭辞検索
     fn brute_force(map: &HashMap<String, u32>, text: &str, start: usize) -> Vec<(usize, u32)> {
         text[start..]
@@ -1603,10 +1679,16 @@ mod tests {
                     text
                 };
                 for (start, _) in text.char_indices() {
+                    let expected = brute_force(&map, &text, start);
                     assert_eq!(
                         search(&trie, &text, start),
-                        brute_force(&map, &text, start),
+                        expected,
                         "round {round} text {text:?} start {start}"
+                    );
+                    assert_eq!(
+                        search_codes(&trie, &text, start),
+                        (expected, Ok(())),
+                        "codes: round {round} text {text:?} start {start}"
                     );
                 }
             }
@@ -2129,11 +2211,15 @@ mod tests {
                 for text in &texts {
                     for (start, _) in text.char_indices() {
                         let mut last = start;
-                        let _ = trie.common_prefix_search(text, start, |end, _| {
+                        let mut found = Vec::new();
+                        let result = trie.common_prefix_search(text, start, |end, v| {
                             // 報告する終了位置は start より大きい文字境界で、昇順
                             assert!(end > last && text.is_char_boundary(end));
                             last = end;
+                            found.push((end, v));
                         });
+                        // 符号の列で辿っても、同じ一致・同じエラーになる
+                        assert_eq!(search_codes(trie, text, start), (found, result));
                     }
                     let _ = trie.get(text);
                 }

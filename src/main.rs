@@ -1,15 +1,16 @@
 //! hasami CLI - 日本語形態素解析コマンドラインツール
 
 use clap::{Parser, Subcommand};
-use hasami::analyzer::{Analyzer, format_mecab, format_wakachi};
+use hasami::analyzer::{Analyzer, push_mecab, push_wakachi};
 use hasami::dict::DictBuilder;
 use hasami::hsd::meta;
 use hasami::hsd::{Dictionary, Meta, PosScheme, WriteOptions};
 use indicatif::{ProgressBar, ProgressStyle};
-use std::io::{self, BufRead, Write};
+use std::io::{self, Read, Write};
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Instant;
 
 #[derive(Parser)]
@@ -77,6 +78,10 @@ enum Commands {
 
         /// 解析するテキスト（省略時は標準入力から読み込み）
         text: Option<String>,
+
+        /// 標準入力の行を並列に解析するスレッド数（0 = CPU の数）。出力の順序は入力どおり
+        #[arg(short = 'j', long, default_value_t = 0)]
+        threads: usize,
     },
 
     /// ベンチマーク実行
@@ -85,13 +90,17 @@ enum Commands {
         #[arg(short, long)]
         dict: PathBuf,
 
-        /// テストテキスト
+        /// テストテキスト（--file を指定したときは使わない）
         #[arg(short, long, default_value = "東京都に住んでいる人々が増えている。")]
         text: String,
 
-        /// 繰り返し回数
-        #[arg(short, long, default_value = "10000")]
-        iterations: NonZeroUsize,
+        /// 1 行 1 文のテキストファイル。指定すると全行の解析を 1 回として時間を測る
+        #[arg(short, long, value_name = "PATH")]
+        file: Option<PathBuf>,
+
+        /// 繰り返し回数（既定: --text は 10000 回、--file はファイル全体を 3 回）
+        #[arg(short, long)]
+        iterations: Option<NonZeroUsize>,
     },
 
     /// 辞書情報を表示
@@ -224,12 +233,21 @@ fn run() -> io::Result<()> {
             output,
             write,
         } => cmd_merge(&dict, &input, output.as_deref(), &write),
-        Commands::Tokenize { dict, format, text } => {
+        Commands::Tokenize {
+            dict,
+            format,
+            text,
+            threads,
+        } => {
             let dict = match dict {
                 Some(path) => path,
                 None => hasami::analyzer::default_dict_path()?,
             };
-            cmd_tokenize(&dict, format, text)
+            let threads = match threads {
+                0 => std::thread::available_parallelism().map_or(1, NonZeroUsize::get),
+                n => n,
+            };
+            cmd_tokenize(&dict, format, text, threads)
         }
         Commands::ExportSentenceExceptions { dict, output } => {
             cmd_export_sentence_exceptions(&dict, output.as_deref())
@@ -237,8 +255,12 @@ fn run() -> io::Result<()> {
         Commands::Bench {
             dict,
             text,
+            file,
             iterations,
-        } => cmd_bench(&dict, &text, iterations.get()),
+        } => match file {
+            Some(file) => cmd_bench_file(&dict, &file, iterations.map_or(3, NonZeroUsize::get)),
+            None => cmd_bench(&dict, &text, iterations.map_or(10_000, NonZeroUsize::get)),
+        },
         Commands::Info { dict, verify } => cmd_info(&dict, verify),
         Commands::Export { dict, output } => cmd_export(&dict, output.as_deref()),
         Commands::Repair {
@@ -435,71 +457,260 @@ fn cmd_merge(
     write_dict(&builder, &output_path, meta, write, "Merged", start)
 }
 
-fn cmd_tokenize(dict_path: &Path, format: OutputFormat, text: Option<String>) -> io::Result<()> {
+/// 標準入力を 1 回の read で読むバイト数の上限（ファイルを流し込むと毎回この大きさのブロックになる）
+const READ_CHUNK: usize = 1 << 20;
+/// 標準出力のバッファの大きさ
+const WRITE_BUFFER: usize = 1 << 16;
+/// これより短いブロックは並列に解析しない（スレッドを立てる費用の方が大きい）
+const PARALLEL_MIN_BYTES: usize = 1 << 15;
+/// 並列に解析するとき、スレッドが 1 度に取る行のまとまりのバイト数の目安
+const PIECE_BYTES: usize = 1 << 14;
+
+fn cmd_tokenize(
+    dict_path: &Path,
+    format: OutputFormat,
+    text: Option<String>,
+    threads: usize,
+) -> io::Result<()> {
     let start = Instant::now();
-    let mut analyzer = Analyzer::load(dict_path)?;
+    let analyzer = Analyzer::load(dict_path)?;
     eprintln!(
         "Dictionary loaded in {:.1}ms",
         start.elapsed().as_secs_f64() * 1000.0
     );
 
     let stdout = io::stdout();
-    let mut out = stdout.lock();
+    let mut out = io::BufWriter::with_capacity(WRITE_BUFFER, stdout.lock());
+    let mut workers = vec![Worker::new(analyzer)];
 
     if let Some(text) = text {
-        let tokens = analyzer.try_tokenize(&text)?;
-        write_output(&mut out, &tokens, format)?;
-    } else {
-        // 標準入力から行ごとに読み込み
-        let stdin = io::stdin();
-        for line in stdin.lock().lines() {
-            let line = line?;
-            let line = line.trim();
-            if line.is_empty() {
-                continue;
+        let worker = &mut workers[0];
+        let tokens = worker.analyzer.try_tokenize(&text)?;
+        write_output(&mut worker.out, &mut worker.line, &tokens, format);
+        out.write_all(&worker.out)?;
+        return out.flush();
+    }
+
+    // 標準入力を完結した行のブロックごとに解析する。読み込みは待つことがあるので、その前にそれまでの
+    // 出力を書き出す（行を送って結果を待つ相手とも詰まらない。大量の入力では読むたびに 1 回だけ書く）
+    let mut stdin = io::stdin().lock();
+    let mut pending: Vec<u8> = Vec::new();
+    loop {
+        out.flush()?;
+        let len = pending.len();
+        pending.resize(len + READ_CHUNK, 0);
+        let n = loop {
+            match stdin.read(&mut pending[len..]) {
+                Ok(n) => break n,
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                Err(e) => return Err(e),
             }
-            let tokens = analyzer.try_tokenize(line)?;
-            write_output(&mut out, &tokens, format)?;
+        };
+        pending.truncate(len + n);
+        let eof = n == 0;
+        // 最後の改行までが完結した行（入力の終わりなら残りも 1 行）。前に読んだ残りには改行が無いので、
+        // 今読んだ部分だけを探す（1 行がとても長い入力で、読み足すたびに全体を探し直さない）
+        let end = if eof {
+            pending.len()
+        } else {
+            match pending[len..].iter().rposition(|&b| b == b'\n') {
+                Some(p) => len + p + 1,
+                None => continue,
+            }
+        };
+        match std::str::from_utf8(&pending[..end]) {
+            Ok(block) => process_block(block, &mut workers, threads, format, &mut out)?,
+            Err(e) => {
+                // 壊れた UTF-8 を含む行の手前までは解析して出す（行ごとに読んでいたときと同じ）
+                let valid = &pending[..e.valid_up_to()];
+                let cut = valid.iter().rposition(|&b| b == b'\n').map_or(0, |p| p + 1);
+                let block = std::str::from_utf8(&valid[..cut]).map_err(io::Error::other)?;
+                process_block(block, &mut workers, threads, format, &mut out)?;
+                out.flush()?;
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "stream did not contain valid UTF-8",
+                ));
+            }
+        }
+        pending.drain(..end);
+        if eof {
+            break;
+        }
+    }
+    out.flush()
+}
+
+/// 解析と書式化を受け持つワーカー（解析器と出力のバッファ）
+struct Worker {
+    analyzer: Analyzer,
+    /// 書式化した出力
+    out: Vec<u8>,
+    /// 1 行分を書式化する作業用の文字列
+    line: String,
+}
+
+impl Worker {
+    fn new(analyzer: Analyzer) -> Self {
+        Worker {
+            analyzer,
+            out: Vec::new(),
+            line: String::new(),
         }
     }
 
+    /// 行を順に解析して `out` に書く。空行（空白だけの行を含む）は飛ばす
+    ///
+    /// エラーのときは、それまでの行の出力を `out` に残して返す
+    fn process(&mut self, lines: &[&str], format: OutputFormat) -> io::Result<()> {
+        for line in lines {
+            let text = line.trim();
+            if text.is_empty() {
+                continue;
+            }
+            let tokens = self.analyzer.try_tokenize(text)?;
+            write_output(&mut self.out, &mut self.line, &tokens, format);
+        }
+        Ok(())
+    }
+}
+
+/// 完結した行のブロックを解析して `out` に書く
+///
+/// ブロックが大きく `threads` が 2 以上なら、行を連続したまとまり（[`PIECE_BYTES`] ほど）に分け、
+/// スレッドが空いた順にまとまりを取って解析する（P コアと E コアのように速さの違うコアが混ざっても
+/// 遅いスレッドを待たない）。出力は入力の順に書く。エラーは入力の順で最初のものを返し、その手前の行の
+/// 出力だけを書く（1 行ずつ順に解析したときと同じ出力とエラーになる）。
+fn process_block(
+    block: &str,
+    workers: &mut Vec<Worker>,
+    threads: usize,
+    format: OutputFormat,
+    out: &mut impl Write,
+) -> io::Result<()> {
+    let lines: Vec<&str> = block.lines().collect();
+    if threads < 2 || block.len() < PARALLEL_MIN_BYTES {
+        let worker = &mut workers[0];
+        let result = worker.process(&lines, format);
+        out.write_all(&worker.out)?;
+        worker.out.clear();
+        return result;
+    }
+    let pieces = split_pieces(&lines, PIECE_BYTES);
+    let threads = threads.min(pieces.len());
+    while workers.len() < threads {
+        let analyzer = workers[0].analyzer.clone();
+        workers.push(Worker::new(analyzer));
+    }
+    let next = AtomicUsize::new(0);
+    let done: Vec<Mutex<Option<PieceResult>>> = pieces.iter().map(|_| Mutex::new(None)).collect();
+    let run = |worker: &mut Worker| {
+        loop {
+            let k = next.fetch_add(1, Ordering::Relaxed);
+            let Some(range) = pieces.get(k) else {
+                break;
+            };
+            let result = worker.process(&lines[range.clone()], format);
+            let output = std::mem::take(&mut worker.out);
+            *done[k].lock().unwrap_or_else(PoisonError::into_inner) = Some((output, result));
+        }
+    };
+    std::thread::scope(|s| {
+        let (first, rest) = workers[..threads]
+            .split_first_mut()
+            .expect("at least one worker");
+        for worker in rest {
+            s.spawn(move || run(worker));
+        }
+        run(first);
+    });
+    for slot in done {
+        let (output, result) = slot
+            .into_inner()
+            .unwrap_or_else(PoisonError::into_inner)
+            .expect("every piece is processed");
+        out.write_all(&output)?;
+        result?;
+    }
     Ok(())
 }
 
-fn write_output(
-    out: &mut impl Write,
-    tokens: &[hasami::Token],
-    format: OutputFormat,
-) -> io::Result<()> {
-    match format {
-        OutputFormat::Wakachi => {
-            writeln!(out, "{}", format_wakachi(tokens))?;
-        }
-        OutputFormat::Json => {
-            let json_tokens: Vec<serde_json::Value> = tokens
-                .iter()
-                .map(|t| {
-                    serde_json::json!({
-                        "surface": &*t.surface,
-                        "start": t.start,
-                        "end": t.end,
-                        "pos": &*t.pos,
-                        "conj_type": &*t.conj_type,
-                        "conj_form": &*t.conj_form,
-                        "base_form": &*t.base_form,
-                        "reading": &*t.reading,
-                        "pronunciation": &*t.pronunciation,
-                        "is_known": t.is_known,
-                    })
-                })
-                .collect();
-            writeln!(out, "{}", serde_json::to_string(&json_tokens).unwrap())?;
-        }
-        OutputFormat::Mecab => {
-            write!(out, "{}", format_mecab(tokens))?;
+/// 並列に解析した行のまとまりの結果（書式化した出力と、解析のエラー）
+type PieceResult = (Vec<u8>, io::Result<()>);
+
+/// 行を、先頭から順に `piece_bytes` バイトほどずつの連続した区間に分ける
+fn split_pieces(lines: &[&str], piece_bytes: usize) -> Vec<std::ops::Range<usize>> {
+    let mut pieces = Vec::new();
+    let mut start = 0;
+    let mut bytes = 0;
+    for (i, line) in lines.iter().enumerate() {
+        bytes += line.len() + 1;
+        if bytes >= piece_bytes {
+            pieces.push(start..i + 1);
+            start = i + 1;
+            bytes = 0;
         }
     }
-    Ok(())
+    if start < lines.len() {
+        pieces.push(start..lines.len());
+    }
+    pieces
+}
+
+/// 1 行分の解析結果を書式化して `out` に足す。`line` は作業用
+fn write_output(
+    out: &mut Vec<u8>,
+    line: &mut String,
+    tokens: &[hasami::Token],
+    format: OutputFormat,
+) {
+    match format {
+        OutputFormat::Wakachi => {
+            line.clear();
+            push_wakachi(line, tokens);
+            line.push('\n');
+            out.extend_from_slice(line.as_bytes());
+        }
+        OutputFormat::Json => write_json(out, tokens),
+        OutputFormat::Mecab => {
+            line.clear();
+            push_mecab(line, tokens);
+            out.extend_from_slice(line.as_bytes());
+        }
+    }
+}
+
+const WRITE_VEC: &str = "writing to a Vec<u8> does not fail";
+
+/// トークンの配列を 1 行の JSON で書く（キーはアルファベット順。serde_json の Value と同じ並び）
+fn write_json(out: &mut Vec<u8>, tokens: &[hasami::Token]) {
+    // 文字列のエスケープは serde_json に任せる（Vec<u8> への書き込みは失敗しない）
+    fn string(out: &mut Vec<u8>, s: &str) {
+        serde_json::to_writer(&mut *out, s).expect(WRITE_VEC);
+    }
+    out.push(b'[');
+    for (i, t) in tokens.iter().enumerate() {
+        if i > 0 {
+            out.push(b',');
+        }
+        out.extend_from_slice(b"{\"base_form\":");
+        string(out, &t.base_form);
+        out.extend_from_slice(b",\"conj_form\":");
+        string(out, &t.conj_form);
+        out.extend_from_slice(b",\"conj_type\":");
+        string(out, &t.conj_type);
+        write!(out, ",\"end\":{},\"is_known\":{}", t.end, t.is_known).expect(WRITE_VEC);
+        out.extend_from_slice(b",\"pos\":");
+        string(out, &t.pos);
+        out.extend_from_slice(b",\"pronunciation\":");
+        string(out, &t.pronunciation);
+        out.extend_from_slice(b",\"reading\":");
+        string(out, &t.reading);
+        write!(out, ",\"start\":{},\"surface\":", t.start).expect(WRITE_VEC);
+        string(out, &t.surface);
+        out.push(b'}');
+    }
+    out.extend_from_slice(b"]\n");
 }
 
 fn cmd_bench(dict_path: &Path, text: &str, iterations: usize) -> io::Result<()> {
@@ -523,6 +734,50 @@ fn cmd_bench(dict_path: &Path, text: &str, iterations: usize) -> io::Result<()> 
     println!("Total time: {:.3}s", elapsed.as_secs_f64());
     println!("Per sentence: {:.0}ns", per_sentence);
     println!("Throughput: {:.0} sentences/sec", sentences_per_sec);
+
+    Ok(())
+}
+
+/// ファイルの全行（空行を除く）の解析を 1 回として `passes` 回測り、最速の回を出す
+fn cmd_bench_file(dict_path: &Path, file: &Path, passes: usize) -> io::Result<()> {
+    let mut analyzer = Analyzer::load(dict_path)?;
+    let content = std::fs::read_to_string(file)?;
+    let lines: Vec<&str> = content
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect();
+    let bytes: usize = lines.iter().map(|l| l.len()).sum();
+    let chars: usize = lines.iter().map(|l| l.chars().count()).sum();
+
+    // ウォームアップ（辞書のページを読み込む。壊れた辞書ならここでエラーにする）
+    let mut tokens = 0;
+    for line in &lines {
+        tokens += analyzer.try_tokenize(line)?.len();
+    }
+
+    let mut best = f64::MAX;
+    for _ in 0..passes {
+        let start = Instant::now();
+        for line in &lines {
+            std::hint::black_box(analyzer.tokenize(line));
+        }
+        best = best.min(start.elapsed().as_secs_f64());
+    }
+
+    println!("File: {}", file.display());
+    println!(
+        "Lines: {} ({chars} chars, {bytes} bytes, {tokens} tokens)",
+        lines.len()
+    );
+    println!("Passes: {passes}");
+    println!("Best pass: {best:.3}s");
+    println!(
+        "Throughput: {:.0} lines/sec, {:.2} MB/s, {:.0} tokens/sec",
+        lines.len() as f64 / best,
+        bytes as f64 / best / 1e6,
+        tokens as f64 / best
+    );
 
     Ok(())
 }
@@ -842,5 +1097,104 @@ mod tests {
         let parsed =
             Cli::try_parse_from(["hasami", "bench", "--dict", "dict.hsd", "--iterations", "0"]);
         assert!(parsed.is_err());
+    }
+
+    #[test]
+    fn test_split_pieces_covers_all_lines_in_order() {
+        let lines = ["a", "bbbb", "", "cc", "dddddddd", "e", "ff"];
+        for piece_bytes in 1..=30 {
+            let pieces = split_pieces(&lines, piece_bytes);
+            assert_eq!(pieces[0].start, 0);
+            assert_eq!(pieces.last().unwrap().end, lines.len());
+            for pair in pieces.windows(2) {
+                assert_eq!(pair[0].end, pair[1].start);
+            }
+            assert!(pieces.iter().all(|p| !p.is_empty()));
+        }
+        assert_eq!(split_pieces(&lines, 5), vec![0..2, 2..5, 5..7]);
+        assert!(split_pieces(&[], 3).is_empty());
+    }
+
+    fn test_analyzer() -> Analyzer {
+        use hasami::DictEntry;
+        let mut builder = DictBuilder::new();
+        for (surface, pos, reading) in [
+            ("東京", "名詞,固有名詞,地域,一般", "トウキョウ"),
+            ("都", "名詞,接尾,地域,*", "ト"),
+            ("に", "助詞,格助詞,一般,*", "ニ"),
+            ("住む", "動詞,自立,*,*", "スム"),
+            ("\"引用\"", "名詞,一般,*,*", "インヨウ"),
+        ] {
+            builder.add_entry(DictEntry {
+                surface: surface.into(),
+                cost: 100,
+                pos: pos.into(),
+                base_form: surface.into(),
+                reading: reading.into(),
+                pronunciation: reading.into(),
+                ..Default::default()
+            });
+        }
+        Analyzer::from_dict(builder.build().unwrap())
+    }
+
+    #[test]
+    fn test_json_output_matches_serde_json_values() {
+        let mut analyzer = test_analyzer();
+        for text in ["東京都に住む", "\"引用\"とA\\B\u{1}\t\u{7f}é", "X"] {
+            let tokens = analyzer.tokenize(text);
+            let values: Vec<serde_json::Value> = tokens
+                .iter()
+                .map(|t| {
+                    serde_json::json!({
+                        "surface": &*t.surface,
+                        "start": t.start,
+                        "end": t.end,
+                        "pos": &*t.pos,
+                        "conj_type": &*t.conj_type,
+                        "conj_form": &*t.conj_form,
+                        "base_form": &*t.base_form,
+                        "reading": &*t.reading,
+                        "pronunciation": &*t.pronunciation,
+                        "is_known": t.is_known,
+                    })
+                })
+                .collect();
+            let expected = format!("{}\n", serde_json::to_string(&values).unwrap());
+            let mut out = Vec::new();
+            write_json(&mut out, &tokens);
+            assert_eq!(String::from_utf8(out).unwrap(), expected);
+        }
+    }
+
+    #[test]
+    fn test_parallel_blocks_match_sequential_output() {
+        let base = test_analyzer();
+        // 空行・空白だけの行・CRLF を含む
+        let block: String = (0..2000)
+            .map(|i| match i % 7 {
+                0 => "\n".to_string(),
+                1 => "  \t \r\n".to_string(),
+                2 => format!("東京都に住む{i}\r\n"),
+                _ => format!("{}X{i}\n", "東京に住む".repeat(i % 5 + 1)),
+            })
+            .collect();
+        for format in [
+            OutputFormat::Mecab,
+            OutputFormat::Wakachi,
+            OutputFormat::Json,
+        ] {
+            let mut expected = Vec::new();
+            let mut workers = vec![Worker::new(base.clone())];
+            process_block(&block, &mut workers, 1, format, &mut expected).unwrap();
+            assert!(!expected.is_empty());
+            for threads in [2, 3, 8] {
+                let mut out = Vec::new();
+                let mut workers = vec![Worker::new(base.clone())];
+                process_block(&block, &mut workers, threads, format, &mut out).unwrap();
+                assert!(workers.len() > 1, "block is large enough to split");
+                assert_eq!(out, expected, "threads={threads}");
+            }
+        }
     }
 }
