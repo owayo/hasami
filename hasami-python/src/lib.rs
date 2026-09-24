@@ -43,6 +43,15 @@ struct Token {
     word_cost: i16,
     #[pyo3(get)]
     is_known: bool,
+    /// 辞書の品詞体系をそろえた粗い品詞（"Noun"、"CaseParticle"、"Period" など。Rust の CoarsePos の名前）
+    #[pyo3(get)]
+    coarse_pos: String,
+    /// 否定の形態素か（助動詞「ない」「ぬ」「ん」「ず」、形容詞「ない」）
+    #[pyo3(get)]
+    is_negation: bool,
+    /// 発音（無ければ読み）から数えたモーラ数
+    #[pyo3(get)]
+    mora_count: usize,
 }
 
 #[pymethods]
@@ -59,6 +68,9 @@ impl Token {
 impl From<RustToken> for Token {
     fn from(t: RustToken) -> Self {
         Token {
+            coarse_pos: format!("{:?}", t.coarse_pos()),
+            is_negation: t.is_negation(),
+            mora_count: t.mora_count(),
             surface: t.surface.to_string(),
             start: t.start,
             end: t.end,
