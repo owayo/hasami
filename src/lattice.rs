@@ -160,10 +160,10 @@ fn unit_reading_multi(s: &str) -> Option<&'static str> {
 /// 数字の後に来るアルファベットの単位読みを返す
 fn unit_reading(surface: &str) -> Option<&'static str> {
     let mut chars = surface.chars();
-    if let Some(c) = chars.next() {
-        if chars.next().is_none() {
-            return unit_reading_char(c);
-        }
+    if let Some(c) = chars.next()
+        && chars.next().is_none()
+    {
+        return unit_reading_char(c);
     }
     unit_reading_multi(surface)
 }
@@ -358,13 +358,11 @@ fn apply_contextual_readings(tokens: &mut [Token]) {
 
         let preceded_by_number = i > 0 && is_number_like(&tokens[i - 1]);
 
-        if preceded_by_number {
-            if let Some(reading) = unit_reading(&tokens[i].surface) {
-                let arc: Arc<str> = Arc::from(reading);
-                tokens[i].reading = Arc::clone(&arc);
-                tokens[i].pronunciation = arc;
-                continue;
-            }
+        if preceded_by_number && let Some(reading) = unit_reading(&tokens[i].surface) {
+            let arc: Arc<str> = Arc::from(reading);
+            tokens[i].reading = Arc::clone(&arc);
+            tokens[i].pronunciation = arc;
+            continue;
         }
 
         // アルファベット読み（スペルアウト）
@@ -814,14 +812,14 @@ impl TokenBuilder {
         word_cost: i16,
     ) -> Result<Token, DictError> {
         let slot = entry_id as usize % TOKEN_CACHE_SLOTS;
-        if let Some((cached_id, token)) = &self.slots[slot] {
-            if *cached_id == entry_id {
-                let mut token = token.clone();
-                token.start = start;
-                token.end = end;
-                token.word_cost = word_cost;
-                return Ok(token);
-            }
+        if let Some((cached_id, token)) = &self.slots[slot]
+            && *cached_id == entry_id
+        {
+            let mut token = token.clone();
+            token.start = start;
+            token.end = end;
+            token.word_cost = word_cost;
+            return Ok(token);
         }
         let f = dict.feature(entry_id as usize)?;
         let scratch = &mut self.scratch;

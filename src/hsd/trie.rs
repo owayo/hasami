@@ -694,7 +694,7 @@ impl<'a> Trie<'a> {
                 blocks.len()
             )));
         }
-        if tables.is_empty() || tables.len() % TABLE_LEN != 0 {
+        if tables.is_empty() || !tables.len().is_multiple_of(TABLE_LEN) {
             return Err(corrupt(format!(
                 "char tables have {} entries, not a positive multiple of {TABLE_LEN}",
                 tables.len()

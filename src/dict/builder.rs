@@ -805,12 +805,12 @@ impl DictBuilder {
                 // 「オ段・ウ段 + ウ」が残っているなら、分割して組み立て直す。
                 // 「機密情報」は借用で末尾が「ジョウホオ」まで直るが前半が残る
                 let current = result.as_deref().unwrap_or(&entry.pronunciation);
-                if has_unmarked_long_vowel(current) && is_composable(entry) {
-                    if let Some(composed) =
+                if has_unmarked_long_vowel(current)
+                    && is_composable(entry)
+                    && let Some(composed) =
                         compose_pronunciation(&entry.surface, &entry.reading, &parts)
-                    {
-                        result = Some(Arc::from(composed));
-                    }
+                {
+                    result = Some(Arc::from(composed));
                 }
                 result
             })
@@ -1482,22 +1482,22 @@ impl DictBuilder {
             let left_id: u16 = parse_field(path, line_no, "left_id", &record[1])?;
             let right_id: u16 = parse_field(path, line_no, "right_id", &record[2])?;
             let cost: i16 = parse_field(path, line_no, "cost", &record[3])?;
-            if let Some(matrix) = &self.matrix {
-                if !matrix.contains_ids(left_id, right_id) {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        format!(
-                            "{}:{}: context ID outside the connection matrix: \
+            if let Some(matrix) = &self.matrix
+                && !matrix.contains_ids(left_id, right_id)
+            {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "{}:{}: context ID outside the connection matrix: \
                              left_id={} (< {}), right_id={} (< {})",
-                            path.display(),
-                            line_no,
-                            left_id,
-                            matrix.num_left,
-                            right_id,
-                            matrix.num_right
-                        ),
-                    ));
-                }
+                        path.display(),
+                        line_no,
+                        left_id,
+                        matrix.num_left,
+                        right_id,
+                        matrix.num_right
+                    ),
+                ));
             }
 
             // 品詞情報を結合
