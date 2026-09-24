@@ -39,12 +39,15 @@ jobs:
       - name: Run clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
-      # ライブラリとして解析だけに使う構成（default-features = false）が CLI・CSV 系の依存なしで
-      # ビルドでき、警告も出ないことを確かめる
+      # ライブラリとして使う 2 つの構成が CLI・CSV 系の依存なしでビルドでき、警告も出ないことを確かめる。
+      # 文分割だけ（default-features = false。依存なし）と、解析まで（features = ["analyzer"]。
+      # 依存は memmap2 と bytemuck）
       - name: Check library without default features
         run: |
           cargo clippy --lib --no-default-features -- -D warnings
           cargo test --lib --no-default-features
+          cargo clippy --lib --no-default-features --features analyzer -- -D warnings
+          cargo test --lib --no-default-features --features analyzer
 
       - name: Check formatting
         run: cargo fmt --all -- --check

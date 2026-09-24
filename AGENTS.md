@@ -17,7 +17,7 @@ Rust製の日本語形態素解析エンジン。外部エンジン（MeCab等�
 ```
 hasami/
 ├── src/
-│   ├── lib.rs          # ライブラリエントリポイント
+│   ├── lib.rs          # ライブラリエントリポイント（sentence 以外のモジュールは `analyzer` feature）
 │   ├── main.rs         # CLI (build, merge, repair, export, tokenize, bench, info)
 │   ├── dict/
 │   │   ├── mod.rs      # DictEntry, UnkEntry, ConnectionMatrix（解析側でも使う型）
@@ -34,7 +34,13 @@ hasami/
 │   │   ├── reader.rs   # Dictionary（mmap / 所有バッファ）、ロード時検査、verify、export 用の列挙
 │   │   └── tests.rs    # 往復・再現性・支配エントリの除去・壊れたファイルの拒否
 │   ├── char_class.rs   # 文字分類（未知語処理）
-│   ├── sentence/       # 辞書不要の文分割（括弧の対応、文末記号を含む語の例外表 builtin_exceptions.txt）
+│   ├── sentence/       # 辞書不要の文分割
+│   │   ├── mod.rs      # 規則 1〜9、Splitter（split / split_with_breaks / chunk_ends）、判定関数
+│   │   ├── exceptions.rs  # 例外表の照合（左の境界、続きの語・文頭の語、字幅の畳み込み）と抽出規則
+│   │   ├── index.rs    # 例外表の索引（錨の列 + 鍵の頭 3 字の表）。build.rs と共有
+│   │   ├── chars.rs    # 文末記号・字幅の畳み込み・字種。build.rs と共有（std 以外に依存しない）
+│   │   ├── builtin_exceptions.txt     # 組み込みの例外表（hasami export-sentence-exceptions が生成）
+│   │   └── builtin_exceptions.NOTICE  # 例外表を含むものを配布するときに添える表示
 │   ├── pos.rs          # 品詞の正規化（CoarsePos、IPAdic 系・UniDic 系）、否定の判定、モーラ数
 │   ├── lattice.rs      # ラティス構築 + Viterbi、Token
 │   ├── analyzer.rs     # 高レベルAPI（Analyzer: Arc<Dictionary> + ワークスペース）
@@ -58,9 +64,20 @@ hasami/
 │   ├── build.rs        # PyO3 拡張モジュール向けリンク設定
 │   ├── Cargo.toml
 │   └── pyproject.toml
+├── build.rs            # 例外表の索引と版の識別子を作る（src/sentence/index.rs・chars.rs を #[path] で共有）
 ├── Cargo.toml          # ワークスペース + メインクレート
 └── README.md
 ```
+
+## feature
+- feature なし（`default-features = false`）: 辞書不要の文分割 `sentence` だけ。依存は無い（noslop がこの構成で使う）
+- `analyzer`: 形態素解析。`sentence` 以外のモジュール（analyzer・char_class・dict・ffi・hsd・lattice・pos）と
+  再エクスポート（`Analyzer`・`DictEntry`・`DictError`・`Dictionary`・`Token`・`CoarsePos`）。依存は memmap2・bytemuck
+- `build`: 辞書の構築・修復・書き出し（`DictBuilder`・`write_lexicon_csv`・`hsd::writer`）。`analyzer` を含む。依存は csv・encoding_rs・glob
+- `cli`: `hasami` コマンド（`[[bin]]` の required-features）。`build` を含む。既定（`default = ["cli"]`）
+- `sentence` はほかのモジュールに依存しない（`pos`・`analyzer` が `sentence` を使う片方向）。`sentence` の doc から
+  解析側の項目へ rustdoc のリンク（`` [`crate::pos`] `` など）を張ると、feature なしの `cargo doc` で壊れる
+- CI と `make check` は feature なし・`analyzer` の 2 構成で `clippy --lib -D warnings` と `test --lib` を回す
 
 ## 主要API
 - `Analyzer::load(path)` - .hsd 辞書ロード（mmap、IPAdic で ~1ms）
@@ -69,6 +86,11 @@ hasami/
 - `Analyzer::load_default()` - `HASAMI_DICT` → `$XDG_DATA_HOME/hasami/*.hsd`（推奨順）の順に辞書を探す。無ければ `DictError::NotFound`
 - `Analyzer::tokenize_sentences(text, &SplitOptions)` - 文ごとの範囲とトークン列
 - `hasami::sentence::{split, Splitter}` - 辞書不要の文分割。解析の前分割も `Splitter::chunk_ends`（例外語の内側で切らない）
+- `Splitter::split_with_breaks(text, &breaks)` - 改行とみなすバイト位置を別に渡す分割（括弧の外側で区切る）
+- `sentence::{is_sentence_ender, ascii_run_is_ender, closing_bracket, is_closing_bracket}` - 分割と同じ基準の判定関数
+- `sentence::BUILTIN_EXCEPTIONS_VERSION` - 例外表の版（`語の数-語の FNV-1a 64`。build.rs が生成）
+- 例外表を変えたら `hasami export-sentence-exceptions --dict dict/ipadic-neologd-sudachi.hsd --output src/sentence/builtin_exceptions.txt`
+  で作り直す（字幅を畳み、抽出規則を満たすことをテストが確かめる）。索引は build.rs が作るので手で作らない
 - `Token::coarse_pos()` / `is_negation()` / `mora_count()` - 品詞の正規化・否定・モーラ数（`src/pos.rs`）
 - `Token` - `surface`, `start`, `end`, `pos`, `conj_type`, `conj_form`, `base_form`, `reading`, `pronunciation`,
   `word_cost`, `is_known`（活用型・活用形が無い語は空文字列）
@@ -108,6 +130,7 @@ cargo build --workspace   # Python バインディングを含むワークスペ
 cargo test --workspace --exclude hasami-python  # テスト実行（hasami-python は extension-module のため
                                                 # macOS/Linux でリンク不可。clippy --workspace で検証）
 cargo clippy --workspace --all-targets -- -D warnings  # lint（hasami-python のコンパイル検証を含む）
+make check                # 上の lint + ライブラリとして使う 2 構成（feature なし・analyzer）の clippy と lib テスト（CI と同じ）
 make dict                 # 配布辞書 3 つを上流から作り直す（= scripts/build-dict.sh）
 make dict-sudachi         # 推奨辞書だけ（dict-ipadic / dict-neologd も同様）
 make dict-clean           # ダウンロードした辞書ソースを削除（build-dict.sh の中間辞書は実行ごとに消える。
