@@ -8,6 +8,10 @@
 //!
 //! mmap した辞書ファイルを読み込み中に書き換えたり切り詰めたりしてはいけない（未定義動作になりうる）。
 //! hasami の書き出しは一時ファイルに書いてから rename で差し替えるので、この規約を守っている。
+//!
+//! 辞書のバイト列の置き場は 3 通り。mmap（[`Dictionary::load`]）、8 バイト境界の所有バッファ
+//! （[`Dictionary::from_bytes`] が複製する、`DictBuilder::build`）、複製せずに参照する `'static` の
+//! バイト列（[`Dictionary::from_static`]。実行ファイルに埋め込んだ辞書）。どれも同じ検査を通す。
 
 use super::container::{self, FLAG_PRUNED_DOMINATED, Layout, SectionId};
 use super::features;
@@ -30,6 +34,9 @@ const NO_CONJ: &str = "*";
 static EMPTY_ARC: LazyLock<Arc<str>> = LazyLock::new(|| Arc::from(""));
 /// 辞書ごとに振る一意な番号（解析器のキャッシュを辞書が変わったら捨てるため）
 static NEXT_DICT_ID: AtomicU64 = AtomicU64::new(0);
+/// [`Dictionary::from_static`] が求めるバイト列の先頭の境界。セクションの型付きスライスが要るのは 4 だが、
+/// `from_bytes` の所有バッファと同じ 8 にしておく（u64 のレコードを足せる余地を残す）
+const STATIC_ALIGN: usize = 8;
 
 enum Storage {
     Mmap(Mmap),
@@ -38,6 +45,9 @@ enum Storage {
         words: Vec<u64>,
         len: usize,
     },
+    /// 複製せずに参照する `'static` のバイト列（実行ファイルに埋め込んだ辞書など）。
+    /// 先頭が [`STATIC_ALIGN`] バイト境界にあることを確かめてある
+    Static(&'static [u8]),
 }
 
 impl Storage {
@@ -45,6 +55,7 @@ impl Storage {
         match self {
             Storage::Mmap(m) => m,
             Storage::Owned { words, len } => &bytemuck::cast_slice(words)[..*len],
+            Storage::Static(bytes) => bytes,
         }
     }
 }
@@ -94,7 +105,7 @@ pub struct VerifyReport {
     pub features: usize,
 }
 
-/// v4 辞書（mmap したファイル、またはメモリ上のバッファ）
+/// v4 辞書（mmap したファイル、メモリ上のバッファ、または埋め込んだ `'static` のバイト列）
 ///
 /// 辞書は読み込み専用で、`Arc` で包んで複数のスレッド・[`crate::Analyzer`] から共有できる。
 pub struct Dictionary {
@@ -165,10 +176,44 @@ impl Dictionary {
     }
 
     /// メモリ上のバイト列から読み込む（8 バイト境界の所有バッファに複製する）
+    ///
+    /// 実行ファイルに埋め込んだ辞書は、複製しない [`Dictionary::from_static`] で読む。
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, DictError> {
         let mut words = vec![0u64; bytes.len().div_ceil(8)];
         bytemuck::cast_slice_mut::<u64, u8>(&mut words)[..bytes.len()].copy_from_slice(bytes);
         Self::from_owned(words, bytes.len())
+    }
+
+    /// `'static` のバイト列を複製せずに参照して読み込む（実行ファイルに埋め込んだ辞書など）
+    ///
+    /// 先頭は 8 バイト境界になければならない。`include_bytes!` だけでは境界がそろわない
+    /// （そろうかどうかはビルドごとに変わる）ので、[`include_hsd!`](crate::include_hsd) で埋め込む。
+    /// 境界になければ、複製に切り替えずに [`DictError::Invalid`] を返す（黙って複製すると、ゼロコピーの
+    /// つもりの呼び出し側が気づけない）。辞書でないバイト列なら、境界より先に [`DictError::NotHsd`] などを返す。
+    ///
+    /// 辞書の本体（trie・エントリ・素性・接続行列）は複製しない。ロード時に作る小さな表（品詞・活用の
+    /// 文字列表、文字種の表）は [`Dictionary::load`] と同じく確保する。埋め込んだ辞書は実行ファイルの
+    /// ページとして、解析で触れたところから読み込まれる（mmap と同じ）。最初の解析の待ちを先に
+    /// 払うなら [`Dictionary::prewarm`] を呼ぶ。
+    ///
+    /// ```ignore
+    /// static IPADIC: &[u8] = hasami::include_hsd!("../dict/ipadic.hsd");
+    ///
+    /// let dict = hasami::Dictionary::from_static(IPADIC)?;
+    /// let mut analyzer = hasami::Analyzer::from_dict(dict);
+    /// ```
+    pub fn from_static(bytes: &'static [u8]) -> Result<Self, DictError> {
+        let offset = bytes.as_ptr().addr() % STATIC_ALIGN;
+        if offset != 0 {
+            // 空・magic 違い・古い版などのバイト列なら、境界よりそちらを先に知らせる
+            container::parse(bytes)?;
+            return Err(DictError::invalid(format!(
+                "dictionary bytes must start at a {STATIC_ALIGN}-byte boundary \
+                 (address % {STATIC_ALIGN} = {offset}); embed them with hasami::include_hsd! \
+                 (include_bytes! alone does not align them)"
+            )));
+        }
+        Self::from_storage(Storage::Static(bytes))
     }
 
     pub(crate) fn from_owned(words: Vec<u64>, len: usize) -> Result<Self, DictError> {
@@ -464,7 +509,8 @@ impl Dictionary {
 
     /// 解析で最初に触れるページ（char map・trie・エントリ・行列）を先に読み込んでおく
     ///
-    /// mmap は触れたページから読み込まれるので、起動直後の最初の解析が遅くなるのを避けたいときに使う。
+    /// mmap した辞書と実行ファイルに埋め込んだ辞書（[`Dictionary::from_static`]）は触れたページから
+    /// 読み込まれるので、起動直後の最初の解析が遅くなるのを避けたいときに使う。
     pub fn prewarm(&self) {
         const PAGE: usize = 4096;
         let mut sum = 0u8;
