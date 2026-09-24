@@ -149,9 +149,12 @@ FULL_REPAIR=(
 
 build_ipadic() {
   fetch_git "$IPADIC_REPO" "$IPADIC_COMMIT" "$SRC/mecab" mecab-ipadic
-  log "build ipadic"
-  "$HASAMI" build --input "$SRC/mecab/mecab-ipadic" --output "$WORK/ipadic.base.hsd" \
-    --meta name=ipadic --meta "sources=$SOURCE_IPADIC"
+  # 記号の未知語の扱いと、EUC-JP の変換差を埋める別表記を整えたソースを作る (scripts/prepare_ipadic.py)
+  local patch
+  patch=$(python3 scripts/prepare_ipadic.py "$SRC/mecab/mecab-ipadic" "$WORK/ipadic-src")
+  log "build ipadic ($patch)"
+  "$HASAMI" build --input "$WORK/ipadic-src" --output "$WORK/ipadic.base.hsd" \
+    --meta name=ipadic --meta "sources=$SOURCE_IPADIC" --meta "ipadic_patch=$patch"
   # IPAdic 単体は発音の修復を掛けない (記号の読みを残す)。外国人名の姓・名だけを除く
   "$HASAMI" repair --dict "$WORK/ipadic.base.hsd" --output "$WORK/ipadic.tmp.hsd" \
     --drop-invalid-context-ids --no-pronunciation-repair \

@@ -232,18 +232,26 @@ impl CharMap {
     ///
     /// 表の番号は、文字を含むブロックにブロック番号の昇順で 1 から振る（表 0 は共有のゼロ表）。
     fn build(keys: &[&str]) -> Result<Self, TrieError> {
-        let mut counts = vec![0u64; 0x11_0000];
+        // 出現回数はブロックごとに、文字が現れたブロックの分だけ持つ（全コードポイント分の表は 8.9MB になる）
+        let mut counts: Vec<Vec<u64>> = vec![Vec::new(); NUM_BLOCKS];
         for key in keys {
             for c in key.chars() {
-                counts[c as usize] += 1;
+                let cp = c as usize;
+                let block = &mut counts[cp >> 8];
+                if block.is_empty() {
+                    block.resize(TABLE_LEN, 0);
+                }
+                block[cp & 0xFF] += 1;
             }
         }
-        let mut chars: Vec<(u64, u32)> = counts
-            .iter()
-            .enumerate()
-            .filter(|&(_, &n)| n > 0)
-            .map(|(cp, &n)| (n, cp as u32))
-            .collect();
+        let mut chars: Vec<(u64, u32)> = Vec::new();
+        for (block, block_counts) in counts.iter().enumerate() {
+            for (low, &n) in block_counts.iter().enumerate() {
+                if n > 0 {
+                    chars.push((n, ((block << 8) | low) as u32));
+                }
+            }
+        }
         drop(counts);
         chars.sort_unstable_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
         if chars.len() > MAX_CODE_LIMIT as usize {
@@ -425,8 +433,15 @@ struct Task {
 ///
 /// 配置の順序（再現性のために固定）:
 /// - ノードを DFS の前順に処理し、処理したときにそのノードの子（END を含む）の位置をまとめて決める
-/// - 子は符号の昇順に辿る（スタックには符号の降順に積む）
+/// - 子はコードポイントの降順（キーの逆順）に辿る。スタックにはキーの順に積む
 /// - 末尾レコードは TAIL を処理した順（DFS の前順）に追記する
+///
+/// 子を辿る順序で占有率が変わる。配列の先端（使用中の最大スロット）は子の符号が広く散らばるノードが
+/// 押し広げ、その後ろの穴は後から置くノードが埋める。構築の終わりに残った穴はそのまま無駄になる。
+/// 仮名は出現回数が多く符号が小さいので、仮名で分かれるノードは子が狭い範囲に収まり小さな穴に入る。
+/// 仮名は漢字よりコードポイントが小さいので、コードポイントの降順に辿ると各ノードで漢字の子を先に、
+/// 仮名の子を後に処理し、構築の後半にそうしたノードが続いて穴が埋まる。符号の昇順に辿ると、
+/// 推奨辞書の占有率が 99.4% から 97.2%、IPAdic が 94.9% から 88.7% に下がる。
 struct Placer<'a> {
     keys: &'a [&'a str],
     values: &'a [u32],
@@ -490,6 +505,7 @@ impl<'a> Placer<'a> {
                     labels.push(0);
                 }
                 labels.extend(children.iter().map(|c| c.code));
+                labels.sort_unstable();
                 let base = self.slots.find_base(&labels);
                 if base >= BASE_LIMIT as usize {
                     return Err(build_error(format!(
@@ -497,7 +513,7 @@ impl<'a> Placer<'a> {
                         task.slot
                     )));
                 }
-                let last = base + children.last().map_or(0, |c| c.code as usize);
+                let last = base + labels.last().map_or(0, |&l| l as usize);
                 if last >= self.nodes.len() {
                     let len = (last + 1).max(self.nodes.len() + self.nodes.len() / 4);
                     self.nodes.resize(len, Node::EMPTY);
@@ -515,8 +531,8 @@ impl<'a> Placer<'a> {
                     };
                     done += 1;
                 }
-                // 符号の昇順に辿るよう、降順に積む
-                for child in children.iter().rev() {
+                // コードポイントの降順に辿るよう、キーの順に積む
+                for child in &children {
                     let slot = base + child.code as usize;
                     self.nodes[slot].check = parent;
                     stack.push(Task {
@@ -535,7 +551,7 @@ impl<'a> Placer<'a> {
         Ok(())
     }
 
-    /// keys[lo..hi]（終端のキーを除く）を次の文字で分け、符号の昇順に並べる
+    /// keys[lo..hi]（終端のキーを除く）を次の文字で分ける（子はキーの順 = コードポイントの昇順に並ぶ）
     fn collect_children(
         &self,
         task: &Task,
@@ -550,17 +566,16 @@ impl<'a> Placer<'a> {
             let Some(c) = self.keys[i][depth..].chars().next() else {
                 return Err(build_error(format!("internal error: key #{i} ends early")));
             };
-            let len = c.len_utf8();
-            let lead = &self.keys[i].as_bytes()[depth..depth + len];
-            // 同じ文字で続くキーは連続している（UTF-8 のバイト順 = コードポイント順）
+            // 同じ文字で続くキーは連続している（UTF-8 のバイト順 = コードポイント順）。
+            // 1〜4 バイトの比較で memcmp を呼ばないよう、文字を復号して比べる
             let run = self.keys[i + 1..task.hi]
-                .partition_point(|k| k.as_bytes().get(depth..depth + len) == Some(lead));
+                .partition_point(|k| k.get(depth..).and_then(|s| s.chars().next()) == Some(c));
             let hi = i + 1 + run;
             out.push(Child {
                 code: self.char_map.code(c),
                 lo: i,
                 hi,
-                len,
+                len: c.len_utf8(),
             });
             i = hi;
         }
@@ -570,7 +585,6 @@ impl<'a> Placer<'a> {
                 task.slot
             )));
         }
-        out.sort_unstable_by_key(|c| c.code);
         Ok(())
     }
 
@@ -825,7 +839,7 @@ impl<'a> Trie<'a> {
         // 長さ 0 の一致を報告しないよう、ここでも確かめる
         let mut node = match nodes.first() {
             Some(&root) if kind(root.base) == KIND_INTERNAL && root.base & HAS_END == 0 => root,
-            _ => return Err(corrupt("root (slot 0) is missing or invalid".to_string())),
+            _ => return Err(bad_root()),
         };
         loop {
             if kind(node.base) != KIND_INTERNAL {
@@ -833,14 +847,14 @@ impl<'a> Trie<'a> {
             }
             let base = (node.base & BASE_MASK) as usize;
             if base == 0 || base >= base_end {
-                return Err(self.bad_base(slot, base));
+                return Err(bad_base(slot, base, base_end));
             }
             if node.base & HAS_END != 0 {
                 match nodes.get(base) {
                     Some(end) if end.check == slot as u32 && kind(end.base) == KIND_LEAF => {
                         cb(pos, end.base & PAYLOAD_MASK);
                     }
-                    _ => return Err(self.bad_end(slot, base)),
+                    _ => return Err(bad_end(slot, base)),
                 }
             }
             let Some(c) = chars.next() else {
@@ -859,13 +873,13 @@ impl<'a> Trie<'a> {
                 }
                 Some(_) => return Ok(()),
                 // 符号が N 以下なら base + 符号 < ノード数。部品が検証済みでないときだけ来る
-                None => return Err(self.bad_base(slot, base)),
+                None => return Err(bad_base(slot, base, base_end)),
             }
         }
     }
 
     /// 辿り着いた LEAF・TAIL を報告する
-    #[inline]
+    #[inline(always)]
     fn search_end(
         &self,
         text: &str,
@@ -881,47 +895,34 @@ impl<'a> Trie<'a> {
             }
             KIND_TAIL => {
                 let (value, suffix) = self.tail_record(slot, node.base & PAYLOAD_MASK)?;
-                // 入力の残りが suffix 以上の長さのときだけ比べる
+                // 入力の残りが suffix 以上の長さのときだけ比べる。多くは先頭のバイトで外れるので、
+                // 先に 1 バイト比べて bcmp の呼び出しを省く
                 let end = pos + suffix.len();
-                if text.as_bytes().get(pos..end) == Some(suffix) {
+                let matched = match text.as_bytes().get(pos..end) {
+                    Some(rest) => rest.first() == suffix.first() && rest == suffix,
+                    None => false,
+                };
+                if matched {
                     // suffix が正しい UTF-8 なら一致の終わりは文字境界になる
                     if !text.is_char_boundary(end) {
-                        return Err(corrupt(format!(
-                            "TAIL at slot {slot} (offset {}) is not valid UTF-8",
-                            node.base & PAYLOAD_MASK
-                        )));
+                        return Err(bad_tail(
+                            slot,
+                            (node.base & PAYLOAD_MASK) as usize,
+                            "the bytes are not valid UTF-8 (a match ends inside a character)",
+                        ));
                     }
                     cb(end, value);
                 }
                 Ok(())
             }
-            _ => Err(corrupt(format!(
-                "slot {slot} has the invalid kind 01 (base {:#010x})",
-                node.base
-            ))),
+            _ => Err(invalid_kind(slot, node)),
         }
     }
 
-    #[cold]
-    #[inline(never)]
-    fn bad_base(&self, slot: usize, base: usize) -> TrieError {
-        corrupt(format!(
-            "INTERNAL slot {slot} has base {base}, out of range for max code {} and {} nodes",
-            self.max_code,
-            self.nodes.len()
-        ))
-    }
-
-    #[cold]
-    #[inline(never)]
-    fn bad_end(&self, slot: usize, base: usize) -> TrieError {
-        corrupt(format!(
-            "INTERNAL slot {slot} has HAS_END, but slot {base} is not a LEAF whose check is {slot}"
-        ))
-    }
-
     /// 末尾レコード（値と、残りのバイト列）を読む
-    #[inline]
+    ///
+    /// 検索のたびに通るので、Result を値のまま扱えるよう呼び出し側に展開する（エラーの組み立ては cold）
+    #[inline(always)]
     fn tail_record(&self, slot: usize, offset: u32) -> Result<(u32, &'a [u8]), TrieError> {
         let tails = self.tails;
         let off = offset as usize;
@@ -1136,13 +1137,14 @@ impl<'a> Trie<'a> {
     /// INTERNAL の base の範囲と END 子を確かめ、base を返す
     fn check_internal(&self, slot: usize, node: Node) -> Result<usize, TrieError> {
         let base = (node.base & BASE_MASK) as usize;
-        if base == 0 || base + self.max_code as usize >= self.nodes.len() {
-            return Err(self.bad_base(slot, base));
+        let base_end = self.nodes.len().saturating_sub(self.max_code as usize);
+        if base == 0 || base >= base_end {
+            return Err(bad_base(slot, base, base_end));
         }
         if node.base & HAS_END != 0 {
             match self.nodes.get(base) {
                 Some(end) if end.check == slot as u32 && kind(end.base) == KIND_LEAF => {}
-                _ => return Err(self.bad_end(slot, base)),
+                _ => return Err(bad_end(slot, base)),
             }
         }
         Ok(base)
@@ -1276,6 +1278,32 @@ impl<'a> Trie<'a> {
     }
 }
 
+// 検索の経路で使うエラーは、ここに集めた cold な関数で組み立てる。値だけを受け取るので、
+// format! が局所変数の参照を取って検索ループの変数をスタックに退避させることがない。
+
+#[cold]
+#[inline(never)]
+fn bad_root() -> TrieError {
+    corrupt("root (slot 0) is missing, not INTERNAL, or has an END child".to_string())
+}
+
+/// INTERNAL の base が範囲外（`1 <= base < base_end` でない。base_end = ノード数 - N）
+#[cold]
+#[inline(never)]
+fn bad_base(slot: usize, base: usize, base_end: usize) -> TrieError {
+    corrupt(format!(
+        "INTERNAL slot {slot} has base {base}, out of range (must be at least 1 and below {base_end} = node count - max code)"
+    ))
+}
+
+#[cold]
+#[inline(never)]
+fn bad_end(slot: usize, base: usize) -> TrieError {
+    corrupt(format!(
+        "INTERNAL slot {slot} has HAS_END, but slot {base} is not a LEAF whose check is {slot}"
+    ))
+}
+
 #[cold]
 #[inline(never)]
 fn bad_tail(slot: usize, offset: usize, what: &str) -> TrieError {
@@ -1364,8 +1392,8 @@ mod tests {
         }
     }
 
+    /// key の文字を辿った先のスロットとノード（TAIL の中は辿らない）
     fn node_at<'p>(parts: &'p TrieParts, key: &str) -> (usize, &'p Node) {
-        // key の文字を辿った先のスロット（テスト用、TAIL の中は辿らない）
         let trie = parts.as_trie().unwrap();
         let mut slot = 0usize;
         for c in key.chars() {
@@ -1788,7 +1816,7 @@ mod tests {
         let end = (node.base & BASE_MASK) as usize;
         // END 子が LEAF でない
         let mut broken = parts.clone();
-        broken.nodes[end].base = (KIND_TAIL << KIND_SHIFT) | 0;
+        broken.nodes[end].base = KIND_TAIL << KIND_SHIFT;
         assert!(verify_err(&broken).contains("END"));
         assert!(search_err(&broken, "abc").contains("HAS_END"));
         // END 子の check が親でない
@@ -2013,9 +2041,16 @@ mod tests {
                     }
                 }
                 8 => {
-                    if !parts.tails.is_empty() {
-                        let i = rng.below(parts.tails.len());
-                        parts.tails[i] = rng.next() as u8;
+                    // バイト列として書き換える（型をまたいだ任意の位置）
+                    let bytes: &mut [u8] = match rng.below(4) {
+                        0 => bytemuck::cast_slice_mut(&mut parts.nodes),
+                        1 => bytemuck::cast_slice_mut(&mut parts.tables),
+                        2 => bytemuck::cast_slice_mut(&mut parts.blocks),
+                        _ => &mut parts.tails,
+                    };
+                    if !bytes.is_empty() {
+                        let i = rng.below(bytes.len());
+                        bytes[i] = rng.next() as u8;
                     }
                 }
                 _ => match rng.below(4) {
@@ -2111,6 +2146,48 @@ mod tests {
         }
         // 値や TAIL の中身だけを書き換えたものなど、正しい trie のままの変異もある
         assert!(verified > 0);
+    }
+
+    #[test]
+    fn test_from_validated_with_garbage_does_not_panic() {
+        let (owned, parts) = fixture();
+        let bad_root = [Node {
+            base: leaf_base(1),
+            check: 0,
+        }];
+        let self_loop = [Node { base: 1, check: 0 }, Node { base: 1, check: 0 }];
+        let empty_nodes: &[Node] = &[];
+        type Raw<'p> = (&'p [u16], &'p [u16], &'p [Node], &'p [u8]);
+        let cases: [Raw; 5] = [
+            (&[], &[], empty_nodes, &[]),
+            (&parts.blocks, &parts.tables, empty_nodes, &[]),
+            (&parts.blocks, &parts.tables, &bad_root, &parts.tails),
+            (&parts.blocks, &parts.tables, &self_loop, &[]),
+            (
+                &parts.blocks[..10],
+                &parts.tables[..300],
+                &parts.nodes,
+                &parts.tails[..5],
+            ),
+        ];
+        let texts: Vec<String> = owned.iter().map(|k| format!("{k}{k}")).collect();
+        for (blocks, tables, nodes, tails) in cases {
+            for max_code in [0, 1, 3, 65535, u32::MAX] {
+                let view = Trie::from_validated(blocks, tables, nodes, tails, max_code);
+                for text in &texts {
+                    for (start, _) in text.char_indices() {
+                        let mut last = start;
+                        let _ = view.common_prefix_search(text, start, |end, _| {
+                            assert!(end > last && text.is_char_boundary(end));
+                            last = end;
+                        });
+                    }
+                    let _ = view.get(text);
+                }
+                assert!(view.keys().is_err());
+                assert!(view.verify(VALUE_LIMIT).is_err());
+            }
+        }
     }
 
     #[test]
