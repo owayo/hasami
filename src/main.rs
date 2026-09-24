@@ -861,10 +861,10 @@ fn load_reference(
     cache: &mut Option<(PathBuf, Arc<Dictionary>)>,
     path: &Path,
 ) -> io::Result<Arc<Dictionary>> {
-    if let Some((cached, dict)) = cache.as_ref() {
-        if cached == path {
-            return Ok(Arc::clone(dict));
-        }
+    if let Some((cached, dict)) = cache.as_ref()
+        && cached == path
+    {
+        return Ok(Arc::clone(dict));
     }
     eprintln!("Loading reference dictionary: {}", path.display());
     let dict = Arc::new(Dictionary::load(path)?);

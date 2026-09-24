@@ -1,6 +1,6 @@
 //! hasami Python バインディング (PyO3)
 
-use ::hasami::analyzer::{format_mecab, format_wakachi, Analyzer as RustAnalyzer};
+use ::hasami::analyzer::{Analyzer as RustAnalyzer, format_mecab, format_wakachi};
 use ::hasami::dict::DictBuilder as RustDictBuilder;
 use ::hasami::hsd::DictError;
 use ::hasami::lattice::Token as RustToken;
