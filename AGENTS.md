@@ -19,7 +19,9 @@ hasami/
 ├── src/
 │   ├── lib.rs          # ライブラリエントリポイント
 │   ├── main.rs         # CLI (build, merge, repair, export, tokenize, bench, info)
-│   ├── dict.rs         # DictEntry, ConnectionMatrix, DictBuilder（CSV 読み込み・repair・書き出し）
+│   ├── dict/
+│   │   ├── mod.rs      # DictEntry, UnkEntry, ConnectionMatrix（解析側でも使う型）
+│   │   └── builder.rs  # DictBuilder（CSV 読み込み・repair・書き出し）。`build` feature
 │   ├── hsd/            # 辞書形式 v4 (.hsd)
 │   │   ├── mod.rs      # DictError
 │   │   ├── container.rs  # 64B ヘッダとセクション表（id で引く、64B 境界）
@@ -92,7 +94,8 @@ hasami/
 - `hasami tokenize` - 形態素解析
 - `hasami bench` - ベンチマーク
 - `hasami info` - 辞書情報表示（メタデータ・セクションのサイズ。`--verify` で全件検証）
-- `hasami repair` - 誤読エントリの修復・除去（範囲外の文脈 ID、表記ゆれ、漢数字の人名、削除リスト）
+- `hasami repair` - 誤読エントリの修復・除去（範囲外の文脈 ID、壊れた発音、表記ゆれ、漢数字の人名、削除リスト、一般語の固有名詞の降格 `--demote-common-proper-nouns <IPAdic.hsd>`、追加マージ）
+- `hasami export-sentence-exceptions` - 文分割の例外表（文末記号を含む語）を辞書から抽出する（`src/sentence/builtin_exceptions.txt` の生成）
 - `hasami export` - 辞書のエントリを MeCab 形式 CSV に書き出す（活用型・活用形も出る）
 - build / merge / repair 共通: `--meta key=value`（メタデータ）、`--prune-dominated`（支配エントリを除いた最終辞書）
 
