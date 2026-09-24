@@ -395,6 +395,41 @@ for (sentence, tokens) in analyzer.tokenize_sentences(text, &SplitOptions::defau
 }
 ```
 
+#### 品詞の正規化・否定・モーラ数
+
+`Token::coarse_pos` は、辞書の品詞体系（IPAdic 系・UniDic 系）の違いを吸収した粗い品詞 `CoarsePos` を返す。
+辞書を替えても同じ判定ができるように、次の違いをそろえている。
+
+- 「の」は IPAdic の `助詞,連体化` と `助詞,格助詞`、UniDic の `助詞,格助詞` のどれでも `CaseParticle`。
+  「行くのが」の「の」は `FormalNoun`
+- 形式名詞（こと・もの・わけ）は `FormalNoun`。UniDic は普通名詞と区別しないので、仮名書きの形式名詞を表層形で拾う
+- 受け身・使役の「れる」「せる」（IPAdic では `動詞,接尾`）と、助動詞の語幹「そう」「よう」「みたい」は `AuxVerb`
+- 記号は句点（。！？!? など）・読点（、，,）・開き括弧・閉じ括弧・そのほかを区別する。辞書によって品詞が違う
+  半角の `(` `!` `,` や全角の `！` も、表層形で見分けて同じ値にする
+
+`Token::is_negation` は否定の形態素か（助動詞「ない」「ぬ」「ん」「ず」、形容詞「ない」）を原形で判定する。
+`Token::mora_count` は発音（仮名が無ければ読み）からモーラ数を数える。拗音の小書き文字は直前の仮名と合わせて
+1 モーラ、促音・撥音・長音は 1 モーラ。
+
+```rust
+use hasami::CoarsePos;
+
+let tokens = analyzer.tokenize("運用コストの削減の実現");
+let chained = tokens
+    .iter()
+    .filter(|t| &*t.surface == "の" && t.coarse_pos() == CoarsePos::CaseParticle)
+    .count();
+assert_eq!(chained, 2);
+
+let tokens = analyzer.tokenize("行かないわけではない");
+assert_eq!(tokens.iter().filter(|t| t.is_negation()).count(), 2);
+
+let morae: usize = analyzer.tokenize("東京に行った").iter().map(|t| t.mora_count()).sum();
+assert_eq!(morae, 8); // トーキョー ニ イッ タ
+```
+
+辞書の品詞に従うので、そろわない違いもある（「しか」は IPAdic では係助詞、UniDic では副助詞など）。
+
 #### 並行解析（Rust マルチスレッド）
 
 `Analyzer` は `Clone` を実装しており、辞書（mmap）を `Arc` で共有しつつ各クローンが独自のラティスワークスペースを持ちます。複数スレッドで並列解析する際、辞書はゼロコピー共有・ワークスペースのみ独立になります。
@@ -498,6 +533,9 @@ token.start          # 開始バイト位置: 0
 token.end            # 終了バイト位置: 3
 token.word_cost      # 単語コスト: 3987
 token.is_known       # 辞書語かどうか: True
+token.coarse_pos     # 辞書の品詞体系をそろえた粗い品詞: "Noun"（Rust の CoarsePos の名前）
+token.is_negation    # 否定の形態素か: False
+token.mora_count     # モーラ数: 2
 ```
 
 辞書が壊れていて解析中に不正な参照を見つけたときは `ValueError`、辞書ファイルを開けないときは `IOError` を送出する。

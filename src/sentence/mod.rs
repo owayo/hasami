@@ -562,9 +562,9 @@ const BRACKET_KINDS: usize = 22;
 
 /// 括弧の種類と、開き括弧か（括弧でなければ None）
 ///
-/// `〝` は `〟` と `〞` のどちらでも閉じる。
+/// `〝` は `〟` と `〞` のどちらでも閉じる。品詞の正規化（[`crate::pos`]）も同じ字の集合を使う。
 #[inline]
-fn bracket(c: char) -> Option<(u8, bool)> {
+pub(crate) fn bracket(c: char) -> Option<(u8, bool)> {
     Some(match c {
         '「' => (0, true),
         '」' => (0, false),

@@ -32,6 +32,8 @@ hasami/
 │   │   ├── reader.rs   # Dictionary（mmap / 所有バッファ）、ロード時検査、verify、export 用の列挙
 │   │   └── tests.rs    # 往復・再現性・支配エントリの除去・壊れたファイルの拒否
 │   ├── char_class.rs   # 文字分類（未知語処理）
+│   ├── sentence/       # 辞書不要の文分割（括弧の対応、文末記号を含む語の例外表 builtin_exceptions.txt）
+│   ├── pos.rs          # 品詞の正規化（CoarsePos、IPAdic 系・UniDic 系）、否定の判定、モーラ数
 │   ├── lattice.rs      # ラティス構築 + Viterbi、Token
 │   ├── analyzer.rs     # 高レベルAPI（Analyzer: Arc<Dictionary> + ワークスペース）
 │   └── ffi.rs          # C ABI インターフェース
@@ -61,6 +63,10 @@ hasami/
 - `Analyzer::load(path)` - .hsd 辞書ロード（mmap、IPAdic で ~1ms）
 - `Analyzer::tokenize(text)` - 形態素解析（壊れた辞書の不正な参照で panic）
 - `Analyzer::try_tokenize(text)` - 形態素解析（不正な参照は `DictError::Corrupt`。FFI・Python はこちら）
+- `Analyzer::load_default()` - `HASAMI_DICT` → `$XDG_DATA_HOME/hasami/*.hsd`（推奨順）の順に辞書を探す。無ければ `DictError::NotFound`
+- `Analyzer::tokenize_sentences(text, &SplitOptions)` - 文ごとの範囲とトークン列
+- `hasami::sentence::{split, Splitter}` - 辞書不要の文分割。解析の前分割も `Splitter::chunk_ends`（例外語の内側で切らない）
+- `Token::coarse_pos()` / `is_negation()` / `mora_count()` - 品詞の正規化・否定・モーラ数（`src/pos.rs`）
 - `Token` - `surface`, `start`, `end`, `pos`, `conj_type`, `conj_form`, `base_form`, `reading`, `pronunciation`,
   `word_cost`, `is_known`（活用型・活用形が無い語は空文字列）
 - `Dictionary::load(path)` / `Dictionary::verify()` / `Dictionary::for_each_entry(cb)` / `Dictionary::lookup(text)`
