@@ -750,7 +750,7 @@ impl Default for LatticeWorkspace {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "build"))]
 mod tests {
     use super::*;
     use crate::dict::{DictBuilder, DictEntry};
