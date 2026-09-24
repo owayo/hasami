@@ -49,6 +49,7 @@ hasami/
 │       ※ unidic-cwj.hsd / unidic-csj.hsd は同梱されず make dict-unidic-cwj/csj でビルド
 ├── scripts/
 │   ├── build-dict.sh          # 配布辞書 3 つを上流の固定版から作る（Makefile の dict 系と CI が呼ぶ）
+│   ├── clean-lfs.sh           # 手元の LFS の実体を、いまのコミットが使うものだけにする（make clean-lfs / clean）
 │   ├── convert_sudachi_raw.py # SudachiDict の raw CSV → IPAdic 体系の MeCab CSV
 │   ├── convert-unidic-csv.py  # UniDic CSV → IPAdic互換フォーマット変換
 │   └── find_foreign_names.py  # 外国人名の削除リストを生成（Unihan の字音と照合）
@@ -111,6 +112,8 @@ make dict                 # 配布辞書 3 つを上流から作り直す（= sc
 make dict-sudachi         # 推奨辞書だけ（dict-ipadic / dict-neologd も同様）
 make dict-clean           # ダウンロードした辞書ソースを削除（build-dict.sh の中間辞書は実行ごとに消える。
                           # repair 前の辞書が要るときは scripts/build-dict.sh --keep-intermediate）
+make clean-lfs            # 手元の LFS の実体を、いまのコミットが使うものだけにする（scripts/clean-lfs.sh。
+                          # 消すものはリモートにあることを確かめる。make clean も cargo clean の後に呼ぶ）
 ```
 
 ## 辞書ソースの既知の欠陥
