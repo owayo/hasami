@@ -39,32 +39,47 @@ jobs:
       - name: Run clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
-      # ライブラリとして使う 2 つの構成が CLI・CSV 系の依存なしでビルドでき、警告も出ないことを確かめる。
+      # ライブラリとして使う 3 つの構成が CLI・CSV 系の依存なしでビルドでき、警告も出ないことを確かめる。
       # 文分割だけ（default-features = false。依存なし）と、解析まで（features = ["analyzer"]。
-      # 依存は memmap2 と bytemuck）
+      # 依存は memmap2 と bytemuck）と、配布辞書の取得まで（features = ["download"]。analyzer に
+      # HTTP・TLS・SHA-256・zstd の展開を足す）
       - name: Check library without default features
         run: |
           cargo clippy --lib --no-default-features -- -D warnings
           cargo test --lib --no-default-features
           cargo clippy --lib --no-default-features --features analyzer -- -D warnings
           cargo test --lib --no-default-features --features analyzer
+          cargo clippy --lib --no-default-features --features download -- -D warnings
+          cargo test --lib --no-default-features --features download
 
       - name: Check formatting
         run: cargo fmt --all -- --check
 
+  # リリースと同じ 5 ターゲットを同じ方法でビルドする。TLS の依存は C のコードを含むので、
+  # クロスビルド (aarch64 Linux) と Windows で壊れないことを PR のうちに確かめる
   build:
-    name: Build
+    name: Build (${{ matrix.target }})
     needs: test
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
+            cross: false
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            cross: true
           - os: macos-latest
             target: x86_64-apple-darwin
+            cross: false
           - os: macos-latest
             target: aarch64-apple-darwin
+            cross: false
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            cross: false
 
     steps:
       - uses: actions/checkout@v5
@@ -74,5 +89,18 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
+      - name: Install cross-compilation tools
+        if: matrix.cross
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+
+      - name: Build with cross
+        if: matrix.cross
+        run: |
+          cargo install cross --git https://github.com/cross-rs/cross
+          cross build --release --locked --target ${{ matrix.target }}
+
       - name: Build
-        run: cargo build --release --target ${{ matrix.target }}
+        if: "!matrix.cross"
+        run: cargo build --release --locked --target ${{ matrix.target }}

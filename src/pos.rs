@@ -1030,14 +1030,18 @@ mod tests {
         assert_eq!(spoken("ハ", "ワ").mora_count(), 1);
     }
 
-    /// 配布辞書のパス。`dict/` は Git LFS で管理している
+    /// 配布辞書のパス。`dict/` の配布辞書はリポジトリに置かない（`make dict` で作るか
+    /// `make dict-download` で取る）
     fn distributed_dicts() -> Vec<(&'static str, crate::Analyzer)> {
         ["ipadic", "ipadic-neologd", "ipadic-neologd-sudachi"]
             .into_iter()
             .map(|name| {
                 let path = format!("{}/dict/{name}.hsd", env!("CARGO_MANIFEST_DIR"));
-                let analyzer = crate::Analyzer::load(&path)
-                    .unwrap_or_else(|e| panic!("{path}: {e}（Git LFS の辞書を取得したか確認）"));
+                let analyzer = crate::Analyzer::load(&path).unwrap_or_else(|e| {
+                    panic!(
+                        "{path}: {e}（`make dict` で作るか、`make dict-download` で取ったか確認）"
+                    )
+                });
                 (name, analyzer)
             })
             .collect()

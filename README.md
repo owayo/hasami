@@ -40,27 +40,21 @@
 ## 動作環境
 
 - **OS**: macOS、Linux
-- **Rust**: 1.85以上（ソースからビルドする場合）
+- **Rust**: 1.98以上（ソースからビルドする場合）
 
 ## インストール
 
+### バイナリダウンロード
+
+[Releases](https://github.com/owayo/hasami/releases) から最新版をダウンロード。辞書はバイナリにもリポジトリにも
+入っていないので、続けて配布辞書を取る（下の「配布辞書」）。
+
+```bash
+hasami dict download                    # 推奨辞書を ~/.local/share/hasami/ に置く
+hasami tokenize "形態素解析のテスト"    # --dict を省くと、置いた辞書を使う
+```
+
 ### ソースからビルド
-
-辞書は Git LFS で管理している。clone したら最初に一度フックを入れておく
-（`git lfs install` 済みの環境かどうかに関わらず、LFS を通らない大きなファイルを
-コミットしようとしたときに pre-commit が止める）。
-
-```bash
-make setup-hooks
-```
-
-辞書を作り直すたびに、古い版の実体が `.git/lfs` に溜まる（配布辞書 3 つで 1 版あたり約 450MB）。
-いまのコミットが使う版だけを残すには次を実行する。古い版が要るときは `git lfs fetch <ref>` で取り直せる。
-
-```bash
-make clean-lfs            # 消す実体はリモートにあることを確かめてから消す（DRY_RUN=1 で対象の表示だけ）
-make clean                # cargo clean もあわせて行う
-```
 
 ```bash
 make install
@@ -69,9 +63,23 @@ make install
 cargo build --workspace
 ```
 
-### バイナリダウンロード
+clone したら一度フックを入れておく（50MB を超えるファイルをコミットしようとすると pre-commit が止める）。
 
-[Releases](https://github.com/owayo/hasami/releases) から最新版をダウンロード。
+```bash
+make setup-hooks
+```
+
+配布辞書はリポジトリに置かず、リリースの添付ファイルで配る。開発で `dict/` に辞書が要るときは、この版の
+リリースから取るか、上流のソースから作る（`dict/*.hsd` は `.gitignore` 済み）。
+
+```bash
+make dict-download        # この版（Cargo.toml の version）のリリースの 3 辞書を dict/ に取る
+make dict                 # 上流のソースから作る（下の「辞書のローカルビルド」）
+```
+
+v26.9.103 までは辞書を Git LFS でリポジトリに置いていた。その後、辞書を履歴から外したので、それより前に
+clone した環境は clone し直す。`make setup-hooks` を実行した clone に残る LFS のフックは
+`git lfs uninstall --local` で外せる。
 
 ## アーキテクチャ
 
@@ -125,17 +133,71 @@ flowchart TD
 
 ## 辞書
 
-### ビルド済み辞書
+### 配布辞書
 
-`dict/` ディレクトリにビルド済み辞書（.hsd）が含まれています（Git LFS管理）。
+ビルド済みの辞書（.hsd）は、リリースの添付ファイルとして配る（リポジトリには置かない）。
 
-| ファイル | 内容 | 推奨用途 |
-|---------|------|---------|
-| `dict/ipadic.hsd` | IPAdic 単体 | 軽量・基本用途 |
-| `dict/ipadic-neologd.hsd` | IPAdic + NEologd | 新語・固有名詞対応 |
-| `dict/ipadic-neologd-sudachi.hsd` | IPAdic + NEologd + SudachiDict | **推奨**（最大語彙） |
+| 辞書 | 内容 | 大きさ | 推奨用途 |
+|------|------|------:|---------|
+| `ipadic` | IPAdic 単体 | 18 MB | 軽量・基本用途 |
+| `ipadic-neologd` | IPAdic + NEologd | 222 MB | 新語・固有名詞対応 |
+| `ipadic-neologd-sudachi` | IPAdic + NEologd + SudachiDict | 238 MB | **推奨**（最大語彙） |
 
-以下の辞書はリポジトリには同梱されていませんが、ローカルでビルドできます。
+`hasami dict download` は、実行している hasami と同じ版のリリースから辞書を取り、置き場所に置く。
+辞書の形式や repair は版ごとに変わりうるので、既定では版をそろえる。
+
+```bash
+hasami dict download                  # 推奨辞書（ipadic-neologd-sudachi）
+hasami dict download ipadic           # 名前を挙げて取る（--all で 3 辞書すべて）
+hasami dict download --tag v26.9.104  # 別の版のリリースから
+hasami dict download --base-url https://mirror.example.com/hasami/v26.9.104   # ミラーから
+hasami dict list                      # 置き場所の辞書と状態（通信しない。--remote でリリースの目録と照合）
+hasami dict path                      # tokenize が --dict なしで使う辞書のパス（-d "$(hasami dict path)"）
+hasami dict install ipadic.hsd.zst    # 手で持ち込んだ辞書を確かめて置く（ネットワークに出られない環境向け）
+```
+
+- zstd で圧縮した版（`<名前>.hsd.zst`。3 分の 1 ほど）を取って展開し、リリースの目録（`dictionaries.json`）の
+  大きさと SHA-256 で、受け取ったものと展開したものの両方を確かめる。辞書として読めること（形式の版が合うこと）も
+  確かめてから、同じディレクトリの一時ファイルを rename して置く。途中で止めても、壊れた辞書を置き場所に残さない。
+  `--uncompressed` で生の辞書を取る
+- 正しいファイルがすでにあれば通信しない。中身の違うファイル（別の版など）は `--force` を付けたときだけ置き換える
+  （取得に失敗したら元のファイルを残す）
+- `--json` で結果（置いたパス・大きさ・SHA-256）を JSON で出す。`--quiet` で進み具合と結果を出さない
+- プロキシは環境変数（`HTTPS_PROXY`・`NO_PROXY`）に従う。証明書は OS の証明書ストアで検証する（社内の CA を
+  OS に入れた環境でも通る）
+- `hasami dict install` は、同じディレクトリにリリースの `dictionaries.json` があれば（`--catalog` でも渡せる）
+  その大きさと SHA-256 で確かめる。なければ辞書全体を検証する
+
+置き場所（`tokenize` が `--dict` なしで辞書を探し、`hasami dict download` が辞書を置くディレクトリ）は次の順に決まる。
+複数の辞書があれば、推奨順（ipadic-neologd-sudachi → ipadic-neologd → ipadic → そのほかの名前順）の最初を使う。
+
+1. 環境変数 `HASAMI_DATA_DIR`
+2. `$XDG_DATA_HOME/hasami/`
+3. `%LOCALAPPDATA%\hasami\`（Windows）
+4. `~/.local/share/hasami/`
+
+リリースの添付ファイルは直接取ってもよい（URL は `https://github.com/owayo/hasami/releases/download/<タグ>/<ファイル名>`）。
+
+```bash
+base=https://github.com/owayo/hasami/releases/download/v26.9.104
+mkdir -p ~/.local/share/hasami && cd ~/.local/share/hasami
+curl -fL --remote-name-all "$base/ipadic-neologd-sudachi.hsd" "$base/SHA256SUMS"
+grep ' ipadic-neologd-sudachi.hsd$' SHA256SUMS | sha256sum --check --strict -   # macOS は shasum -a 256 -c
+```
+
+| 添付ファイル | 中身 |
+| --- | --- |
+| `<名前>.hsd` | 配布辞書 |
+| `<名前>.hsd.zst` | 同じ辞書を zstd で圧縮したもの |
+| `dictionaries.json` | 目録（hasami の版・辞書の形式の版・推奨の辞書・各辞書の大きさと SHA-256） |
+| `SHA256SUMS` | すべての添付ファイルの SHA-256 |
+| `THIRD_PARTY_LICENSES.md` | 辞書のライセンス（辞書を再配布するときは一緒に配る） |
+
+リリースの辞書は、Release ワークフローがタグのソースから `scripts/build-dict.sh` で作り、全件の検証・配布辞書の
+受け入れテスト・文分割の例外表との照合を通したものだけを添付する。v26.9.103 までは辞書を Git LFS でリポジトリに
+置いていた（v26.9.103 のリリースには、そのときの辞書を後から添付した）。
+
+以下の辞書は配布していないが、ローカルでビルドできる。
 
 | ファイル | 内容 | ビルドコマンド |
 |---------|------|--------------|
@@ -211,6 +273,15 @@ IPAdic・NEologd・`dict/user` に表層形がある語は落とす。品詞は 
 repair を手で試し直すために repair 前の辞書が要るときは、`scripts/build-dict.sh --keep-intermediate` で
 `.dict-src/build/*.base.hsd` に残す。
 3 辞書の作り直しは取得済みなら 5 分ほどで終わる（うち SudachiDict の変換が 3 分、最大 RSS は約 3GB）。
+
+辞書を変える PR では、GitHub Actions の Build Dictionaries（`.github/workflows/dict-build.yml`）をブランチで動かすと、
+リリースと同じ手順（作る → 全件の検証 → 受け入れテスト → 例外表との照合 → 圧縮 → 目録）で作った辞書を artifact で
+受け取れる。辞書はコミットしない。
+
+```bash
+gh workflow run dict-build.yml --ref <ブランチ>
+gh run download <run-id> -n dictionaries -D /tmp/dicts   # 辞書は /tmp/dicts/dict/ に入る
+```
 
 `dict/user/*.csv` には `#` で始まるコメント行を書ける。`#` で始まってもエントリの列数（13 列）が
 そろった行は語として読む（NEologd には `#` で始まるハッシュタグの語がある）。
@@ -485,6 +556,10 @@ Unihan は初回に `.dict-src/unihan/` へダウンロードし、SHA-256 を�
 ### 形態素解析 (CLI)
 
 ```bash
+# 辞書を置き場所に取っておけば --dict は要らない（下の例は --dict で辞書を指定する）
+hasami dict download
+hasami tokenize "東京都に住んでいる"
+
 # MeCab形式で出力
 hasami tokenize --dict dict/ipadic-neologd.hsd "東京都に住んでいる"
 
@@ -497,8 +572,9 @@ hasami tokenize --dict dict/ipadic-neologd.hsd --format json "東京都に住ん
 # 標準入力から
 echo "形態素解析のテスト" | hasami tokenize --dict dict/ipadic-neologd.hsd
 
-# --dict を省くと、環境変数 HASAMI_DICT → ~/.local/share/hasami/*.hsd の順に辞書を探す
+# --dict を省くと、環境変数 HASAMI_DICT → 置き場所（既定は ~/.local/share/hasami/）の *.hsd の順に辞書を探す
 HASAMI_DICT=dict/ipadic-neologd-sudachi.hsd hasami tokenize "形態素解析のテスト"
+hasami tokenize -d "$(hasami dict path ipadic)" "形態素解析のテスト"   # 置き場所の ipadic を使う
 
 # 大量の行は並列に解析する（-j の既定は CPU の数。出力の順序は入力どおり。-j 1 で 1 スレッド）
 hasami tokenize --dict dict/ipadic-neologd.hsd -j 4 < corpus.txt > corpus.mecab
@@ -519,6 +595,8 @@ crates.io には公開していない（`hasami` の名前は別のプロジェ�
 hasami = { git = "https://github.com/owayo/hasami", default-features = false, features = ["analyzer"] }
 # 文分割（sentence）だけなら。依存は無い
 # hasami = { git = "https://github.com/owayo/hasami", default-features = false }
+# 配布辞書をリリースから取るなら（hasami::download）
+# hasami = { git = "https://github.com/owayo/hasami", default-features = false, features = ["download"] }
 # 辞書も作るなら（DictBuilder、MeCab 形式 CSV の読み書き）
 # hasami = { git = "https://github.com/owayo/hasami", default-features = false, features = ["build"] }
 ```
@@ -527,8 +605,9 @@ hasami = { git = "https://github.com/owayo/hasami", default-features = false, fe
 | --- | --- | --- |
 | （なし） | 辞書の要らない文分割（`sentence`） | なし |
 | `analyzer` | 解析（`Analyzer`・`Dictionary`・`Token`・品詞の正規化、辞書を埋め込む `include_hsd!`）、C FFI | memmap2, bytemuck |
+| `download` | リリースの配布辞書の取得（`hasami::download`。`analyzer` を含む） | ureq（rustls）, sha2, tempfile, serde, serde_json, ruzstd |
 | `build` | 辞書の構築・修復・書き出し（`DictBuilder`、`write_lexicon_csv`。`analyzer` を含む） | csv, encoding_rs, glob |
-| `cli` | `hasami` コマンド（`build` を含む） | clap, indicatif, serde_json |
+| `cli` | `hasami` コマンド（`build` と `download` を含む） | clap, indicatif, serde_json |
 
 既定は `cli`（`cargo install` やこのリポジトリでのビルドで CLI が使える）。
 `default-features = false` だけで解析器を使っていた場合は `features = ["analyzer"]` を足す（`v26.9.100` までは
@@ -582,8 +661,9 @@ match analyzer.try_tokenize("東京都に住んでいる") {
 辞書なしでも動く利用者はこのエラーのときだけ辞書なしに切り替えればよい。
 
 1. 環境変数 `HASAMI_DICT`（辞書ファイルのパス）
-2. `$XDG_DATA_HOME/hasami/`（未設定なら `~/.local/share/hasami/`）の `*.hsd`。複数あれば
-   `ipadic-neologd-sudachi.hsd` → `ipadic-neologd.hsd` → `ipadic.hsd` → そのほかの名前順
+2. 置き場所（`hasami::analyzer::data_dir()`。`HASAMI_DATA_DIR` → `$XDG_DATA_HOME/hasami/` → `%LOCALAPPDATA%\hasami\`
+   （Windows）→ `~/.local/share/hasami/`）の `*.hsd`。複数あれば `ipadic-neologd-sudachi.hsd` → `ipadic-neologd.hsd` →
+   `ipadic.hsd` → そのほかの名前順（`hasami::analyzer::preferred_dict_in(dir)`）
 
 ```rust
 let mut analyzer = match hasami::Analyzer::load_default() {
@@ -592,6 +672,54 @@ let mut analyzer = match hasami::Analyzer::load_default() {
     Err(e) => return Err(e.into()),
 };
 ```
+
+置き場所の規則を写さずに済むよう、`data_dir()` を公開している（辞書を取得するツールは、ここに置けば
+`hasami tokenize` や `load_default` がそのまま見つける）。
+
+#### 配布辞書を取得する（`download` feature）
+
+`hasami::download` は `hasami dict download` と同じ手順で、リリースの配布辞書を取得して置き場所に置く
+（目録の大きさと SHA-256、辞書として読めることを確かめてから、一時ファイルを rename して置く）。
+
+```rust
+use hasami::download::{self, DownloadOptions};
+
+// この版（hasami の Cargo.toml の version）のリリースの目録から推奨辞書を取る
+let catalog = download::catalog(download::CURRENT_TAG)?;
+catalog.check_format()?; // この hasami が読める形式か
+let dict = catalog.find(download::RECOMMENDED).expect("推奨辞書は目録にある");
+let dir = hasami::analyzer::data_dir().expect("置き場所が決まる");
+let mut progress = |received: u64, total: u64| eprint!("\r{received} / {total}");
+let options = DownloadOptions {
+    progress: Some(&mut progress),
+    ..DownloadOptions::default()
+};
+let outcome = download::download(dict, &dir, options)?; // 正しいファイルがあれば通信しない
+let analyzer = hasami::Analyzer::load(outcome.path())?;
+```
+
+大きさと SHA-256 を自分のソースに固定するなら、目録を取らずに `DistributedDict` を組み立てて渡す
+（取得元を信用しきらずに使える。圧縮版も固定するなら `compressed` を埋める）。
+
+```rust
+let dict = download::DistributedDict::new(
+    "ipadic",
+    18_125_804,
+    "e917bcdcdb45893fb4dd9b2de88ccb11dba2ecad2471dd0f62bd674a7f89ed73",
+);
+let base = download::release_url("v26.9.103");
+let options = DownloadOptions {
+    base_url: Some(&base), // 省くと、この hasami と同じ版のリリース
+    ..DownloadOptions::default()
+};
+download::download(&dict, &dir, options)?;
+```
+
+- `download::verify(path, &dict)` は置き場所のファイルを大きさと SHA-256 で確かめる（通信しない）
+- `download::install(file, Some(&dict), &dir, force)` は手元のファイル（`.hsd` / `.hsd.zst`）を確かめて置く
+- `download::catalog_from(url)` はミラー（`<url>/dictionaries.json`）の目録を取る
+- 依存は ureq（TLS は rustls で、証明書は OS の証明書ストアで検証する）、sha2、tempfile、serde、ruzstd（zstd の展開。
+  C のライブラリを使わない）。解析だけを使うなら `download` は入れない
 
 #### 実行ファイルに辞書を埋め込む
 
@@ -941,9 +1069,15 @@ make check
 # リリースビルド
 make release
 
+# 配布辞書をこの版のリリースから dict/ に取る（配布辞書を使う #[ignore] のテストは cargo test -- --ignored）
+make dict-download
+
 # 辞書ビルド（全辞書）
 make dict
 ```
+
+リリースは GitHub Actions の Release（`.github/workflows/release.yml`）を手で動かす。版を上げてタグを切り、5 ターゲットの
+バイナリと、タグのソースから作った配布辞書（`dict-build.yml` を呼ぶ）をリリースに添付する。
 
 ## ライセンス
 
@@ -954,11 +1088,12 @@ mecab-ipadic（NAIST-2003）・mecab-ipadic-NEologd（Apache-2.0）・SudachiDic
 hasami をリンクしたバイナリには辞書を同梱しなくてもこの表が入るので、配布するときは
 [`src/sentence/builtin_exceptions.NOTICE`](src/sentence/builtin_exceptions.NOTICE) の表示を添える（詳細は [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md)）。
 
-### 同梱辞書のライセンス
+### 配布辞書のライセンス
 
-本リポジトリの `dict/` ディレクトリに同梱されている辞書は、以下のソースから構築されています。各辞書の著作権・ライセンスにしたがってご利用ください。
+リリースに添付している配布辞書は、以下のソースから構築されています。各辞書の著作権・ライセンスにしたがってご利用ください。
+ライセンスの全文はリリースにも `THIRD_PARTY_LICENSES.md` として添付しています。辞書を再配布するときは、このファイルを一緒に配ってください。
 
-#### IPAdic (`dict/ipadic.hsd`, `dict/ipadic-neologd.hsd`)
+#### IPAdic (`ipadic.hsd`, `ipadic-neologd.hsd`)
 
 [MeCab用IPAdic](https://taku910.github.io/mecab/#download) (2.7.0-20070801) を基に構築。
 
@@ -974,7 +1109,7 @@ hasami をリンクしたバイナリには辞書を同梱しなくてもこの�
 
 詳細は [NAIST-jdic](https://ja.osdn.net/projects/naist-jdic/) を参照してください。
 
-#### mecab-ipadic-NEologd (`dict/ipadic-neologd.hsd`)
+#### mecab-ipadic-NEologd (`ipadic-neologd.hsd`)
 
 [mecab-ipadic-NEologd](https://github.com/neologd/mecab-ipadic-neologd) のシードデータを IPAdic に統合。
 
@@ -994,7 +1129,7 @@ hasami をリンクしたバイナリには辞書を同梱しなくてもこの�
 
 NEologd は Apache License 2.0 に加え、IPAdic のライセンス条件も適用されます。
 
-#### SudachiDict (`dict/ipadic-neologd-sudachi.hsd`)
+#### SudachiDict (`ipadic-neologd-sudachi.hsd`)
 
 [SudachiDict](https://github.com/WorksApplications/SudachiDict) の raw 辞書ソース（small + core）の語彙データを変換して構築。統合辞書では品詞体系と文脈 ID を IPAdic に写しています。
 

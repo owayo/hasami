@@ -1,8 +1,0 @@
-# 辞書は 100MB を超えるので Git LFS で扱う。
-#
-# ここで指定していても、`git lfs install` していない環境ではフィルタが走らず
-# 実体がそのままコミットされる（GitHub は 100MB を超える blob を拒否するので
-# push できなくなる）。`make setup-hooks` で入れる pre-commit フックがそれを検出する。
-*.hsd filter=lfs diff=lfs merge=lfs -text
-*.dic filter=lfs diff=lfs merge=lfs -text
-*.bin filter=lfs diff=lfs merge=lfs -text
