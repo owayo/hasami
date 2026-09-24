@@ -41,7 +41,8 @@ pub enum DictError {
     UnsupportedPlatform,
     /// 形式に違反している（壊れたファイル）。解析中に見つけた不正な参照もこれで返す
     Corrupt(String),
-    /// 辞書を作れない入力（空の表層形、範囲外の文脈 ID、除去済み辞書の再編集など）
+    /// 辞書を作れない入力（空の表層形、範囲外の文脈 ID、除去済み辞書の再編集など）と、
+    /// 読めない置き方のバイト列（8 バイト境界にない [`Dictionary::from_static`] の入力）
     Invalid(String),
     /// 既定の場所に辞書が無い（探した場所）。[`crate::Analyzer::load_default`] が返す
     NotFound(Vec<String>),
