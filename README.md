@@ -14,7 +14,10 @@
   <img src="https://img.shields.io/badge/Linux-FCC624?logo=linux&amp;logoColor=black" alt="Linux">
   <img src="https://img.shields.io/badge/macOS-000000?logo=apple&amp;logoColor=white" alt="macOS">
   <img src="https://img.shields.io/badge/Windows-0078D6" alt="Windows">
-  <br>
+</p>
+
+<p align="center">
+  <a href="https://github.com/owayo/hasami/actions/workflows/release.yml"><img src="https://github.com/owayo/hasami/actions/workflows/release.yml/badge.svg?branch=main" alt="Release"></a>
   <a href="https://github.com/owayo/hasami/actions/workflows/ci.yml"><img src="https://github.com/owayo/hasami/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
   <a href="https://github.com/owayo/hasami/releases/latest"><img src="https://img.shields.io/github/v/release/owayo/hasami" alt="Version"></a>
   <a href="LICENSE"><img src="https://img.shields.io/github/license/owayo/hasami" alt="License"></a>
@@ -28,11 +31,17 @@
 
 ## 特徴
 
-- **高速**: ニュース記事 13.3 万行（24.3MB）を 1 スレッドで約 1.2 秒で解析（MeCab の約 2.5 倍）。`hasami tokenize` は標準入力の行を CPU の数だけ並列に解析する
+- **高速**: ニュース記事 13.3 万行（24.3MB）を 1 スレッドで約 1.2 秒で解析（MeCab の約 2.5 倍。PR #14 より前の計測で、
+  今は約 15% 遅い。下の「ベンチマーク」）。`hasami tokenize` は標準入力の行を CPU の数だけ並列に解析する
 - **高精度**: ラティス構築 + Viterbiコスト最小化による最適分割
 - **ゼロ依存**: MeCab/Sudachi等の外部エンジンに非依存
-- **多言語対応**: Rust / Python / C FFI から利用可能
-- **MeCab辞書互換**: IPAdic / UniDic 等のMeCab形式辞書をそのまま利用可能
+- **Rust・Python・C から使える**: Rust のライブラリ、Python バインディング（PyO3）、C FFI がある
+- **MeCab 形式の辞書から構築**: MeCab 形式の CSV と matrix.def・char.def・unk.def から辞書を作る。配布辞書は IPAdic・
+  IPAdic + NEologd・IPAdic + NEologd + SudachiDict の 3 つ（SudachiDict は IPAdic の品詞体系に変換して足す）。UniDic は手元でビルドできる
+- **読みと発音**: トークンごとに読みと発音を返す。文脈で読みが変わる語（「他」「数」など）と、1〜2 文字の英字の略語（AI・PC など）は、
+  解析の後で読みを直す
+- **辞書不要の文分割**: `hasami::sentence` は辞書をロードせずに文境界を求める（feature なしで使え、依存も無い）。
+  `Yahoo!ニュース`・`モーニング娘。` のように文末記号を含む語の内側では切らない
 - **辞書マージ**: 既存辞書にMeCab形式CSVを追加可能
 - **高速辞書ロード**: mmap-native バイナリ形式（.hsd v4）。ロード時はヘッダと小さな表だけを検査し、本体は解析で触れたページだけを読む
 - **未知語処理**: 文字分類ベースの未知語推定（char.def・unk.def を MeCab と同じ意味で読む）。カタカナの複合語は既知語に分ける（「オススメ / アプリ」）
@@ -40,7 +49,8 @@
 ## 動作環境
 
 - **OS**: Linux（x86_64・aarch64）、macOS（Apple Silicon・Intel）、Windows（x86_64）。この 5 つのバイナリを
-  [Releases](https://github.com/owayo/hasami/releases) に置いている。CI はテストを Linux で回し、ビルドは 5 つとも確かめる
+  [Releases](https://github.com/owayo/hasami/releases) に置いている。CI は Linux（x86_64）・macOS（Apple Silicon）・Windows で
+  テストを回し、ビルドは 5 つとも確かめる
 - **Rust**: 1.98以上（ソースからビルドする場合。開発に使う版は `mise.toml` で固定している）
 
 ## インストール
@@ -57,17 +67,16 @@ hasami tokenize "形態素解析のテスト"    # --dict を省くと、置い�
 
 ### ソースからビルド
 
-開発に使うツールの版は `mise.toml` で固定している（Rust 1.98.1・Python 3.13・uv・maturin）。
-[mise](https://mise.jdx.dev/) で入れると同じ版がそろう。`mise install` は取得するだけなので、`mise activate` していなければ
-コマンドの前に `mise exec --` を付ける（activate 済みなら省ける）。
+開発に使うツールの版は `mise.toml` で固定している。[mise](https://mise.jdx.dev/) があれば、Makefile が `mise exec --` 経由で
+同じ版のツールを呼ぶ（`mise activate` していなくてよい）。
 
 ```bash
-mise install                        # mise.toml のツールを入れる
-mise exec -- make install
-
-# ワークスペース全体をビルド
-mise exec -- cargo build --workspace
+make setup                                    # mise.toml のツールを入れ、Cargo.lock どおりに依存を取る
+make install                                  # リリース版を /usr/local/bin に入れる
+make install INSTALL_PATH="$HOME/.local/bin"  # 入れる先を変える
 ```
+
+mise を使わずに PATH にあるツールで動かすなら `SYSTEM_TOOLS=1` を付ける（例: `make install SYSTEM_TOOLS=1`。版はそろわない）。
 
 clone したら一度フックを入れておく（50MB を超えるファイルをコミットしようとすると pre-commit が止める）。
 
@@ -1064,41 +1073,73 @@ livedoor ニュースコーパスの本文 132,876 行（24.3MB）で測った�
 
 ## 開発
 
-ツールの版は `mise.toml` で固定している（`mise install` で入れる。下のコマンドは `mise activate` 済みの前提。
-そうでなければ前に `mise exec --` を付ける）。CI も `.github/actions/setup-mise`（jdx/mise-action）で同じ版を入れる。
-mise 自身の版はそこに書く。`mise.toml` の版を変えたら
+[mise](https://mise.jdx.dev/) を使う。ツールの版は `mise.toml` で固定している（Rust・Python・uv・maturin と、Linux だけの cross）。
+Makefile はこれらを `mise exec --` 経由で呼ぶので、`mise activate` していなくても同じ版で動く。
+
+```bash
+make setup   # mise.toml のツールを入れ、Cargo.lock どおりに依存を取る
+make ci      # CI の quality ジョブと同じ検査（整形・clippy・テスト）
+```
+
+CI（`.github/workflows/ci.yml`）の Quality ジョブは、Linux と macOS でこの 2 つだけを実行する。Windows は make を使わず、
+Build ジョブで `cargo test` を直接回す。
+
+| コマンド | 説明 |
+|---|---|
+| `make setup` | Install the toolchain (mise.toml) and fetch the dependencies (Cargo.lock) |
+| `make setup-hooks` | Enable repository hooks for this clone |
+| `make build` | Build debug version |
+| `make release` | Build release version |
+| `make run` | Run the CLI (arguments in ARGS="...") |
+| `make test` | Run tests (the workspace and the library-only feature sets) |
+| `make lint` | Run clippy with warnings denied (the workspace and the library-only feature sets) |
+| `make fmt` | Format code |
+| `make fmt-check` | Check formatting (does not rewrite) |
+| `make check` | Check formatting and run clippy (no tests) |
+| `make ci` | Run the same checks as the CI quality job (check + test) |
+| `make install` | Build release and install to INSTALL_PATH (default /usr/local/bin) |
+| `make uninstall` | Remove the installed binary from INSTALL_PATH |
+| `make clean` | Clean build artifacts |
+| `make dict-download` | Download the distributed dictionaries of this version's release into dict/ |
+| `make dict` | Build the distributed dictionaries (IPAdic, +NEologd, +SudachiDict) |
+| `make dict-ipadic` | Build IPAdic dictionary |
+| `make dict-neologd` | Build IPAdic + NEologd dictionary |
+| `make dict-sudachi` | Build IPAdic + NEologd + SudachiDict dictionary (recommended) |
+| `make dict-repair` | Repair a dictionary in place (DICT=path/to/dict.hsd) |
+| `make dict-unidic-cwj` | Build UniDic CWJ (書き言葉) dictionary |
+| `make dict-unidic-csj` | Build UniDic CSJ (話し言葉) dictionary |
+| `make dict-clean` | Remove downloaded dictionary sources |
+| `make help` | Show this help message |
+
+`make test` と `make lint` は、ライブラリとして使う 3 つの構成（feature なし・`analyzer`・`download`）も確かめる。
+hasami-python は pyo3 の extension-module のため、macOS・Linux ではテストバイナリをリンクできない。そこで `make test` からは外し、
+コンパイルは `make lint`（`clippy --workspace`）で確かめる。make のターゲットが無い操作は、コマンドの前に `mise exec --` を付ける。
+
+```bash
+# Python バインディングを含むワークスペース全体のビルド（make build はルートのクレートだけ）
+mise exec -- cargo build --workspace
+
+# 配布辞書を使う #[ignore] のテスト（先に make dict-download で dict/ に辞書を取る。
+# -- --ignored だけにすると、ネットワークを使うテストまで走る）
+mise exec -- cargo test --locked --workspace --exclude hasami-python -- --ignored distributed
+```
+
+mise で入れられないものは OS のものを使う。`make dict` 系（`scripts/build-dict.sh`）と UniDic の取得には git・curl・xz・unzip が、
+リリースの辞書の圧縮（CI）には zstd が要る。
+
+CI も `.github/actions/setup-mise`（jdx/mise-action）で同じ版を入れる。mise 自身の版はそこに書く。`mise.toml` の版を変えたら
 `MISE_GITHUB_TOKEN=$(gh auth token) mise lock --platform linux-x64,macos-arm64,macos-x64,windows-x64` で `mise.lock` を
 作り直す（CI は lock の URL と SHA-256 で取る。トークンが無いと GitHub API の制限で記録が黙って欠ける）。
 `mise.lock` は書式 1 のまま持つ（CI の mise は書式 2 を読めない。`mise lock --upgrade` はしない）。
 
-```bash
-# 開発用のツールを入れる（Rust 1.98.1・Python・uv・maturin）
-mise install
+## リリース
 
-# ワークスペース全体のビルド
-cargo build --workspace
+GitHub Actions の Release（`.github/workflows/release.yml`）を手で動かす（Actions > Release > Run workflow）。
+版は `yy.m.counter`（例: `26.9.104`）で、同じ月のうちは counter を 1 つずつ上げ、月が変わると 100 から数え直す。
+Release は版を上げた Cargo.toml と Cargo.lock をコミットし、タグを切る。その後、5 ターゲットのバイナリと、タグのソースから
+作った配布辞書（`dict-build.yml` を呼ぶ）をリリースに添付する。
 
-# ビルド
-make build
-
-# テスト実行（hasami-python は extension-module のためリンク不可、clippy で検証）
-cargo test --workspace --exclude hasami-python
-
-# clippy と フォーマットチェック
-make check
-
-# リリースビルド
-make release
-
-# 配布辞書をこの版のリリースから dict/ に取る（配布辞書を使う #[ignore] のテストは cargo test -- --ignored）
-make dict-download
-
-# 辞書ビルド（全辞書）
-make dict
-```
-
-リリースは GitHub Actions の Release（`.github/workflows/release.yml`）を手で動かす。版を上げてタグを切り、5 ターゲットの
-バイナリと、タグのソースから作った配布辞書（`dict-build.yml` を呼ぶ）をリリースに添付する。
+`dry_run` にチェックを入れて動かすと、次の版を計算して表示するだけで、コミット・タグ・ビルド・リリースはしない。
 
 ## ライセンス
 
