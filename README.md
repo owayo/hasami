@@ -8,16 +8,16 @@
   <strong>高速日本語形態素解析エンジン（Rust製）</strong>
 </p>
 
+<h3 align="center">対応プラットフォーム</h3>
+
 <p align="center">
-  <a href="https://github.com/owayo/hasami/actions/workflows/ci.yml">
-    <img alt="CI" src="https://github.com/owayo/hasami/actions/workflows/ci.yml/badge.svg?branch=main">
-  </a>
-  <a href="https://github.com/owayo/hasami/releases/latest">
-    <img alt="Version" src="https://img.shields.io/github/v/release/owayo/hasami">
-  </a>
-  <a href="LICENSE">
-    <img alt="License" src="https://img.shields.io/github/license/owayo/hasami">
-  </a>
+  <img src="https://img.shields.io/badge/Linux-FCC624?logo=linux&amp;logoColor=black" alt="Linux">
+  <img src="https://img.shields.io/badge/macOS-000000?logo=apple&amp;logoColor=white" alt="macOS">
+  <img src="https://img.shields.io/badge/Windows-0078D6" alt="Windows">
+  <br>
+  <a href="https://github.com/owayo/hasami/actions/workflows/ci.yml"><img src="https://github.com/owayo/hasami/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
+  <a href="https://github.com/owayo/hasami/releases/latest"><img src="https://img.shields.io/github/v/release/owayo/hasami" alt="Version"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/owayo/hasami" alt="License"></a>
 </p>
 
 ---
@@ -39,8 +39,9 @@
 
 ## 動作環境
 
-- **OS**: macOS、Linux
-- **Rust**: 1.98以上（ソースからビルドする場合）
+- **OS**: Linux（x86_64・aarch64）、macOS（Apple Silicon・Intel）、Windows（x86_64）。この 5 つのバイナリを
+  [Releases](https://github.com/owayo/hasami/releases) に置いている。CI はテストを Linux で回し、ビルドは 5 つとも確かめる
+- **Rust**: 1.98以上（ソースからビルドする場合。開発に使う版は `mise.toml` で固定している）
 
 ## インストール
 
