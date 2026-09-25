@@ -1,4 +1,4 @@
-.PHONY: build release install clean clean-lfs test fmt check help setup-hooks \
+.PHONY: build release install clean test fmt check help setup-hooks dict-download \
        dict dict-ipadic dict-neologd dict-sudachi dict-repair dict-unidic-cwj dict-unidic-csj dict-clean \
        dict-download-unidic-cwj dict-download-unidic-csj
 
@@ -43,28 +43,31 @@ test: ## Run tests
 fmt: ## Format code
 	cargo fmt --all
 
-# ライブラリとして使う 2 つの構成も CI と同じく確かめる。文分割だけ (feature なし。依存なし) と、
-# 解析まで (analyzer。依存は memmap2 と bytemuck)
+# ライブラリとして使う 3 つの構成も CI と同じく確かめる。文分割だけ (feature なし。依存なし)、
+# 解析まで (analyzer。依存は memmap2 と bytemuck)、配布辞書の取得まで (download。analyzer に
+# HTTP・TLS・SHA-256・zstd の展開を足す)
 check: ## Run clippy and check (incl. the library-only feature sets)
 	cargo clippy --workspace --all-targets -- -D warnings
 	cargo clippy --lib --no-default-features -- -D warnings
 	cargo test --lib --no-default-features
 	cargo clippy --lib --no-default-features --features analyzer -- -D warnings
 	cargo test --lib --no-default-features --features analyzer
+	cargo clippy --lib --no-default-features --features download -- -D warnings
+	cargo test --lib --no-default-features --features download
 	cargo check --workspace
 
-setup-hooks: ## Enable repository hooks and Git LFS for this clone
+setup-hooks: ## Enable repository hooks for this clone
 	git config core.hooksPath .githooks
-	git lfs install --local
 
-clean: ## Clean build artifacts and Git LFS objects the current commit does not use
+clean: ## Clean build artifacts
 	cargo clean
-	scripts/clean-lfs.sh
 
-# 手元の LFS の実体を、いまのコミット (と未 push のコミット・stash) が使うものだけにする。
-# 消す実体はリモートにあることを確かめてから消す。DRY_RUN=1 で消す対象を表示するだけ
-clean-lfs: ## Delete local Git LFS objects the current commit does not use (DRY_RUN=1 to preview)
-	scripts/clean-lfs.sh $(if $(DRY_RUN),--dry-run)
+## Dictionary Download
+
+# 配布辞書はリポジトリに置かず、リリースに添付する。この版 (Cargo.toml の version) のリリースから
+# 3 つとも dict/ に取る (展開後の SHA-256 を目録と照らす)
+dict-download: release ## Download the distributed dictionaries of this version's release into dict/
+	$(HASAMI) dict download --dir $(DICT_OUT) --all
 
 ## Dictionary Build
 
@@ -149,7 +152,7 @@ help: ## Show this help message
 	@echo "Targets:"
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
 	@echo ""
-	@echo "Dictionary files are output to $(DICT_OUT)/:"
+	@echo "Dictionaries in $(DICT_OUT)/ (not in the repository; make dict-download to download, make dict to build):"
 	@echo "  ipadic.hsd                  IPAdic single"
 	@echo "  ipadic-neologd.hsd          IPAdic + NEologd"
 	@echo "  ipadic-neologd-sudachi.hsd  IPAdic + NEologd + SudachiDict (recommended)"
@@ -157,4 +160,4 @@ help: ## Show this help message
 	@echo "  unidic-csj.hsd              UniDic CSJ (話し言葉, not distributed)"
 	@echo ""
 	@echo "Release:"
-	@echo "  Use GitHub Actions > Release > Run workflow"
+	@echo "  Use GitHub Actions > Release > Run workflow (attaches the binaries and the dictionaries)"

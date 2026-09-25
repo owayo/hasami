@@ -275,10 +275,10 @@ pub unsafe extern "C" fn hasami_free(handle: *mut HasamiAnalyzer) {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn hasami_last_error(handle: *const HasamiAnalyzer) -> *const c_char {
     unsafe {
-        if !handle.is_null() {
-            if let Some(err) = &(*handle).last_error {
-                return err.as_ptr();
-            }
+        if !handle.is_null()
+            && let Some(err) = &(*handle).last_error
+        {
+            return err.as_ptr();
         }
         LAST_ERROR.with(|last_error| {
             last_error

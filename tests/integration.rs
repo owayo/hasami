@@ -2387,14 +2387,16 @@ fn test_cli_repair_drop_quantity_nouns() {
 // 配布辞書の受け入れ（noslop からの要望 H7・H8）
 // ==========================================================================
 
-/// 配布辞書を読み込む。`dict/` は Git LFS で管理している。環境変数 `HASAMI_TEST_DICT_DIR` を
-/// 付けると、そのディレクトリの辞書を使う（`scripts/build-dict.sh --out DIR` で作り直した辞書を試す）
+/// 配布辞書を読み込む。`dict/` の配布辞書はリポジトリに置かない（`make dict` で作るか
+/// `make dict-download` で取る）。環境変数 `HASAMI_TEST_DICT_DIR` を付けると、そのディレクトリの
+/// 辞書を使う（`scripts/build-dict.sh --out DIR` で作り直した辞書を試す）
 fn load_distributed_dict(name: &str) -> Analyzer {
     let dir = std::env::var("HASAMI_TEST_DICT_DIR")
         .unwrap_or_else(|_| format!("{}/dict", env!("CARGO_MANIFEST_DIR")));
     let path = format!("{dir}/{name}.hsd");
-    Analyzer::load(&path)
-        .unwrap_or_else(|e| panic!("{path}: {e}（Git LFS の辞書を取得したか確認）"))
+    Analyzer::load(&path).unwrap_or_else(|e| {
+        panic!("{path}: {e}（`make dict` で作るか、`make dict-download` で取ったか確認）")
+    })
 }
 
 /// (表層形, 品詞の先頭 2 要素, 原形) の列
