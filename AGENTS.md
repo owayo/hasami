@@ -8,7 +8,9 @@ Rust製の日本語形態素解析エンジン。外部エンジン（MeCab等�
 - **ツールの版**: `mise.toml` で固定（Rust 1.98.1（minimal + clippy・rustfmt・rust-src）・Python 3.13・uv・maturin・
   CI の cross（Linux だけ。main の commit）。`eval/` の uv も mise の Python を使う（`UV_PYTHON_PREFERENCE=only-system`）。
   版ファイル（.python-version など）や cargo install / pip install で入れない。CI は `.github/actions/setup-mise`
-  （jdx/mise-action。mise 自身の版と action の commit はここだけに書く）でジョブに要るツールだけを入れる。版は公開から
+  （jdx/mise-action。mise 自身の版と action の commit はここだけに書く）でジョブに要るツールだけを入れる。`make ci` を回す
+  Quality ジョブは、`mise exec` が mise.toml の全ツールを入れないよう `MISE_DISABLE_TOOLS` で Rust 以外を外す
+  （名前は mise.toml の書き方のまま。`uv` のような短い名前は効かない）。workflow の env は `MISE_LOCKED=1`。版は公開から
   14 日たったものを選び、変えたら `MISE_GITHUB_TOKEN=$(gh auth token) mise lock --platform linux-x64,macos-arm64,macos-x64,windows-x64`
   （トークンが無いと GitHub API の制限で記録が黙って欠ける）。`mise.lock` は書式 1（CI の mise 2026.9.5 は書式 2 を
   読めず「rust@… is not in the lockfile」で落ちる。`mise lock --upgrade` は CI の mise を 2026.9.7 以上にしてから）。
@@ -28,7 +30,7 @@ Rust製の日本語形態素解析エンジン。外部エンジン（MeCab等�
 hasami/
 ├── src/
 │   ├── lib.rs          # ライブラリエントリポイント（sentence 以外のモジュールは `analyzer` feature）、include_hsd! マクロ
-│   ├── main.rs         # CLI (build, merge, repair, export, tokenize, bench, info)
+│   ├── main.rs         # CLI (build, merge, repair, export, export-sentence-exceptions, tokenize, bench, info, dict)
 │   ├── dict/
 │   │   ├── mod.rs      # DictEntry, UnkEntry, ConnectionMatrix（解析側でも使う型）
 │   │   ├── builder.rs  # DictBuilder（CSV 読み込み・repair・書き出し）。`build` feature
@@ -77,12 +79,14 @@ hasami/
 │   └── pyproject.toml
 ├── .github/actions/setup-mise/  # jdx/mise-action で mise.toml のツールを入れる（mise 自身の版はここ）
 ├── .github/workflows/
-│   ├── ci.yml          # テスト・clippy（3 つのライブラリ構成）・fmt と、リリースと同じ 5 ターゲットのビルド
+│   ├── ci.yml          # Quality（ubuntu・macOS で make setup と make ci）と、リリースと同じ 5 ターゲットのビルド
+│   │                   # （Windows は make を使わず、Build ジョブで cargo test も回す）
 │   ├── dict-build.yml  # 配布辞書を作り、検証・受け入れテスト・例外表との照合・圧縮・目録を経て artifact に上げる
 │   │                   # （release.yml がタグで呼ぶ。辞書を変える PR ではブランチで手で動かす）
 │   └── release.yml     # 版を上げてタグを切り、バイナリと配布辞書（.hsd・.hsd.zst・dictionaries.json）を添付する
 ├── build.rs            # 例外表の索引と版の識別子を作る（src/sentence/index.rs・chars.rs を #[path] で共有）
 ├── Cargo.toml          # ワークスペース + メインクレート
+├── Makefile            # 開発用タスク（make help で一覧。ツールは mise exec -- 経由で呼ぶ。CI の quality は make setup と make ci）
 ├── mise.toml           # ツールの版（Rust・Python・uv・maturin・cross）
 ├── mise.lock           # mise.toml のツールの URL と SHA-256（linux-x64・macos-arm64・macos-x64・windows-x64）
 └── README.md
@@ -100,7 +104,8 @@ hasami/
 - `cli`: `hasami` コマンド（`[[bin]]` の required-features）。`build` と `download` を含む。既定（`default = ["cli"]`）
 - `sentence` はほかのモジュールに依存しない（`pos`・`analyzer` が `sentence` を使う片方向）。`sentence` の doc から
   解析側の項目へ rustdoc のリンク（`` [`crate::pos`] `` など）を張ると、feature なしの `cargo doc` で壊れる
-- CI と `make check` は feature なし・`analyzer`・`download` の 3 構成で `clippy --lib -D warnings` と `test --lib` を回す
+- CI（`make ci`）は feature なし・`analyzer`・`download` の 3 構成でも `clippy --lib -D warnings`（`make lint`）と
+  `test --lib`（`make test`）を回す
   （`download` のテストのうち本物の辞書を作るものは `build` feature のときだけ）
 
 ## 主要API
@@ -176,14 +181,17 @@ hasami/
 - build / merge / repair 共通: `--meta key=value`（メタデータ）、`--prune-dominated`（支配エントリを除いた最終辞書）
 
 ## ビルド・テスト
+開発コマンドは `make help` を参照。ツールの版は `mise.toml` が正で、Makefile は `mise exec --` 経由でツールを呼ぶ
+（activate は要らない。mise を使わないなら `SYSTEM_TOOLS=1`）。make のターゲットが無い操作は `mise exec --` を前に付ける。
+
 ```bash
-mise install              # mise.toml のツールを入れる（activate していなければ以下は mise exec -- を前に付ける）
-cargo build --release     # リリースビルド
-cargo build --workspace   # Python バインディングを含むワークスペース全体をビルド
-cargo test --workspace --exclude hasami-python  # テスト実行（hasami-python は extension-module のため
-                                                # macOS/Linux でリンク不可。clippy --workspace で検証）
-cargo clippy --workspace --all-targets -- -D warnings  # lint（hasami-python のコンパイル検証を含む）
-make check                # 上の lint + ライブラリとして使う 3 構成（feature なし・analyzer・download）の clippy と lib テスト（CI と同じ）
+make setup                # mise.toml のツールを入れ、Cargo.lock どおりに依存を取る
+make ci                   # CI の quality ジョブと同じ（= make check + make test）
+make check                # 整形の検査と clippy だけ（テストなし。= make fmt-check + make lint）
+make lint                 # clippy --workspace --all-targets -D warnings（hasami-python のコンパイル検証を含む）と 3 構成の clippy --lib
+make test                 # テスト（hasami-python は extension-module のため macOS/Linux でリンク不可なので除く）と 3 構成の test --lib
+make release              # リリースビルド（--locked）
+mise exec -- cargo build --workspace  # Python バインディングを含むワークスペース全体をビルド（make build はルートのクレートだけ）
 make dict-download        # この版のリリースの配布辞書 3 つを dict/ に取る（配布辞書の #[ignore] テスト・例外表の作り直し用）
 make dict                 # 配布辞書 3 つを上流から作り直す（= scripts/build-dict.sh）
 make dict-sudachi         # 推奨辞書だけ（dict-ipadic / dict-neologd も同様）

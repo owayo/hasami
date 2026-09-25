@@ -8,22 +8,31 @@ on:
         type: boolean
         default: false
 
+# 書き込みが要るジョブ（版のコミットとタグの push、Release の作成）にだけ contents: write を与える
 permissions:
-  contents: write
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
   BINARY_NAME: hasami
+  # mise.lock にない版を解決させず、mise.lock を書き換えさせない
+  MISE_LOCKED: "1"
 
 jobs:
   prepare-release:
     name: Prepare Release
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      # push できるジョブなので、取得するツールを cargo update に要る rust だけにする（mise は名指しでは
+      # 絞れない）。名前は mise.toml の書き方のまま書く。mise.toml にツールを足したらここにも足す
+      MISE_DISABLE_TOOLS: python,aqua:astral-sh/uv,github:PyO3/maturin,cargo:https://github.com/cross-rs/cross
     outputs:
       version: ${{ steps.bump.outputs.version }}
       tag: ${{ steps.bump.outputs.tag }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
@@ -139,7 +148,13 @@ jobs:
             tools: rust
 
     steps:
-      - uses: actions/checkout@v5
+      # Windows のランナーは既定で LF を CRLF に変えて checkout する。ci.yml の build と同じく LF のまま取り、
+      # 埋め込む例外表（include_str!）などの改行を CI で確かめたものとそろえる
+      - name: Keep LF line endings
+        if: runner.os == 'Windows'
+        run: git config --global core.autocrlf false
+
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           ref: ${{ needs.prepare-release.outputs.tag }}
 
@@ -179,7 +194,7 @@ jobs:
           cd ../../..
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: ${{ matrix.asset_name }}
           path: ${{ matrix.asset_name }}
@@ -200,9 +215,11 @@ jobs:
     needs: [prepare-release, build, dictionaries]
     if: ${{ !inputs.dry_run }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Download all artifacts
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           path: artifacts
 
@@ -256,7 +273,7 @@ jobs:
           ls -la release/
 
       - name: Create Release
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           tag_name: ${{ needs.prepare-release.outputs.tag }}
           name: ${{ needs.prepare-release.outputs.tag }}
