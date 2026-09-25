@@ -4,7 +4,7 @@
 Rust製の日本語形態素解析エンジン。外部エンジン（MeCab等）に一切依存せず、ゼロベースで構築。
 
 ## 技術スタック
-- **言語**: Rust (2024 edition, MSRV 1.85)
+- **言語**: Rust (2024 edition, MSRV 1.98。let chains を使う)
 - **辞書**: mmap-native バイナリ形式 (.hsd v4) + bytemuck Pod 構造体。ロード時はヘッダと小さな表だけ検査
 - **Trie**: 文字単位 Double-Array Trie（文字を出現頻度順に符号化、単独の末尾は TAIL に圧縮、ゼロコピー mmap 参照）
 - **解析アルゴリズム**: ラティス構築 + Viterbi（コスト最小化、文分割最適化、転置した接続行列）。
@@ -46,19 +46,19 @@ hasami/
 │   │   └── builtin_exceptions.NOTICE  # 例外表を含むものを配布するときに添える表示
 │   ├── pos.rs          # 品詞の正規化（CoarsePos、IPAdic 系・UniDic 系）、否定の判定、モーラ数
 │   ├── lattice.rs      # ラティス構築 + Viterbi、Token、トークンの組み立て（既知語キャッシュ、品詞などの Arc は解析器ごと）
-│   ├── analyzer.rs     # 高レベルAPI（Analyzer: Arc<Dictionary> + ワークスペース）
+│   ├── analyzer.rs     # 高レベルAPI（Analyzer: Arc<Dictionary> + ワークスペース）、置き場所（data_dir）と既定の探索
+│   ├── download/       # リリースの配布辞書の取得（`download` feature）
+│   │   ├── mod.rs      # 目録（Catalog・DistributedDict）、download・verify・install、zstd の展開、HTTP（ureq）
+│   │   └── tests.rs    # 127.0.0.1 の小さな HTTP サーバーを相手にした取得のテスト
 │   └── ffi.rs          # C ABI インターフェース
-├── dict/               # ビルド済み辞書（Git LFS管理）
-│   ├── ipadic.hsd      # IPAdic 単体
-│   ├── ipadic-neologd.hsd  # IPAdic + NEologd
-│   ├── ipadic-neologd-sudachi.hsd  # IPAdic + NEologd + SudachiDict（推奨・最大語彙）
+├── dict/               # 辞書の入力（下の CSV）と、作った・取った配布辞書の置き場所（*.hsd は追跡しない）
 │   ├── user/           # ユーザー辞書CSV（make dict-neologd でマージ）
 │   ├── user-remove/    # repair --remove に渡す削除リスト（make dict-repair で全件適用）
 │   └── foreign-names/  # 外国人名の許可・拒否リストと、任意で適用するフルネームの削除リスト
-│       ※ unidic-cwj.hsd / unidic-csj.hsd は同梱されず make dict-unidic-cwj/csj でビルド
+│       ※ 配布辞書（ipadic / ipadic-neologd / ipadic-neologd-sudachi.hsd）はリリースの添付ファイルで配る。
+│         make dict で作るか make dict-download で取る。unidic-cwj.hsd / unidic-csj.hsd は make dict-unidic-cwj/csj
 ├── scripts/
 │   ├── build-dict.sh          # 配布辞書 3 つを上流の固定版から作る（Makefile の dict 系と CI が呼ぶ）
-│   ├── clean-lfs.sh           # 手元の LFS の実体を、いまのコミットが使うものだけにする（make clean-lfs / clean）
 │   ├── convert_sudachi_raw.py # SudachiDict の raw CSV → IPAdic 体系の MeCab CSV
 │   ├── convert-unidic-csv.py  # UniDic CSV → IPAdic互換フォーマット変換
 │   └── find_foreign_names.py  # 外国人名の削除リストを生成（Unihan の字音と照合）
@@ -67,6 +67,11 @@ hasami/
 │   ├── build.rs        # PyO3 拡張モジュール向けリンク設定
 │   ├── Cargo.toml
 │   └── pyproject.toml
+├── .github/workflows/
+│   ├── ci.yml          # テスト・clippy（3 つのライブラリ構成）・fmt と、リリースと同じ 5 ターゲットのビルド
+│   ├── dict-build.yml  # 配布辞書を作り、検証・受け入れテスト・例外表との照合・圧縮・目録を経て artifact に上げる
+│   │                   # （release.yml がタグで呼ぶ。辞書を変える PR ではブランチで手で動かす）
+│   └── release.yml     # 版を上げてタグを切り、バイナリと配布辞書（.hsd・.hsd.zst・dictionaries.json）を添付する
 ├── build.rs            # 例外表の索引と版の識別子を作る（src/sentence/index.rs・chars.rs を #[path] で共有）
 ├── Cargo.toml          # ワークスペース + メインクレート
 └── README.md
@@ -77,17 +82,34 @@ hasami/
 - `analyzer`: 形態素解析。`sentence` 以外のモジュール（analyzer・char_class・dict・ffi・hsd・lattice・pos）と
   再エクスポート（`Analyzer`・`DictEntry`・`DictError`・`Dictionary`・`Token`・`CoarsePos`）、`include_hsd!` マクロ。
   依存は memmap2・bytemuck
+- `download`: リリースの配布辞書の取得（`hasami::download`）。`analyzer` を含む。依存は ureq（rustls・platform-verifier）・
+  sha2・tempfile・serde・serde_json・ruzstd（C のライブラリを使わない zstd の展開）。noslop などの利用側が
+  自分で HTTP・検証・置き方を書かずに済むように公開している
 - `build`: 辞書の構築・修復・書き出し（`DictBuilder`・`write_lexicon_csv`・`hsd::writer`）。`analyzer` を含む。依存は csv・encoding_rs・glob
-- `cli`: `hasami` コマンド（`[[bin]]` の required-features）。`build` を含む。既定（`default = ["cli"]`）
+- `cli`: `hasami` コマンド（`[[bin]]` の required-features）。`build` と `download` を含む。既定（`default = ["cli"]`）
 - `sentence` はほかのモジュールに依存しない（`pos`・`analyzer` が `sentence` を使う片方向）。`sentence` の doc から
   解析側の項目へ rustdoc のリンク（`` [`crate::pos`] `` など）を張ると、feature なしの `cargo doc` で壊れる
-- CI と `make check` は feature なし・`analyzer` の 2 構成で `clippy --lib -D warnings` と `test --lib` を回す
+- CI と `make check` は feature なし・`analyzer`・`download` の 3 構成で `clippy --lib -D warnings` と `test --lib` を回す
+  （`download` のテストのうち本物の辞書を作るものは `build` feature のときだけ）
 
 ## 主要API
 - `Analyzer::load(path)` - .hsd 辞書ロード（mmap、IPAdic で ~1ms）
 - `Analyzer::tokenize(text)` - 形態素解析（壊れた辞書の不正な参照で panic）
 - `Analyzer::try_tokenize(text)` - 形態素解析（不正な参照は `DictError::Corrupt`。FFI・Python はこちら）
-- `Analyzer::load_default()` - `HASAMI_DICT` → `$XDG_DATA_HOME/hasami/*.hsd`（推奨順）の順に辞書を探す。無ければ `DictError::NotFound`
+- `Analyzer::load_default()` - `HASAMI_DICT` → 置き場所の `*.hsd`（推奨順）の順に辞書を探す。無ければ `DictError::NotFound`
+  （メッセージは `hasami dict download` を案内する）
+- `analyzer::data_dir()` - 置き場所（`HASAMI_DATA_DIR` → `$XDG_DATA_HOME/hasami` → `%LOCALAPPDATA%\hasami`（Windows。
+  `HOME` より先）→ `~/.local/share/hasami`）。`default_dict_path()` が探し、`hasami dict download` が置く。
+  `analyzer::preferred_dict_in(dir)` はその中で既定に選ぶ辞書（`DISTRIBUTED_DICTS` の推奨順 → ほかの `*.hsd` の名前順）
+- `download::catalog(tag)` / `catalog_from(url)` - リリース（ミラー）の目録 `dictionaries.json`（`Catalog`: hasami_version・
+  format_version・recommended・`DistributedDict` の列）。`catalog(tag)` は目録の版がタグと合うことも確かめる
+- `download::download(&dict, dir, DownloadOptions { base_url, compressed, force, progress })` - 取得して置く。既定の取得元は
+  `CURRENT_TAG`（`v<この版>`）のリリース。`.hsd.zst` があれば展開し、受け取ったものと展開したものの大きさと SHA-256、
+  `Dictionary::load` を確かめてから一時ファイルを rename。正しいファイルがあれば通信しない。目録のファイル名は
+  置き場所の外を指せない（`[A-Za-z0-9._-]`、`.` 始まりを拒む）。`DistributedDict::new(name, size, sha256)` で
+  利用側が値を固定して渡せる（noslop はこの形）
+- `download::verify(path, &dict)` / `download::install(file, Option<&dict>, dir, force)` / `Catalog::from_dir(dir)`（目録を作る）
+- `hsd::FORMAT_VERSION` - 読み書きする辞書の形式の版（目録の `format_version` と比べる）
 - `Analyzer::tokenize_sentences(text, &SplitOptions)` - 文ごとの範囲とトークン列
 - `LatticeWorkspace::tokenize_into(text, &dict, offset, &mut out)` - 前分割なしで 1 チャンクを解析し、位置をずらして `out` に足す
 - `analyzer::{format_mecab, format_wakachi}` / `{push_mecab, push_wakachi}` - 出力の書式化（push は既存の String に足す）
@@ -136,6 +158,10 @@ hasami/
 - `hasami repair` - 誤読エントリの修復・除去（範囲外の文脈 ID、壊れた発音、表記ゆれ、漢数字の人名、削除リスト、文や句を 1 語にした名詞の削除 `--drop-sentence-like-nouns <IPAdic.hsd>`、数と単位の組の固有名詞の削除 `--drop-quantity-nouns <IPAdic.hsd>`、一般語の固有名詞の降格 `--demote-common-proper-nouns <IPAdic.hsd>`、追加マージ）
 - `hasami export-sentence-exceptions` - 文分割の例外表（文末記号を含む語）を辞書から抽出する（`src/sentence/builtin_exceptions.txt` の生成）
 - `hasami export` - 辞書のエントリを MeCab 形式 CSV に書き出す（活用型・活用形も出る）
+- `hasami dict download [NAME...]` - 配布辞書をリリースから置き場所に取る（`--all`・`--tag`・`--base-url`・`--dir`・
+  `--force`・`--uncompressed`・`--quiet`・`--json`）。`hasami dict list`（通信しない。`--remote` で目録と照合）、
+  `hasami dict path [NAME]`、`hasami dict install FILE`（同じディレクトリの `dictionaries.json` か `--catalog` で確かめる。
+  無ければ全件検証）、`hasami dict manifest DIR`（目録を作る。dict-build.yml が使う）
 - build / merge / repair 共通: `--meta key=value`（メタデータ）、`--prune-dominated`（支配エントリを除いた最終辞書）
 
 ## ビルド・テスト
@@ -145,15 +171,21 @@ cargo build --workspace   # Python バインディングを含むワークスペ
 cargo test --workspace --exclude hasami-python  # テスト実行（hasami-python は extension-module のため
                                                 # macOS/Linux でリンク不可。clippy --workspace で検証）
 cargo clippy --workspace --all-targets -- -D warnings  # lint（hasami-python のコンパイル検証を含む）
-make check                # 上の lint + ライブラリとして使う 2 構成（feature なし・analyzer）の clippy と lib テスト（CI と同じ）
+make check                # 上の lint + ライブラリとして使う 3 構成（feature なし・analyzer・download）の clippy と lib テスト（CI と同じ）
+make dict-download        # この版のリリースの配布辞書 3 つを dict/ に取る（配布辞書の #[ignore] テスト・例外表の作り直し用）
 make dict                 # 配布辞書 3 つを上流から作り直す（= scripts/build-dict.sh）
 make dict-sudachi         # 推奨辞書だけ（dict-ipadic / dict-neologd も同様）
 make dict-clean           # ダウンロードした辞書ソースを削除（build-dict.sh の中間辞書は実行ごとに消える。
                           # repair 前の辞書が要るときは scripts/build-dict.sh --keep-intermediate）
-make clean-lfs            # 手元の LFS の実体を、いまのコミットが使うものだけにする（scripts/clean-lfs.sh。
-                          # 消すものはリモートにあることを確かめる。make clean も cargo clean の後に呼ぶ）
 target/release/hasami bench --dict dict/ipadic.hsd --file corpus.txt  # 1 行 1 文のファイルの全行を解析する時間
 ```
+
+配布辞書はリポジトリに置かない（`/dict/*.hsd` は `.gitignore`。50MB を超えるファイルは `.githooks/pre-commit` が止める）。
+リリースは GitHub Actions の Release を手で動かす。タグを切った後、`dict-build.yml` がタグのソースから辞書を作り、
+全件の検証・`cargo test -- --ignored distributed`・例外表との照合（`hasami export-sentence-exceptions` と
+`src/sentence/builtin_exceptions.txt` の diff）・zstd -19 の圧縮・`hasami dict manifest` を通してから、バイナリと一緒に
+添付する（`SHA256SUMS`・`THIRD_PARTY_LICENSES.md` も）。辞書を変える PR では `gh workflow run dict-build.yml --ref <ブランチ>`
+で同じ手順を回し、`gh run download <run-id> -n dictionaries` で作った辞書を受け取って確かめる（辞書はコミットしない）。
 
 解析の処理を変えたら、変更前後で全トークンの全フィールドが一致するか（同点の扱いを含む）を大きなコーパスで確かめ、
 速度は変更前後を交互に走らせて比べる（負荷のあるマシンでは E コアに回されて値が倍近く揺れる）。
