@@ -5,9 +5,10 @@
 <h1 align="center">hasami</h1>
 
 <p align="center">
-  <strong>高速日本語形態素解析エンジン（Rust製）</strong>
+  MeCab 形式の辞書（IPAdic・NEologd・SudachiDict）に対応して読み・発音まで返し、辞書なしで動く文分割も備えた Rust 製の高速な日本語形態素解析エンジン
 </p>
 
+<!-- standard:badges:start -->
 <h3 align="center">対応プラットフォーム</h3>
 
 <p align="center">
@@ -17,555 +18,87 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/owayo/hasami/actions/workflows/release.yml"><img src="https://github.com/owayo/hasami/actions/workflows/release.yml/badge.svg?branch=main" alt="Release"></a>
   <a href="https://github.com/owayo/hasami/actions/workflows/ci.yml"><img src="https://github.com/owayo/hasami/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
-  <a href="https://github.com/owayo/hasami/releases/latest"><img src="https://img.shields.io/github/v/release/owayo/hasami" alt="Version"></a>
+  <a href="https://github.com/owayo/hasami/releases/latest"><img src="https://img.shields.io/github/v/release/owayo/hasami" alt="Release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/github/license/owayo/hasami" alt="License"></a>
 </p>
+<!-- standard:badges:end -->
 
 ---
 
-## 概要
+hasami は、MeCab などの外部の解析エンジンを使わずに Rust で一から書いた日本語の形態素解析器です。MeCab 形式の CSV から独自の形式の辞書（`.hsd`）を作り、mmap でそのまま読み込んで解析します。
 
-外部の形態素解析エンジンに一切依存せず、ゼロベースで構築された高性能・高精度な日本語形態素解析ツールです。
+配布辞書は IPAdic と、それに NEologd・SudachiDict を足した 3 つです。読み上げや品詞を手がかりにする処理（音声合成の読み、文章の検査など）で誤りの元になるエントリを直してから、リリースに添付しています。コマンドのほか、Rust・Python・C のライブラリとしても使えます。
 
-## 特徴
+## 機能
 
-- **高速**: ニュース記事 13.3 万行（24.3MB）を 1 スレッドで約 1.2 秒で解析（MeCab の約 2.5 倍。PR #14 より前の計測で、
-  今は約 15% 遅い。下の「ベンチマーク」）。`hasami tokenize` は標準入力の行を CPU の数だけ並列に解析する
-- **高精度**: ラティス構築 + Viterbiコスト最小化による最適分割
-- **ゼロ依存**: MeCab/Sudachi等の外部エンジンに非依存
-- **Rust・Python・C から使える**: Rust のライブラリ、Python バインディング（PyO3）、C FFI がある
-- **MeCab 形式の辞書から構築**: MeCab 形式の CSV と matrix.def・char.def・unk.def から辞書を作る。配布辞書は IPAdic・
-  IPAdic + NEologd・IPAdic + NEologd + SudachiDict の 3 つ（SudachiDict は IPAdic の品詞体系に変換して足す）。UniDic は手元でビルドできる
-- **読みと発音**: トークンごとに読みと発音を返す。文脈で読みが変わる語（「他」「数」など）と、1〜2 文字の英字の略語（AI・PC など）は、
-  解析の後で読みを直す
-- **辞書不要の文分割**: `hasami::sentence` は辞書をロードせずに文境界を求める（feature なしで使え、依存も無い）。
-  `Yahoo!ニュース`・`モーニング娘。` のように文末記号を含む語の内側では切らない
-- **辞書マージ**: 既存辞書にMeCab形式CSVを追加可能
-- **高速辞書ロード**: mmap-native バイナリ形式（.hsd v4）。ロード時はヘッダと小さな表だけを検査し、本体は解析で触れたページだけを読む
-- **未知語処理**: 文字分類ベースの未知語推定（char.def・unk.def を MeCab と同じ意味で読む）。カタカナの複合語は既知語に分ける（「オススメ / アプリ」）
-
-## 動作環境
-
-- **OS**: Linux（x86_64・aarch64）、macOS（Apple Silicon・Intel）、Windows（x86_64）。この 5 つのバイナリを
-  [Releases](https://github.com/owayo/hasami/releases) に置いている。CI は Linux（x86_64）・macOS（Apple Silicon）・Windows で
-  テストを回し、ビルドは 5 つとも確かめる
-- **Rust**: 1.98以上（ソースからビルドする場合。開発に使う版は `mise.toml` で固定している）
+- **外部エンジンに依存しない**: MeCab や Sudachi を呼ばず、辞書の構築から解析までを hasami だけで行います
+- **ラティスと Viterbi**: 辞書の語と未知語の候補をラティスに並べ、接続コストと単語コストの和が最小になる分け方を選びます
+- **速い**: 1 スレッドでも MeCab より速く、`hasami tokenize` は標準入力の行を CPU の数だけ並列に解析します（[ベンチマーク](#ベンチマーク)）
+- **読みと発音**: トークンごとに読みと発音を返します。文脈で読みが変わる語（「他」「数」など）と、1〜2 文字の英字の略語（AI・PC など）は、解析の後で読みを直します
+- **MeCab 形式の辞書から作る**: MeCab 形式の CSV と matrix.def・char.def・unk.def から辞書を作ります。配布辞書は IPAdic、IPAdic + NEologd、IPAdic + NEologd + SudachiDict の 3 つで、SudachiDict は IPAdic の品詞体系に写して足します。UniDic は手元でビルドできます
+- **辞書のマージと修復**: 既存の辞書に MeCab 形式の CSV を足せます。`hasami repair` は、誤読や誤った品詞の元になるエントリを直すか取り除きます
+- **すぐに読み込める辞書**: 辞書は mmap でそのまま参照する形式（.hsd v4）です。読み込むときはヘッダと小さな表だけを検査し、本体は解析で触れたページだけを読みます
+- **未知語の推定**: 文字の種類から未知語を推定します（char.def と unk.def を MeCab と同じ意味で読みます）。カタカナの複合語は辞書の語に分けます（「オススメ / アプリ」）
+- **辞書の要らない文分割**: `hasami::sentence` は辞書を読み込まずに文の境界を求めます（feature なしで使え、依存もありません）。`Yahoo!ニュース`・`モーニング娘。` のように文末記号を含む語の内側では切りません
+- **Rust・Python・C から使える**: Rust のライブラリ、Python バインディング（PyO3）、C FFI があります
 
 ## インストール
 
-### バイナリダウンロード
+<!-- standard:install:start -->
+### Cargo
 
-[Releases](https://github.com/owayo/hasami/releases) から最新版をダウンロード。辞書はバイナリにもリポジトリにも
-入っていないので、続けて配布辞書を取る（下の「配布辞書」）。
+Rust 1.98 以上が必要です。
 
 ```bash
-hasami dict download                    # 推奨辞書を ~/.local/share/hasami/ に置く
+cargo install --git https://github.com/owayo/hasami hasami --locked
+```
+
+### GitHub Releases から
+
+[Releases](https://github.com/owayo/hasami/releases/latest) から自分の環境のアーカイブを取得して展開し、`hasami` を `PATH` の通った場所に置きます。各リリースには、取得したファイルを確かめるための `SHA256SUMS` も添付しています。
+
+| プラットフォーム | ファイル |
+|---|---|
+| Linux (x86_64) | `hasami-x86_64-unknown-linux-gnu.tar.gz` |
+| Linux (ARM64) | `hasami-aarch64-unknown-linux-gnu.tar.gz` |
+| macOS (Intel) | `hasami-x86_64-apple-darwin.tar.gz` |
+| macOS (Apple Silicon) | `hasami-aarch64-apple-darwin.tar.gz` |
+| Windows (x86_64) | `hasami-x86_64-pc-windows-msvc.zip` |
+
+macOS でブラウザから取得した場合は、実行の前に隔離属性を外します: `xattr -d com.apple.quarantine hasami`。
+
+### ソースから
+
+[mise](https://mise.jdx.dev/) が必要です (Rust のツールチェーンは `mise.toml` で固定しています)。
+
+```bash
+git clone https://github.com/owayo/hasami.git
+cd hasami
+make install
+```
+
+`make install` は `/usr/local/bin` に入れます。場所を変えるときは `INSTALL_PATH` を指定します (例: `make install INSTALL_PATH="$HOME/.local/bin"`)。
+<!-- standard:install:end -->
+
+### 辞書の取得
+
+辞書はバイナリにもリポジトリにも入っていないので、入れた後に配布辞書を取ります。`hasami dict download` は、実行している hasami と同じ版のリリースから辞書を取り、置き場所（既定は `~/.local/share/hasami/`、Windows は `%LOCALAPPDATA%\hasami\`）に置きます。
+
+```bash
+hasami dict download                    # 推奨辞書（ipadic-neologd-sudachi）を置き場所に置く
+hasami dict download --all              # 配布辞書 3 つをすべて取る
 hasami tokenize "形態素解析のテスト"    # --dict を省くと、置いた辞書を使う
 ```
 
-### ソースからビルド
-
-開発に使うツールの版は `mise.toml` で固定している。[mise](https://mise.jdx.dev/) があれば、Makefile が `mise exec --` 経由で
-同じ版のツールを呼ぶ（`mise activate` していなくてよい）。
+ソースから入れて開発するときは、辞書を `dict/` に置きます。
 
 ```bash
-make setup                                    # mise.toml のツールを入れ、Cargo.lock どおりに依存を取る
-make install                                  # リリース版を /usr/local/bin に入れる
-make install INSTALL_PATH="$HOME/.local/bin"  # 入れる先を変える
+make dict-download   # この版のリリースから 3 辞書を dict/ に取る
+make dict            # 上流のソースから作る
 ```
 
-mise を使わずに PATH にあるツールで動かすなら `SYSTEM_TOOLS=1` を付ける（例: `make install SYSTEM_TOOLS=1`。版はそろわない）。
-
-clone したら一度フックを入れておく（50MB を超えるファイルをコミットしようとすると pre-commit が止める）。
-
-```bash
-make setup-hooks
-```
-
-配布辞書はリポジトリに置かず、リリースの添付ファイルで配る。開発で `dict/` に辞書が要るときは、この版の
-リリースから取るか、上流のソースから作る（`dict/*.hsd` は `.gitignore` 済み）。
-
-```bash
-make dict-download        # この版（Cargo.toml の version）のリリースの 3 辞書を dict/ に取る
-make dict                 # 上流のソースから作る（下の「辞書のローカルビルド」）
-```
-
-v26.9.103 までは辞書を Git LFS でリポジトリに置いていた。その後、辞書を履歴から外したので、それより前に
-clone した環境は clone し直す。`make setup-hooks` を実行した clone に残る LFS のフックは
-`git lfs uninstall --local` で外せる。
-
-## アーキテクチャ
-
-```mermaid
-flowchart TD
-    IN[入力テキスト] --> TRIE["文字単位 Double-Array Trie<br/>辞書引き（共通接頭辞検索）"]
-    TRIE --> UNK["文字分類<br/>未知語ノード生成"]
-    UNK --> LAT["ラティス構築<br/>全候補をラティスに展開"]
-    LAT --> VIT["Viterbi<br/>接続コスト + 単語コストで最適パス探索"]
-    VIT --> OUT["トークン列<br/>最良パスの語だけ素性（品詞・活用・読み）を復号"]
-```
-
-### 空白
-
-半角空白・タブ・改行（char.def の SPACE の文字）は、MeCab と同じく読み飛ばしてトークンにしない。空白の前後の語は
-直接つながるので、「データを CSV で出力する」の「で」は空白の後ろでも格助詞のまま（空白をノードにしていたときは、
-記号,空白 からの接続コストが低い接続詞になっていた）。トークンの `start` / `end` は入力のバイト位置なので、
-空白はトークンの間の隙間になる（表層形をつなげても入力には戻らない）。全角の空白は IPAdic では辞書の語
-（記号,空白）なのでトークンになる（MeCab と同じ）。
-
-### 未知語
-
-未知語の候補は MeCab と同じく char.def の group・length で作る（同じ文字種の並び全体と、1〜length 字の接頭辞）。
-候補ごとに unk.def の文字種のテンプレート（IPAdic の英字・カタカナ・漢字・ひらがなは、普通名詞・固有名詞の
-地域 / 組織 / 人名 / 一般・感動詞などの 6〜7 個）の数だけノードを作り、品詞は前後の語との接続コストで決まる
-（MeCab と同じ。「Zoomの会議」の「Zoom」は 名詞,固有名詞,組織）。テンプレートを全部使うと、未知語のノードが増えて
-解析の時間は約 15% 増える。MeCab と違うのは次の 3 点。
-
-- **カタカナの複合語**: 並び全体の未知語は単語コストが一律（IPAdic で 9461）なので、既知語 2 語以上の複合語に勝ちやすい
-  （MeCab + NEologd は「オススメアプリ」「ソフトバンクステージヨドバシ」を 1 つの未知語にする）。hasami は、カタカナの
-  並び全体の候補（3 字以上）を、3 字以上の既知語を隙間なく並べて覆えるなら作らない。最初の語は並びの前から始まってよく
-  （「音ゲー / アプリ」）、最後の語は並びの後で終わってよい（「スパッと」）。2 字以下の語は数えないので、辞書に無い人名
-  などは断片に割れず 1 語のまま（「ドミニク」を「ドミ / ニク」にしない）
-- **辞書の語と同じ表層のカタカナの未知語**: 単語コストの高い既知語（IPAdic の「キャンプ」16437、「コーチ」16149）は
-  並び全体の未知語に負ける。最良パスに残ったカタカナの未知語（3 字以上）と同じ表層の語が辞書にあれば、分け方は
-  そのままで、品詞・読みなどをその語から取る（同じ表層のエントリが複数あれば、前後の語との接続コストと単語コストの和が
-  最小のもの）。`is_known` は true、`word_cost` はラティスで使った未知語の値
-- **長い並び**: MeCab は 25 字を超える並びを 1 つの候補にしない（`max-grouping-size`）が、hasami は長さによらず 1 つにする
-  （32 字の英字の ID が 1 字ずつと既知語の断片に割れない）
-
-ニュース 13 万行を推奨辞書で解析し、以前の実装（並び全体の候補を 2 字で打ち切っていた）と語の境界が食い違う箇所を数えた。
-
-| 食い違い | MeCab と同じ候補だけ | 上の規則を足した後 |
-| --- | ---: | ---: |
-| 既知語の並び → 1 語（オススメ / アプリ → オススメアプリ） | 9,787 | 5,528 |
-| 断片 → 1 語（ク / オリ / ティ → クオリティ。以前の誤りが直った箇所） | 2,075 | 2,056 |
-| 既知語が未知語を含む並びになる・既知語 1 語が割れる | 45 | 13 |
-
-残る「既知語の並び → 1 語」は、2 字以下の語を含む複合語（ポータブルナビ、カロリーオフ）と、辞書に無い人名など
-（レナード、ホアキン。以前は「レ / ナード」「ホア / キン」）。
-
-## 辞書
-
-### 配布辞書
-
-ビルド済みの辞書（.hsd）は、リリースの添付ファイルとして配る（リポジトリには置かない）。
-
-| 辞書 | 内容 | 大きさ | 推奨用途 |
-|------|------|------:|---------|
-| `ipadic` | IPAdic 単体 | 18 MB | 軽量・基本用途 |
-| `ipadic-neologd` | IPAdic + NEologd | 222 MB | 新語・固有名詞対応 |
-| `ipadic-neologd-sudachi` | IPAdic + NEologd + SudachiDict | 238 MB | **推奨**（最大語彙） |
-
-`hasami dict download` は、実行している hasami と同じ版のリリースから辞書を取り、置き場所に置く。
-辞書の形式や repair は版ごとに変わりうるので、既定では版をそろえる。
-
-```bash
-hasami dict download                  # 推奨辞書（ipadic-neologd-sudachi）
-hasami dict download ipadic           # 名前を挙げて取る（--all で 3 辞書すべて）
-hasami dict download --tag v26.9.104  # 別の版のリリースから
-hasami dict download --base-url https://mirror.example.com/hasami/v26.9.104   # ミラーから
-hasami dict list                      # 置き場所の辞書と状態（通信しない。--remote でリリースの目録と照合）
-hasami dict path                      # tokenize が --dict なしで使う辞書のパス（-d "$(hasami dict path)"）
-hasami dict install ipadic.hsd.zst    # 手で持ち込んだ辞書を確かめて置く（ネットワークに出られない環境向け）
-```
-
-- zstd で圧縮した版（`<名前>.hsd.zst`。3 分の 1 ほど）を取って展開し、リリースの目録（`dictionaries.json`）の
-  大きさと SHA-256 で、受け取ったものと展開したものの両方を確かめる。辞書として読めること（形式の版が合うこと）も
-  確かめてから、同じディレクトリの一時ファイルを rename して置く。途中で止めても、壊れた辞書を置き場所に残さない。
-  `--uncompressed` で生の辞書を取る
-- 正しいファイルがすでにあれば通信しない。中身の違うファイル（別の版など）は `--force` を付けたときだけ置き換える
-  （取得に失敗したら元のファイルを残す）
-- `--json` で結果（置いたパス・大きさ・SHA-256）を JSON で出す。`--quiet` で進み具合と結果を出さない
-- プロキシは環境変数（`HTTPS_PROXY`・`NO_PROXY`）に従う。証明書は OS の証明書ストアで検証する（社内の CA を
-  OS に入れた環境でも通る）
-- `hasami dict install` は、同じディレクトリにリリースの `dictionaries.json` があれば（`--catalog` でも渡せる）
-  その大きさと SHA-256 で確かめる。なければ辞書全体を検証する
-
-置き場所（`tokenize` が `--dict` なしで辞書を探し、`hasami dict download` が辞書を置くディレクトリ）は次の順に決まる。
-複数の辞書があれば、推奨順（ipadic-neologd-sudachi → ipadic-neologd → ipadic → そのほかの名前順）の最初を使う。
-
-1. 環境変数 `HASAMI_DATA_DIR`
-2. `$XDG_DATA_HOME/hasami/`
-3. `%LOCALAPPDATA%\hasami\`（Windows）
-4. `~/.local/share/hasami/`
-
-リリースの添付ファイルは直接取ってもよい（URL は `https://github.com/owayo/hasami/releases/download/<タグ>/<ファイル名>`）。
-
-```bash
-base=https://github.com/owayo/hasami/releases/download/v26.9.104
-mkdir -p ~/.local/share/hasami && cd ~/.local/share/hasami
-curl -fL --remote-name-all "$base/ipadic-neologd-sudachi.hsd" "$base/SHA256SUMS"
-grep ' ipadic-neologd-sudachi.hsd$' SHA256SUMS | sha256sum --check --strict -   # macOS は shasum -a 256 -c
-```
-
-| 添付ファイル | 中身 |
-| --- | --- |
-| `<名前>.hsd` | 配布辞書 |
-| `<名前>.hsd.zst` | 同じ辞書を zstd で圧縮したもの |
-| `dictionaries.json` | 目録（hasami の版・辞書の形式の版・推奨の辞書・各辞書の大きさと SHA-256） |
-| `SHA256SUMS` | すべての添付ファイルの SHA-256 |
-| `THIRD_PARTY_LICENSES.md` | 辞書のライセンス（辞書を再配布するときは一緒に配る） |
-
-リリースの辞書は、Release ワークフローがタグのソースから `scripts/build-dict.sh` で作り、全件の検証・配布辞書の
-受け入れテスト・文分割の例外表との照合を通したものだけを添付する。v26.9.103 までは辞書を Git LFS でリポジトリに
-置いていた（v26.9.103 のリリースには、そのときの辞書を後から添付した）。
-
-以下の辞書は配布していないが、ローカルでビルドできる。
-
-| ファイル | 内容 | ビルドコマンド |
-|---------|------|--------------|
-| `dict/unidic-cwj.hsd` | UniDic CWJ（書き言葉） | `make dict-unidic-cwj` |
-| `dict/unidic-csj.hsd` | UniDic CSJ（話し言葉） | `make dict-unidic-csj` |
-
-### 辞書のローカルビルド
-
-配布辞書 3 つは `scripts/build-dict.sh` が上流のソースから作る。`git`・`curl`・`xz`・`unzip` と、`mise.toml` の
-Python（`mise install`）が要る。
-
-```bash
-# 配布辞書 3 つをすべて作る（dict/ に書き出す）
-make dict                 # = scripts/build-dict.sh
-
-# 個別に作る
-make dict-ipadic          # IPAdic のみ
-make dict-neologd         # IPAdic + NEologd
-make dict-sudachi         # IPAdic + NEologd + SudachiDict（推奨）
-
-# 配布しない辞書
-make dict-unidic-cwj      # UniDic CWJ（書き言葉）
-make dict-unidic-csj      # UniDic CSJ（話し言葉）
-
-# ダウンロードしたソースと中間成果物を削除
-make dict-clean
-```
-
-| 辞書 | 作り方 |
-| --- | --- |
-| `ipadic.hsd` | IPAdic を `scripts/prepare_ipadic.py` で整えて build し、外国人名の姓・名だけを除く（発音の修復は掛けない） |
-| `ipadic-neologd.hsd` | IPAdic に NEologd の seed を merge し、repair 一式（範囲外 ID・表記ゆれ・漢数字の人名・`dict/user-remove/*.csv`・文や句の名詞・数と単位の組の名詞・一般語の固有名詞の降格）を掛けてから `dict/user/*.csv` を足す |
-| `ipadic-neologd-sudachi.hsd` | IPAdic + NEologd に SudachiDict の raw 辞書を `scripts/convert_sudachi_raw.py` で変換して merge し、同じ repair 一式を掛ける |
-
-`scripts/prepare_ipadic.py` は上流の IPAdic を書き換えずに、次の 5 点を変えたソースを作る（何を変えたかは
-辞書のメタデータ `ipadic_patch` に残る）。
-
-- **記号の未知語**: IPAdic の char.def は `— 。 、 「 ♪ ⇒` などを SYMBOL（まとめて 1 語）にし、unk.def はその未知語を
-  「名詞,サ変接続」にする。このままだと辞書に無い記号の並びが句点ごと 1 つの名詞になる（「楽しみたい——。」の「——。」）。
-  SYMBOL を「既知語がある位置では未知語を作らず、作るときも 1 文字ずつ」「記号,一般」に変える
-- **未知語の候補**: hasami は char.def の group・length を MeCab と同じ意味で読む（同じ文字種の並び全体と、1〜length 字の
-  接頭辞を未知語の候補にする）。辞書に無いカタカナ語は 1 語になる（「ブログ」「モチベーション」。以前は 2 文字ずつに
-  割れていた）。IPAdic の値のままだとひらがなの並びまで 1 つの名詞になるので、HIRAGANA を 0 0 2、ALPHA・NUMERIC を
-  1 1 1（英数字を 1 文字にも分けられる）にし、中黒 `・` と `×` `÷` を SYMBOL にする（「ジョン・カーター」「microSD×C」を
-  つなげない）。ニュース 3.3 万行で MeCab と分かち書きが一致する行は 64.7% から 88.5% になった（IPAdic）。カタカナの複合語を
-  既知語に分ける規則（上の「未知語」）を足した後は 87.7%（MeCab が 1 つの未知語にする複合語を分けるため）
-- **EUC-JP の変換差**: IPAdic の CSV は EUC-JP で、ダッシュ・波ダッシュ・マイナスなど 7 字は変換表によって
-  写し先が分かれる。hasami は JIS の対応表どおり（MeCab と同じ）「—」「〜」「−」に写し、Windows 由来の文章が使う
-  「―」「～」「－」の別表記を表層形に足す（33 語。「あ〜」と「あ～」のどちらでも感動詞「アー」になる）
-- **空白の文字**: IPAdic の char.def は SPACE に `0x00D0`（Ð）を入れている。ほかの行（タブ・改行）から見て復帰 `0x000D` の
-  書き間違いなので `0x000D` に直す（空白は読み飛ばすので、そのままだと「Ð」が解析結果から消える）
-- **単位の記号**: 全角の「％」は 名詞,接尾,助数詞 の語だが、半角の `%` と `‰` `℃` `℉` `°`（`°C` `°F`）、CJK 互換文字の単位
-  （`㎏` `㎞` `㌢` `㍍` など 170 余り）は辞書に無く、未知の記号（記号,一般）になって句読点と同じ扱いになる。「％」と同じ
-  品詞・文脈 ID・コストの語として読み付きで足す（`㎏` はキログラム、`㌢` はセンチ、`℃` はド）
-
-SudachiDict は内容語（名詞・固有名詞・形状詞・連体詞・副詞・接続詞・感動詞・動詞・形容詞）と記号だけを取り込み、
-IPAdic・NEologd・`dict/user` に表層形がある語は落とす。品詞は IPAdic 体系に写し、文脈 ID は IPAdic の left-id.def から
-引く（対応する ID が無い品詞・活用形は取り込まない）。原形は SudachiDict の辞書形なので、活用語の原形が正しくなる
-（「誤っ」→「誤る」、「示し」→「示す」、「読み込み」→「読み込む」）。取り込み範囲はニュース 2 万行で比べて決めた。
-
-| 取り込む範囲 | 追加語数 | 読みが変わる行 | 解析時間（IPAdic + NEologd 比） |
-| --- | --- | --- | --- |
-| 旧方式（変換済み CSV を範囲外 ID ごと取り込み） | +179 万 | 49.3% | 1.75〜1.9 倍 |
-| 全品詞・既存語との重複を残す | +141 万 | 37.8% | 1.22〜1.29 倍 |
-| 名詞・表層形が既存語と同じなら落とす | +24 万 | 5.6% | 1.0 倍 |
-| **内容語 + 記号・表層形が同じなら落とす（採用）** | +40 万 | 7.0% | 1.0〜1.03 倍 |
-
-採用した範囲で読みが変わった箇所を無作為に 60 件見ると、改善 48・悪化 5・同等 7 だった（改善は英単語の読み
-「cafe→カフェ」、複合語「加齢→カレイ」、半角記号が名詞でなく記号になる、など）。
-
-上流はすべて版を固定している（IPAdic・NEologd は git の commit、SudachiDict はダウンロードの SHA-256）。
-取得物は `.dict-src/` に置き、2 回目以降は再取得しない。中間成果物（repair を掛ける前の辞書、SudachiDict の
-変換結果など）は実行ごとの作業ディレクトリに作って終了時に消すので、`dict/` の配布辞書のほかには残らない。
-repair を手で試し直すために repair 前の辞書が要るときは、`scripts/build-dict.sh --keep-intermediate` で
-`.dict-src/build/*.base.hsd` に残す。
-3 辞書の作り直しは取得済みなら 5 分ほどで終わる（うち SudachiDict の変換が 3 分、最大 RSS は約 3GB）。
-
-辞書を変える PR では、GitHub Actions の Build Dictionaries（`.github/workflows/dict-build.yml`）をブランチで動かすと、
-リリースと同じ手順（作る → 全件の検証 → 受け入れテスト → 例外表との照合 → 圧縮 → 目録）で作った辞書を artifact で
-受け取れる。辞書はコミットしない。
-
-```bash
-gh workflow run dict-build.yml --ref <ブランチ>
-gh run download <run-id> -n dictionaries -D /tmp/dicts   # 辞書は /tmp/dicts/dict/ に入る
-```
-
-`dict/user/*.csv` には `#` で始まるコメント行を書ける。`#` で始まってもエントリの列数（13 列）が
-そろった行は語として読む（NEologd には `#` で始まるハッシュタグの語がある）。
-
-### 辞書の手動構築
-
-MeCab形式の辞書から直接ビルドすることもできます。
-
-```bash
-# MeCab形式CSV ディレクトリから辞書をビルド
-hasami build --input ./ipadic/ --output dict.hsd
-
-# 既存辞書にCSVを追加マージ
-hasami merge --dict dict.hsd --input custom_words.csv
-hasami merge --dict dict.hsd --input ./extra_dict/ --output merged.hsd
-
-# メタデータ（辞書名・品詞体系・上流の版）を付ける
-hasami build --input ./unidic/ --output unidic.hsd --meta pos_scheme=unidic --meta sources=unidic-cwj@202512
-
-# 辞書の情報と全件検証、MeCab 形式 CSV（活用型・活用形付き）への書き出し
-hasami info --dict dict.hsd --verify
-hasami export --dict dict.hsd --output lex.csv
-```
-
-### 辞書形式 (.hsd)
-
-`.hsd` は v4 形式（64 バイトのヘッダ + セクション表 + 64 バイト境界のセクション）。mmap してそのまま参照するので、
-ロードはヘッダと小さな表の検査だけで 1ms 前後、解析で触れたページだけが読み込まれる。実行ファイルに埋め込んだ辞書も、
-`Dictionary::from_static` で複製せずに同じく参照する（Rust API の「実行ファイルに辞書を埋め込む」）。
-
-- 表層形は文字単位の double-array trie（単独の末尾は圧縮）に持ち、エントリは 1 件 6 バイト
-- 品詞・活用型・活用形・読み・発音・原形は重複を除いた素性レコードに持ち、最良パスの語だけ復号する
-- 辞書の中身はメタデータ（`hasami info` で表示）に名前・品詞体系・上流の版・掛けた repair が残る
-- 壊れたファイルはロード時・解析時に `DictError` になる（panic しない）。全件の検査は `hasami info --verify`
-- v3 以前の `.hsd` は読めない。`scripts/build-dict.sh`（または `hasami build`）で作り直す
-- 書き出しは一時ファイルに書いてから rename で差し替える。読み込み中の辞書ファイルを直接書き換えてはいけない
-
-`--prune-dominated`（build / merge / repair）は、同じ表層形・同じ文脈 ID の中でコストが最小でないエントリを除いた
-最終辞書を作る。解析結果（1-best）は変わらないが、除いた辞書は merge・repair の入力にできない。配布辞書には掛けていない。
-
-形式の設計・試したこと・計測は [docs/hsd-format.md](docs/hsd-format.md) にまとめてある。
-
-### 辞書の修復
-
-複数の辞書ソースをマージすると、ソース側の欠陥がそのまま残ることがある。
-`hasami repair` は読み上げや品詞を使う処理で問題になる次のエントリを修復・除去する。
-
-```bash
-hasami repair --dict dict/ipadic-neologd-sudachi.hsd \
-    --output dict/repaired.hsd \
-    --drop-invalid-context-ids \
-    --drop-ortho-variants \
-    --drop-numeral-misreadings \
-    --remove dict/user-remove/misreading-entries.csv \
-    --remove dict/user-remove/foreign-names.csv \
-    --drop-sentence-like-nouns dict/ipadic.hsd \
-    --drop-quantity-nouns dict/ipadic.hsd \
-    --demote-common-proper-nouns dict/ipadic.hsd \
-    --merge dict/user/english-reading-fixes.csv
-```
-
-| 対象 | 内容 |
-| --- | --- |
-| `--drop-invalid-context-ids` | 接続行列の範囲外の文脈 ID を持つエントリを削除する。範囲外の ID は接続コスト 0 として扱われ、他の候補に不当に勝つ。推奨辞書には、SudachiDict の文脈 ID のまま混入した重複が 137 万件ある |
-| 壊れた発音（常時） | 発音フィールドに表層形が入っているエントリ（SudachiDict 由来）を、同じ (表層形, 読み) を持つ健全なエントリの発音形で置き換える。借用できなければ読みを使い、読みもラテン文字のままなら空にして解析時の読み補完に委ねる。記号（「、」「。」「「」等）は読み・発音に記号そのものを持つ（MeCab・OpenJTalk と同じ）ので変えない。`--no-pronunciation-repair` で省ける（削除リストだけを適用したいとき） |
-| `--drop-ortho-variants` | 活用語・機能語と衝突する名詞エントリを削除する。「高い」→「高位(コウイ)」、「学ぶ」→「学部(ガクブ)」等が形容詞・動詞に勝って誤読になるのを防ぐ。代名詞と衝突する 1 文字の人名（「何」→姓の「ガ」）も落とす |
-| `--drop-numeral-misreadings` | 漢数字だけで綴られた固有名詞を削除する。「十五(トウゴ)」「二十八(ツチヤ)」等が数詞に勝つのを防ぐ。「万一」「八百万」のような一般語・副詞は残す |
-| `--remove <CSV>` | CSV に列挙したエントリを削除する。列は `表層形,読み[,品詞]`。3 列目の品詞 (例 `"名詞,固有名詞,人名"`) を書くと、その品詞で始まるエントリだけを消す。品詞は `,` で区切った要素ごとに前から比べる。3 列目を省くと品詞を問わず消す。どのエントリにも当たらなかった行は件数と例を表示する |
-| `--drop-sentence-like-nouns <IPAdic の .hsd>` | 文や句を 1 語の名詞にしたエントリ（NEologd の「どうでしょう」「作りました」「好きだ。」「一緒に」「…。」や、機能語・活用形と同じ形の表記ゆれ「ありません」= 有馬線、「および」= お呼び）を削除する。判定は下の「文や句の名詞の削除」。参照する IPAdic 単体の辞書自身の語は削除しない（接続行列は問わない） |
-| `--drop-quantity-nouns <IPAdic の .hsd>` | 表層形が数と単位の記号だけの「名詞,固有名詞,一般」（NEologd の「50%」「0.1℃」「30℃」）を削除し、数（名詞,数）と単位（名詞,接尾,助数詞）に分かれるようにする。判定は下の「数と単位の組の削除」。人名・組織（「100%ORANGE」「4℃」）は残す |
-| `--demote-common-proper-nouns <IPAdic の .hsd>` | NEologd が「名詞,固有名詞,一般」で登録した一般語（成果物・多角的・可視化・安全性・担当者 等）を一般名詞に降格する。判定は下の「一般語の固有名詞の降格」。参照する IPAdic 単体の辞書は、修復する辞書と同じ接続行列を持つこと（配布辞書どうしなら同じ） |
-| `--merge <PATH>` | 修復後に MeCab 形式 CSV を追加マージする。trie の再構築が 1 回で済むので、`repair` と `merge` を続けて実行するより速い |
-
-処理は「範囲外 ID の削除 → 壊れた発音の修復 → `--drop-ortho-variants`・`--drop-numeral-misreadings` → `--remove` →
-`--drop-sentence-like-nouns` → `--drop-quantity-nouns` → `--demote-common-proper-nouns` → `--merge`」の順に行う。
-範囲外 ID のエントリを発音の借用元に使わないよう、最初に落とす。削除リストは上流の辞書の品詞で書くので降格より先に、
-`--merge` で足す語は削除・降格の対象にしないので最後に適用する。
-
-`dict/user-remove/` に削除リスト、`dict/user/` に追加エントリを置いてある。
-`make dict-neologd` / `make dict-sudachi` は最後にこの修復を実行する。配布辞書をその場で直すなら
-`make dict-repair DICT=...`（`dict/user` は配布辞書に追加済みなので足し直さない。文や句・数と単位の組の名詞の削除と
-降格の参照には `dict/ipadic.hsd` を使う）。
-
-`hasami build` / `merge` / `repair` は、trie を作る前に全エントリの文脈 ID が接続行列の範囲内かを検査する。
-範囲外があればエラーで止まるので、既存の辞書は `--drop-invalid-context-ids` を付けて修復する。
-`build` は matrix.def を CSV より先に読むので、CSV の行番号付きでエラーになる。
-
-#### 文や句の名詞の削除
-
-NEologd は曲名・作品名・キャッチフレーズとして、文や句そのもの（「どうでしょう」「作りました」「辻褄を合わせる」
-「一緒に」）や句点付きの語（「好きだ。」「こんにちは。」、読みがサイレンスの人名「…。」）を固有名詞 1 語で登録している。
-表記ゆれの seed は漢字語をかなで書いた語を機械的に作るので、機能語・活用形と同じ形の名詞ができる（「ありません」=
-有馬線、「しません」= 志摩線、「回ろう」= 回廊、「および」= お呼び、「では」= 出端、「きっと」= キット）。これらが
-文中の動詞・助動詞・助詞の並びに勝つと、文末が固有名詞になり、文末の「。」を語に取り込み、否定・意志の助動詞や
-終助詞が消える（文末の型・体言止め・否定を形態素で判定する処理が誤る）。
-
-`--drop-sentence-like-nouns` は、表層形にひらがなか文末記号を含む名詞を IPAdic 単体の辞書で解析し、語の列が
-次のどれかになるエントリを削除する。参照辞書自身の語（同じ表層形・品詞・原形）は削除しない。
-
-| 理由 | 語の列 | 例 |
-| --- | --- | --- |
-| predicate | 述語（終止形・命令形の用言、た・だ・です・ます・ない・ん・う・たい・らしい、終助詞）で終わる文 | どうでしょう、作りました、辻褄を合わせる、好きだ。 |
-| conjugated-particle | 活用語 + 助詞で終わる句 | じゃなくて、世界を敵に回しても、しながら（表記ゆれ = 品柄） |
-| noun-particle | 内容語が 1 つだけの、助詞で終わる句 | 一緒に、あなたに、人として |
-| function-words | 助詞・助動詞・非自立名詞だけが文法どおりに並ぶ語 | なのか、にも、ことも、ですか |
-| interjection | 感動詞 1 語 | こんにちは。、おはよう。 |
-| variant-word | 表記ゆれ（原形が表層形と違う語）で、副詞・接続詞・連体詞か終止形・命令形の用言 1 語 | および、では、きっと、うまい |
-| symbols-with-ender | 文末記号で終わり、ほかに文字が無い | …。、？？？ |
-
-IPAdic はひらがなの名前やかな書きの漢語を、機能語のでたらめな並びに分ける（「ひなた」→ ひな/た、「けんしょう」→
-けんしょ/う、「こめんと」→ こめ/ん/と、「東かがわ」→ 東/か/が/わ）。これを文とみなして落とすと、文中のその語が
-でたらめに分かれる。そこで語の列が文法に合うときだけ文や句とみなし、名前と取り違えやすい形は残す。
-
-- 付属語は前の語に付く形を確かめる。た・ます・たい は連用形に付く（音便のある五段動詞は連用タ接続。だ は撥音便・
-  イ音便の後ろだけ）。ない・ぬ・ん は未然形、う は未然ウ接続か でしょ・だろ・ましょ、終助詞は終止形か決まった組
-  （かな、よね）、て・で は連用形（撥音便の後ろは で、促音便の後ろは て）、いる は て の後ろに付く
-- 助詞の並びも確かめる。係助詞の後ろは「誰もが」「今こそは」「さえも」だけ、格助詞の後ろは係助詞・副助詞と「へと」
-  「AとBとで」「これからが」だけ（が・の の後ろには続かない）、終助詞の後ろは引用の と・って だけ。だ・です の後ろの
-  助詞は引用の と と並立助詞・副助詞、連用形 で の後ろは係助詞・副助詞だけ（「鶏もも」→ 鶏/も/も、「雪だより」→
-  雪/だ/より、SudachiDict の「はは」= 母 は残す）
-- 述語の頭（付属語の前の用言）は、句の頭か、付き先のある助詞・副詞・接続詞の後ろに来る。名詞 + する はサ変接続の
-  名詞と片仮名の語に限る（「柊あおい」→ 柊/あおい、「平成ばしる」→ 平成/ば/しる、「やつしろ」→ やつ/しろ は残す）。
-  付属語で始まる並び、文語の活用、ひらがな 2 字以下の命令形（いろ、ひろ）も名前の断片とみなす
-- ひらがなだけの表層形は、名前・かな書きの漢語と取り違えにくい文末に限る: ます・です・ない・たい、ません、音便の
-  後ろの た、の・ん の後ろの だ、でしょう・だろう・ましょう、終止形の後ろの か・かしら・な・ね・よ・の、動詞の後ろの
-  て・で・ながら。裸の用言（「あまがえる」）、未然ウ接続 + う（「けんしょう」「むこう」= 無効）、ん（「はこん」）で終わる
-  語は残す。ひらがなだけの普通名詞は だ・です・格助詞の付き先とみなさない（「オバケのなみだ」→ なみ/だ）
-- 人名・地名（名詞,固有名詞,人名 / 地域）は、機能語だけの並び（人名の「なのか」「にも」）と文末記号で終わる語だけを
-  判定する（「ゆうか」→ ゆう/か、「やよい」→ や/よい を残す）。固有名詞でない名詞は、機能語だけの並びと感動詞
-  だけを判定する（SudachiDict の「早死に」「本だな」「雨がえる」は助詞・活用形に分かれるが普通名詞として残す）
-- 表記ゆれは、名詞を含まない並び（「ありません」「回ろう」「しながら」）と 1 語の副詞・接続詞・連体詞・用言に限る
-  （「ごみだし」= ごみ出し → ごみ/だ/し、「供えもの」は残す）
-- 文末記号で終わる語は、記号だけの語と、文末記号の前が文（述語で終わる並びか感動詞）で内容語（名詞 + する の する を
-  除く）が 1 つ以下の語を削除する（「好きだ。」「いいね！」「こんにちは。」）。内容語が 2 つ以上の文（「やはり俺の青春
-  ラブコメはまちがっている。」「エースをねらえ！」）は、文末記号まで名前に含む作品名として残す（文分割の例外表にも入る）。
-  「モーニング娘。」「君の名は。」「けいおん！」「Yahoo!」も残す
-- 助詞で終わる句でも、内容語が 2 つ以上あるもの（「ティファニーで朝食を」「渡る世間は鬼ばかり」「身も心も」）は
-  作品名として残す。名詞で終わる句（「千と千尋の神隠し」「個人の感想」）は判定しない
-
-配布辞書では、判定する名詞（表層形にひらがなか文末記号を含むもの）が `ipadic-neologd.hsd` に 41.4 万件、
-`ipadic-neologd-sudachi.hsd` に 44.2 万件あり、それぞれ 5,739 件・5,745 件を削除する。理由ごとの件数は次のとおり
-（`ipadic-neologd-sudachi.hsd` で増えるのは SudachiDict の「だな」「だね」「のと」など）。
-
-| 理由 | `ipadic-neologd.hsd` | `ipadic-neologd-sudachi.hsd` |
-| --- | ---: | ---: |
-| predicate | 4,495 | 4,496 |
-| conjugated-particle | 859 | 859 |
-| noun-particle | 169 | 169 |
-| function-words | 23 | 28 |
-| interjection | 19 | 19 |
-| variant-word | 170 | 170 |
-| symbols-with-ender | 4 | 4 |
-
-ニュース 13 万行を `ipadic-neologd.hsd` で解析すると、削除で約 6,300 行の解析が変わる。多いのは文末の「…。」
-（810 行）、「および」（510 行、名詞の お呼び → 接続詞・接続助詞）、「一緒に」（240 行）、「なのか」（172 行）、
-「じゃなくて」「しながら」「いない」「ありません」。
-
-文として普通に使われる曲名・作品名（文末記号の無い「僕等がいた」「踊ってみた」「笑っていいとも」）は文中の語と区別
-できないので落ちる。
-名詞で終わる決まり文句の句「個人の感想」（「個人の感想です」の「です」の前）は `dict/user-remove/common-words-as-proper-nouns.csv`
-で落としている。残る誤りは次のとおり。
-
-- 名詞 + 文末記号の語で、名詞が一般語のもの（「看板娘。」が「店の看板娘。」の「。」を取り込む）
-- ひらがなだけで、上の文末に当たらない文や句（「とはいえ」「やろう」= 野郎、「いくつになっても」）
-- 名詞で終わる句（「好きな人」「新しいiPad」）。IPAdic で 1 語の副詞・用言になる固有名詞（表記ゆれでないもの）
-- 文末記号まで含む作品名が、文中の同じ文に勝つもの（「幸せになりたい！」「マンガを読む。」）。ニュース 13 万行で 3 行
-  （作品名を指す 20 行（『エースをねらえ！』『僕たちは世界を変えることができない。』など）は 1 語のまま）
-- 削除した語の位置で、残った別の表記ゆれの名詞が勝つもの（「家族におはようと」→ おは(尾羽)/よう/と、「性的ないし」→
-  な/いし）。ニュース 13 万行で 20 行ほど。目立った「とはい」(徒輩)・「かじゃ」(冠者)・「にそう」(尼僧) は
-  `dict/user-remove/misreading-entries.csv` で落としている（「とはいっても」→ と/は/いっ/て/も）
-
-「やってきた」「どうかしら」が やって/きた・どうか/しら（名詞）になっていたのは、`dict/user/vocab-from-training.csv` の
-「やって」「どうか」（コスト -5000）が IPAdic の名詞「きた」「しら」と組んでいたため。活用の途中で切れた動詞（「やって」
-「出さ」「合わ」「頑張ろう」「守れない」など 29 語。文脈 ID が一段動詞の基本形なので、後ろの「ない」が形容詞になり、
-意志の「う」・否定の「ない」が 1 語に埋もれる）を除き、「どうか」のコストを 4500 にした（「どうかお願いします」は
-どうか のまま、「それはどうかと思う」は どう/か/と）。同じファイルの接続詞の「という」（原形「というより」）も、
-IPAdic の 助詞,格助詞,連語 の「という」（「山田という人」）より先に選ばれていたので除いた。
-
-#### 数と単位の組の削除
-
-NEologd は「50%」「0.1℃」「30℃」（原形「30度」、読み「サンジュウドシー」）のような数と単位の記号だけの語を
-「名詞,固有名詞,一般」で登録している。これが勝つと単位が数から分かれず、単位の記号を 名詞,接尾,助数詞 にした効果
-（上の「単位の記号」）が NEologd を含む辞書で出ない。
-
-`--drop-quantity-nouns` は、表層形が数（小数点・桁区切りを含む）と単位の記号（`scripts/prepare_ipadic.py` が足す字と
-`°C` `°F`）だけの「名詞,固有名詞,一般」を IPAdic 単体の辞書で解析し、数（名詞,数）と単位（名詞,接尾）だけに分かれる
-ものを削除する。人名・組織として登録された語（「100%ORANGE」「4℃」、人名の「100%」）は残す。
-
-配布辞書では `ipadic-neologd.hsd`・`ipadic-neologd-sudachi.hsd` とも 2,549 語（℃ 1,545 語、% 1,002 語、％ 2 語）を
-削除する。人名の「100%」「200%」「400%」「400％」「43°」「540°」と組織の「4℃」は残る。「4kg」のようにラテン文字で
-書く単位は対象外（IPAdic でも「kg」は 名詞,一般 で、接尾辞にならない）。
-
-#### 一般語の固有名詞の降格
-
-NEologd は Web 上の見出し語を取り込んでいるので、「成果物」「多角的」「可視化」「安全性」「担当者」のような
-一般語が「名詞,固有名詞,一般」になっている。固有名詞を具体性の手掛かりに数える処理（文章の Linter の
-[noslop](https://github.com/owayo/noslop) など）では、抽象的な文が具体的に見えてしまう。品詞に合わせて
-接続コストも固有名詞のものになるので、「言語化と可視化」の「言語化」が「言語 / 化」に割れたりもする。
-
-`--demote-common-proper-nouns` は「名詞,固有名詞,一般」のエントリの表層形を IPAdic 単体の辞書で解析し、
-次をすべて満たすものを降格する。
-
-1. すべて既知語で、一般名詞・サ変接続・形容動詞語幹の連続 + 接尾辞に分かれる。途中の接尾辞は「的」だけを
-   認め、前後に名詞を置く（「心理 / 的 / 安全 / 性」）。英字などの未知語を含む語（「AACTA賞」）は対象外
-2. 語末の接尾辞が一般名詞を作るもの: 的・化・性・者・物・学・力・率・感・度・費・料・権・症・制・体・器・業・
-   剤・員・官・数・罪・病・術
-3. エントリの読みが、IPAdic にあるその接尾辞の読み（固有名詞の読みを除く。「力」ならリョク・リキ・チカラ）で終わる
-
-降格先は `名詞,一般`（「〜化」は `名詞,サ変接続`、「〜的」は `名詞,形容動詞語幹`）で、文脈 ID は IPAdic が
-その品詞に最も多く使う組（1285 / 1283 / 1287）に付け替える。コスト・原形・読み・発音は変えない。
-配布辞書では `ipadic-neologd.hsd` で 145.9 万件中 5,830 件、`ipadic-neologd-sudachi.hsd` で 147.4 万件中
-5,842 件を降格する（`scripts/build-dict.sh` は同じ実行で作る IPAdic の中間辞書（repair 前）を参照に使う）。
-降格した語のうち NEologd の読みが誤っているもの（「必然的(ヒツザンテキ)」「君主制(キョウワセイ)」など 21 語）は、
-降格で文中に出やすくなるので `dict/user-remove/misreading-entries.csv` で落としている。
-
-接尾辞を表層形で限るのは、IPAdic の「名詞,接尾,一般」に固有名詞を作る語も多いため（「〜線」路線名、
-「〜法」法律名、「〜院」寺院名、「〜会」団体名、「〜社」「〜賞」「〜峠」「〜岳」）。許可する接尾辞は、
-SudachiDict の普通名詞・固有名詞の分類を参照して絞り、降格される語を接尾辞ごとに目で見て決めた。
-「〜論」（「国富論」「資本論」など著作名が 1 割近い）、「〜型」（「吹雪型」「秋月型」など艦級名）、
-「〜系」（「ナスルーラ系」など競走馬の父系名）、「〜書」「〜式」は外した。「〜力」「〜度」には人名・社名が
-数 % 混ざる（「北勝力」「格力」「公孫度」）が、読みは変わらないので、「説得力」「満足度」のような抽象語を
-拾える方を採った。読みの条件は、接尾辞を字どおりに読まない人名・作品名（「こだま学(コダママナブ)」
-「かわら力(カワラツトム)」「鉄道員(ポッポヤ)」）を除くためのもので、「目力(メヂカラ)」のように連濁する
-一般語も固有名詞のまま残る。
-
-規則に当たらない語は個別に直す。`dict/user-remove/common-words-as-proper-nouns.csv` で固有名詞のエントリを
-落とし（ステークホルダー、エンゲージメント・ユースケース（原形が「ANGAGEMENT」「Youth case」の人名もある）、
-爆速）、`dict/user/common-word-fixes.csv` で一般名詞として足す。同じファイルで、割れてしまう「深掘り」
-「深堀り」（原形は「深掘り」）「腹落ち」を名詞,サ変接続で足している。
-
-#### 外国人名の除去
-
-中国・朝鮮系の 1 文字姓は日常語と衝突して誤読を招く（「金がない」→ 朝鮮の姓の「金(キム)」で「キムガナイ」、
-「何なのか」→ 中国の姓の「何(ガ)」で「ガナノカ」）。日本語の読み上げに特化するため、日本の姓名でない
-人名エントリを削除リストで落とす。
-
-| ファイル | 中身 | 適用 |
-| --- | --- | --- |
-| `dict/user-remove/foreign-names.csv` | 外国人の姓・名のエントリ（林=リン、金=キム、王=ワン、在訓=ジェフン、カタカナの ジョンソン・ブライアン 等）と、1 文字の外国人名 | `make dict-repair` で常に適用 |
-| `dict/foreign-names/full-names.csv` | 外国人のフルネーム（毛沢東=モウタクトウ、金正日=キムジョンイル、劉備=リュウビ 等） | 任意（`--remove` に足す） |
-
-フルネームを既定で消さないのは、文中の外国人名の読みが崩れるため。推奨辞書で試すと、「李白」が「スモモシロ」、
-「諸葛亮」が「モロクズアキラ」、「金正日」が「カネマサビ」、「毛沢東」が「ケタクトウ」になる。
-フルネームは日常語とほとんど衝突しないので、残しても誤読の原因になりにくい。
-
-削除リストは `scripts/find_foreign_names.py` が生成する。人名エントリの読みを Unicode Unihan の字音と照合し、
-次の候補を挙げる。
-
-- 全漢字が朝鮮語の字音か普通話で読まれ、日本語の字音では説明できない名前（由美=ユミ のように日本語でも読めるものは挙げない）
-- 1 文字姓の音読み（日本の姓として使われる 伴=バン・菅=カン などは許可リストで残す）
-- 中国の複姓（司馬、諸葛）
-- 日本人名の読みに無いカタカナの姓・名
-
-判定の誤りは `dict/foreign-names/allow.csv`（日本人名として残す）と `deny.csv`（規則で拾えない外国人名）に書いて再生成する。
-
-```bash
-hasami export --dict dict/ipadic-neologd-sudachi.hsd --output /tmp/lex.csv
-python3 scripts/find_foreign_names.py /tmp/lex.csv \
-    --parts dict/user-remove/foreign-names.csv \
-    --full dict/foreign-names/full-names.csv \
-    --audit /tmp/foreign-names-audit.tsv   # 全候補と判定理由（レビュー用）
-```
-
-削除リストは 3 列目で品詞を人名に限っている。品詞を限らずに消すと、同じ表層形・読みの人名以外の語
-（接頭辞「高(コウ)」、助数詞「金(キン)」、国名「周(シュウ)」、名詞「パン」など、推奨辞書で 978 件）まで消える。
-
-Unihan は初回に `.dict-src/unihan/` へダウンロードし、SHA-256 を検証する（Unicode 18.0.0、
-[Unicode License v3](https://www.unicode.org/license.txt)）。Unihan のデータ自体はリポジトリに含めない。
+取り方のオプションと置き場所の決まり方は [docs/dictionaries.md](docs/dictionaries.md) にあります。
 
 ## 使い方
 
@@ -596,46 +129,28 @@ hasami tokenize -d "$(hasami dict path ipadic)" "形態素解析のテスト"   
 hasami tokenize --dict dict/ipadic-neologd.hsd -j 4 < corpus.txt > corpus.mecab
 ```
 
-標準入力は行ごとに解析する（前後の空白を除き、空行は飛ばす）。出力はまとめて書き出すが、次の入力を待つ前には
-それまでの結果を書き出すので、1 行ずつ送って結果を読む使い方もできる。
+MeCab 形式の出力は次のようになります（`ipadic-neologd.hsd`）。
 
-### Rust API
+```text
+東京都	名詞,固有名詞,地域,一般,東京都,トウキョウト,トーキョート
+に	助詞,格助詞,一般,*,に,ニ,ニ
+住ん	動詞,自立,*,*,住む,スン,スン
+で	助詞,接続助詞,*,*,で,デ,デ
+いる	動詞,非自立,*,*,いる,イル,イル
+EOS
+```
 
-#### ライブラリとして使う
+標準入力は行ごとに解析します（前後の空白を除き、空行は飛ばします）。出力はまとめて書き出しますが、次の入力を待つ前にはそれまでの結果を書き出すので、1 行ずつ送って結果を読む使い方もできます。
 
-crates.io には公開していない（`hasami` の名前は別のプロジェクトが使っている）。git 依存で使う。
+### Rust
+
+crates.io には公開していないので、git の依存として使います（`hasami` の名前は crates.io では別のプロジェクトが使っています）。
 
 ```toml
 [dependencies]
 # 解析まで（Analyzer・Dictionary・Token と sentence）。依存は memmap2 と bytemuck だけになる
 hasami = { git = "https://github.com/owayo/hasami", default-features = false, features = ["analyzer"] }
-# 文分割（sentence）だけなら。依存は無い
-# hasami = { git = "https://github.com/owayo/hasami", default-features = false }
-# 配布辞書をリリースから取るなら（hasami::download）
-# hasami = { git = "https://github.com/owayo/hasami", default-features = false, features = ["download"] }
-# 辞書も作るなら（DictBuilder、MeCab 形式 CSV の読み書き）
-# hasami = { git = "https://github.com/owayo/hasami", default-features = false, features = ["build"] }
 ```
-
-| feature | 中身 | 追加の依存 |
-| --- | --- | --- |
-| （なし） | 辞書の要らない文分割（`sentence`） | なし |
-| `analyzer` | 解析（`Analyzer`・`Dictionary`・`Token`・品詞の正規化、辞書を埋め込む `include_hsd!`）、C FFI | memmap2, bytemuck |
-| `download` | リリースの配布辞書の取得（`hasami::download`。`analyzer` を含む） | ureq（rustls）, sha2, tempfile, serde, serde_json, ruzstd |
-| `build` | 辞書の構築・修復・書き出し（`DictBuilder`、`write_lexicon_csv`。`analyzer` を含む） | csv, encoding_rs, glob |
-| `cli` | `hasami` コマンド（`build` と `download` を含む） | clap, indicatif, serde_json |
-
-既定は `cli`（`cargo install` やこのリポジトリでのビルドで CLI が使える）。
-`default-features = false` だけで解析器を使っていた場合は `features = ["analyzer"]` を足す（`v26.9.100` までは
-feature なしでも解析器が入っていた）。
-
-**版の方針**: 版は `yy.m.counter` の日付版（例: `26.9.100`。リリースワークフローが年・月・月内の連番で付ける）で、
-semver の互換性は表さない。API と辞書形式はどの版でも変わりうるので、git 依存では
-`tag = "v<版>"`（[Releases](https://github.com/owayo/hasami/releases) の版）か `rev` で固定する。
-辞書形式を変えたときは、古い `.hsd` を読み込むと作り直しを案内するエラーになる
-（`scripts/build-dict.sh` で上流から作り直す）。
-
-#### 基本
 
 ```rust
 use hasami::Analyzer;
@@ -646,289 +161,13 @@ let tokens = analyzer.tokenize("東京都に住んでいる");
 for token in &tokens {
     println!("{}\t{}\t{}", token.surface, token.pos, token.reading);
 }
-
-// 活用型・活用形（活用しない語・未知語は空文字列）
-let tokens = analyzer.tokenize("読み込み、");
-println!("{} {}", tokens[0].conj_type, tokens[0].conj_form); // 五段・マ行 連用形
-
-// バッチ処理
-let results = analyzer.tokenize_batch(&["文1", "文2", "文3"]);
 ```
 
-`tokenize` は辞書に不正な参照を見つけると panic する（`hasami info --verify` で検証済みの辞書では起きない）。
-検証していない辞書を扱うときは、エラーを返す `try_tokenize` を使う。
+feature の選び方と版の固定、辞書の取得と埋め込み、文分割、品詞の正規化、並行解析は [docs/rust-api.md](docs/rust-api.md) にあります。
 
-```rust
-match analyzer.try_tokenize("東京都に住んでいる") {
-    Ok(tokens) => { /* ... */ }
-    Err(e) => eprintln!("壊れた辞書: {e}"),
-}
-```
+### Python と C
 
-`Token` のフィールドは `surface`・`start`・`end`（入力のバイト位置）・`pos`（品詞 4 階層）・`conj_type`・`conj_form`・
-`base_form`・`reading`・`pronunciation`・`word_cost`・`is_known`。
-
-辞書は mmap で読み込むので、読み込み中の辞書ファイルを書き換えたり切り詰めたりしてはいけない。
-辞書を差し替えるときは別名で書いてから rename する（`hasami build` / `merge` / `repair` の出力はそうしている）。
-
-#### 辞書の既定の場所
-
-`Analyzer::load_default()` は次の順に辞書を探す。見つからなければ探した場所を持つ `DictError::NotFound` を返すので、
-辞書なしでも動く利用者はこのエラーのときだけ辞書なしに切り替えればよい。
-
-1. 環境変数 `HASAMI_DICT`（辞書ファイルのパス）
-2. 置き場所（`hasami::analyzer::data_dir()`。`HASAMI_DATA_DIR` → `$XDG_DATA_HOME/hasami/` → `%LOCALAPPDATA%\hasami\`
-   （Windows）→ `~/.local/share/hasami/`）の `*.hsd`。複数あれば `ipadic-neologd-sudachi.hsd` → `ipadic-neologd.hsd` →
-   `ipadic.hsd` → そのほかの名前順（`hasami::analyzer::preferred_dict_in(dir)`）
-
-```rust
-let mut analyzer = match hasami::Analyzer::load_default() {
-    Ok(a) => Some(a),
-    Err(hasami::DictError::NotFound(_)) => None, // 辞書なしで動く
-    Err(e) => return Err(e.into()),
-};
-```
-
-置き場所の規則を写さずに済むよう、`data_dir()` を公開している（辞書を取得するツールは、ここに置けば
-`hasami tokenize` や `load_default` がそのまま見つける）。
-
-#### 配布辞書を取得する（`download` feature）
-
-`hasami::download` は `hasami dict download` と同じ手順で、リリースの配布辞書を取得して置き場所に置く
-（目録の大きさと SHA-256、辞書として読めることを確かめてから、一時ファイルを rename して置く）。
-
-```rust
-use hasami::download::{self, DownloadOptions};
-
-// この版（hasami の Cargo.toml の version）のリリースの目録から推奨辞書を取る
-let catalog = download::catalog(download::CURRENT_TAG)?;
-catalog.check_format()?; // この hasami が読める形式か
-let dict = catalog.find(download::RECOMMENDED).expect("推奨辞書は目録にある");
-let dir = hasami::analyzer::data_dir().expect("置き場所が決まる");
-let mut progress = |received: u64, total: u64| eprint!("\r{received} / {total}");
-let options = DownloadOptions {
-    progress: Some(&mut progress),
-    ..DownloadOptions::default()
-};
-let outcome = download::download(dict, &dir, options)?; // 正しいファイルがあれば通信しない
-let analyzer = hasami::Analyzer::load(outcome.path())?;
-```
-
-大きさと SHA-256 を自分のソースに固定するなら、目録を取らずに `DistributedDict` を組み立てて渡す
-（取得元を信用しきらずに使える。圧縮版も固定するなら `compressed` を埋める）。
-
-```rust
-let dict = download::DistributedDict::new(
-    "ipadic",
-    18_125_804,
-    "e917bcdcdb45893fb4dd9b2de88ccb11dba2ecad2471dd0f62bd674a7f89ed73",
-);
-let base = download::release_url("v26.9.103");
-let options = DownloadOptions {
-    base_url: Some(&base), // 省くと、この hasami と同じ版のリリース
-    ..DownloadOptions::default()
-};
-download::download(&dict, &dir, options)?;
-```
-
-- `download::verify(path, &dict)` は置き場所のファイルを大きさと SHA-256 で確かめる（通信しない）
-- `download::install(file, Some(&dict), &dir, force)` は手元のファイル（`.hsd` / `.hsd.zst`）を確かめて置く
-- `download::catalog_from(url)` はミラー（`<url>/dictionaries.json`）の目録を取る
-- 依存は ureq（TLS は rustls で、証明書は OS の証明書ストアで検証する）、sha2、tempfile、serde、ruzstd（zstd の展開。
-  C のライブラリを使わない）。解析だけを使うなら `download` は入れない
-
-#### 実行ファイルに辞書を埋め込む
-
-辞書を実行ファイルに埋め込むと、インストールだけで解析できる。`hasami::include_hsd!` で埋め込み、
-`Dictionary::from_static` で読む。埋め込んだバイト列を複製せずに参照するので、`Dictionary::load`（mmap）と同じく
-解析で触れたページだけが読み込まれ、ヒープに辞書の複製を持たない。
-
-```rust
-use hasami::{Analyzer, Dictionary};
-
-// パスはこのファイルからの相対パス（include_bytes! と同じ）
-static IPADIC: &[u8] = hasami::include_hsd!("../dict/ipadic.hsd");
-
-let dict = Dictionary::from_static(IPADIC)?;
-let mut analyzer = Analyzer::from_dict(dict);
-```
-
-- `from_static` は、バイト列の先頭が 8 バイト境界にあることを求める。`include_bytes!` だけでは境界がそろわない
-  （そろうかどうかはビルドごとに変わる）。境界になければ、複製に切り替えずに `DictError::Invalid` を返す
-- `include_hsd!` は 64 バイト境界（キャッシュライン）にそろえる。セクションはファイルの先頭から 64 の倍数の位置に
-  あるので、mmap した辞書と同じくセクションもキャッシュラインの境界に乗る
-- `include_hsd!` は呼び出すたびに別の静的領域になる。同じ辞書は 1 か所の `static` に置いて使い回す
-- `from_bytes` は、どんなバイト列でも 8 バイト境界の所有バッファに複製して読む（`'static` でないバイト列向け）
-- 最初の解析で辞書のページを読み込む待ちを先に払うなら、`analyzer.prewarm()` を呼ぶ
-
-IPAdic（18MB）を埋め込んだ CLI で小さな文書を解析すると、`from_bytes` に比べて起動が約 6ms 速く、
-最大 RSS が約 31MB 少ない（mmap の `load` と同じ。高負荷のマシンでの 60 回の中央値）。
-
-マクロを使わずに書くなら、境界をそろえたラッパーに入れる（最低 8。`include_hsd!` と同じ 64 にしておく）。
-
-```rust
-#[repr(C, align(64))]
-struct Aligned<T: ?Sized>(T);
-
-static IPADIC: &Aligned<[u8]> = &Aligned(*include_bytes!("../dict/ipadic.hsd"));
-
-let dict = hasami::Dictionary::from_static(&IPADIC.0)?;
-```
-
-#### 文分割（辞書不要）
-
-`hasami::sentence` は辞書をロードせずに日本語の文境界を求める（feature なしで使え、依存も無い）。
-括弧の対応を取ってから括弧の内側の文末記号を無視し、`Yahoo!ニュース`・`モーニング娘。`・`Hey!Say!JUMP` のように
-文末記号を含む語（推奨辞書から抽出した約 1.9 万語の例外表）の内側では切らない。URL の `?` や `!important`、
-直前が英数字で直後が数字の全角ピリオド（`３．１４`・`第３．２節`・`Ｎｏ．１`・`Ｖｏｌ．６`）でも切らない
-（`．` を句点に使う文書で、英字で終わる文の次の文が数字で始まる `…ＡＰＩ．１つ目は…` はつながる）。
-
-例外表の語は、次のように普通の文と取り違えないよう照合する（規則の全体は `src/sentence/mod.rs` の冒頭）。
-
-- 語の末尾の文末記号は、直後が続きの語（助詞と `から まで より って など だけ しか さえ くらい ぐらい ほど`）で
-  始まるときだけ守る。`もう もし もちろん とにかく やはり しかし` など文頭に立つ語で始まるなら切る。
-  `寒いね。` `好きだ。` のように普通の文末と同じ形で終わる語の後ろでは、`でも では とはいえ だけど` も文頭の語とみなす
-  （`高すぎ。でも買った。` `好きなのはモーニング娘。もう一度言う。` は 2 文、`Yahoo!では…` は 1 文）
-- 語の途中から一致したものは数えない（`食べる。` の中の `べる。`、`主流。` の中の `流。`）
-- 全角の英数字・記号は半角に畳んで比べる（`Yahoo！ニュース`・`Ｙａｈｏｏ！ニュース` も守る）
-
-例外表の索引はビルド時に作って埋め込むので、`Splitter::new` の初回と最初の分割は 1ms 未満で済む。表の版は
-`sentence::BUILTIN_EXCEPTIONS_VERSION`（`語の数-語のハッシュ`）で分かる。文末記号・括弧の判定は
-`is_sentence_ender`・`closing_bracket`・`is_closing_bracket`・`ascii_run_is_ender` で分割と同じ基準のまま使える。
-
-```rust
-use hasami::sentence::{self, LineBreaks, SplitOptions};
-
-let text = "「うまく行くかな？」と思った。Yahoo!ニュースを見た。";
-let sentences: Vec<&str> = sentence::split(text, &SplitOptions::default())
-    .into_iter()
-    .map(|s| &text[s.range])
-    .collect();
-assert_eq!(sentences, ["「うまく行くかな？」と思った。", "Yahoo!ニュースを見た。"]);
-
-// 改行で区切る・例外語を足す。繰り返し使うなら Splitter を作って使い回す
-let options = SplitOptions {
-    line_breaks: LineBreaks::Split,
-    extra_exceptions: &["ヤッター!マン"],
-    ..SplitOptions::default()
-};
-let splitter = sentence::Splitter::new(&options);
-
-// 改行の字を取り除いた解析用のテキストを、元の改行の位置（バイト位置）で区切る
-let text = "一行目の途中で折り返して続く文。二文目";
-let breaks = ["一行目の途中で折り返して".len()];
-let sentences = sentence::Splitter::default().split_with_breaks(text, &breaks);
-```
-
-一文の長さを測るときのように、括弧の中の文も分けたいときは `Splitter::split_fragments` を使う。
-`split` の文を、括弧の内側で文末として働く文末記号の後ろでさらに区切った断片を返す。
-
-- 断片は文の境界をまたがない。括弧の内側に文末記号のない文（`embedded_enders` が偽の文）は、そのまま 1 つの断片になる
-- どの記号が文末として働くか（例外表の語・URL の `?`・小数点）、改行（括弧の内側では区切らない）、前後の空白は `split` と同じ。
-  語の末尾の文末記号の直後が閉じ括弧なら、`split` の `embedded_enders` と同じく文末として働く
-  （`「モーニング娘。」が好きだ。` は `「モーニング娘。」` / `が好きだ。`）
-- 文末記号に隙間なく続く閉じ括弧と文末記号は前の断片に含める（`明日は行く。」` / `と言った。`、`「はい。」。` は 1 つの断片）。
-  文末記号と閉じ括弧だけの区間も、同じ文の前の断片に含める
-- 改行の位置を別に渡すなら `split_fragments_with_breaks`。断片の `embedded_enders` は常に偽
-
-```rust
-let text = "彼は「今日は休む。明日は行く。」と言った。";
-let fragments: Vec<&str> = sentence::Splitter::default()
-    .split_fragments(text)
-    .into_iter()
-    .map(|s| &text[s.range])
-    .collect();
-assert_eq!(fragments, ["彼は「今日は休む。", "明日は行く。」", "と言った。"]);
-```
-
-形態素解析の前分割（ラティスを小さく保つための区切り。`Splitter::chunk_ends`）にも同じ規則を使っているので、
-例外表の語は解析でも割れない。前分割も括弧の対応を見ずに区切るが、閉じ括弧を次の区間に入れ、改行でも区切り、
-空白も除かないので、断片の代わりにはならない。
-文ごとにトークン列が欲しいときは `Analyzer::tokenize_sentences` を使う（トークンの位置は入力全体のバイト位置）。
-
-```rust
-for (sentence, tokens) in analyzer.tokenize_sentences(text, &SplitOptions::default()) {
-    println!("{}: {} tokens", &text[sentence.range.clone()], tokens.len());
-}
-```
-
-#### 品詞の正規化・否定・モーラ数
-
-`Token::coarse_pos` は、辞書の品詞体系（IPAdic 系・UniDic 系）の違いを吸収した粗い品詞 `CoarsePos` を返す。
-辞書を替えても同じ判定ができるように、次の違いをそろえている。
-
-- 「の」は IPAdic の `助詞,連体化` と `助詞,格助詞`、UniDic の `助詞,格助詞` のどれでも `CaseParticle`。
-  「行くのが」の「の」は `FormalNoun`
-- 形式名詞（こと・もの・わけ）は `FormalNoun`。UniDic は普通名詞と区別しないので、仮名書きの形式名詞を表層形で拾う
-- 受け身・使役の「れる」「せる」（IPAdic では `動詞,接尾`）と、助動詞の語幹「そう」「よう」「みたい」は `AuxVerb`
-- 記号は句点（。！？!? など）・読点（、，,）・開き括弧・閉じ括弧・そのほかを区別する。辞書によって品詞が違う
-  半角の `(` `!` `,` や全角の `！` も、表層形で見分けて同じ値にする
-- 数に付く単位の記号（`%` `％` `‰` `℃` `℉` `°` と CJK 互換文字の単位 `㎏` `㎞` `㌢` `㍍` など）は、記号の語・未知語でも
-  `NounSuffix`（全角の「％」と同じ）
-
-`Token::is_negation` は否定の形態素か（助動詞「ない」「ぬ」「ん」「ず」、形容詞「ない」）を原形で判定する。
-`Token::mora_count` は発音（仮名が無ければ読み）からモーラ数を数える。拗音の小書き文字は直前の仮名と合わせて
-1 モーラ、促音・撥音・長音は 1 モーラ。
-
-```rust
-use hasami::CoarsePos;
-
-let tokens = analyzer.tokenize("運用コストの削減の実現");
-let chained = tokens
-    .iter()
-    .filter(|t| &*t.surface == "の" && t.coarse_pos() == CoarsePos::CaseParticle)
-    .count();
-assert_eq!(chained, 2);
-
-let tokens = analyzer.tokenize("行かないわけではない");
-assert_eq!(tokens.iter().filter(|t| t.is_negation()).count(), 2);
-
-let morae: usize = analyzer.tokenize("東京に行った").iter().map(|t| t.mora_count()).sum();
-assert_eq!(morae, 8); // トーキョー ニ イッ タ
-```
-
-辞書の品詞に従うので、そろわない違いもある（「しか」は IPAdic では係助詞、UniDic では副助詞など）。
-
-#### 並行解析（Rust マルチスレッド）
-
-`Analyzer` は `Clone` を実装しており、辞書（mmap）を `Arc` で共有しつつ各クローンが独自のラティスワークスペースを持ちます。複数スレッドで並列解析する際、辞書はゼロコピー共有・ワークスペースのみ独立になります。
-
-```rust
-use hasami::Analyzer;
-
-let analyzer = Analyzer::load("dict/ipadic-neologd.hsd")?;
-analyzer.prewarm(); // 解析で触れる辞書のページを先に読み込み、初回の待ちを避ける
-
-let inputs: Vec<&str> = vec!["文1", "文2", "文3", "文4"];
-let results: Vec<Vec<_>> = std::thread::scope(|s| {
-    inputs
-        .iter()
-        .map(|input| {
-            let mut worker = analyzer.clone(); // 辞書共有・ワークスペース新規
-            s.spawn(move || worker.tokenize(input))
-        })
-        .collect::<Vec<_>>()
-        .into_iter()
-        .map(|h| h.join().unwrap())
-        .collect()
-});
-```
-
-### Python API
-
-#### インストール
-
-maturin と Python は `mise.toml` で固定している（`mise install` で入る）。`maturin develop` は有効にした仮想環境に入れる。
-
-```bash
-cd hasami-python
-mise install
-mise exec -- python -m venv .venv
-source .venv/bin/activate
-mise exec -- maturin develop --release
-```
-
-#### 基本的な使い方
+Python バインディング（`hasami-python/`）は PyPI に公開していないので、このリポジトリから maturin で入れます。
 
 ```python
 import hasami
@@ -942,121 +181,37 @@ for token in tokens:
     print(f"{token.surface}\t{token.pos}")
 ```
 
-#### 辞書マージ (Python)
+入れ方と API は [docs/python-api.md](docs/python-api.md) に、C から使うときの関数は [docs/c-api.md](docs/c-api.md) にあります。
 
-```python
-builder = hasami.DictBuilder()
-builder.load_hsd("dict/ipadic.hsd")    # 既存辞書をロード
-builder.add_csv_dir("./extra/")        # CSVを追加
-builder.build("merged.hsd")           # 新しい辞書を保存
+## 辞書
+
+配布辞書は 3 つあり、リリースに添付しています（リポジトリには置いていません）。
+
+| 辞書 | 内容 | 大きさ | 推奨用途 |
+|------|------|------:|---------|
+| `ipadic` | IPAdic 単体 | 18 MB | 軽量・基本用途 |
+| `ipadic-neologd` | IPAdic + NEologd | 222 MB | 新語・固有名詞対応 |
+| `ipadic-neologd-sudachi` | IPAdic + NEologd + SudachiDict | 238 MB | **推奨**（最大語彙） |
+
+- [docs/dictionaries.md](docs/dictionaries.md): 取り方のオプション、置き場所、上流のソースからのビルド、手動での構築、辞書形式（.hsd）、配布辞書のライセンス
+- [docs/dictionary-repair.md](docs/dictionary-repair.md): `hasami repair` の修復（文や句の名詞・数と単位の組の削除、一般語の固有名詞の降格、外国人名の除去）
+
+## アーキテクチャ
+
+```mermaid
+flowchart TD
+    IN[入力テキスト] --> TRIE["文字単位 Double-Array Trie<br/>辞書引き（共通接頭辞検索）"]
+    TRIE --> UNK["文字分類<br/>未知語ノード生成"]
+    UNK --> LAT["ラティス構築<br/>全候補をラティスに展開"]
+    LAT --> VIT["Viterbi<br/>接続コスト + 単語コストで最適パス探索"]
+    VIT --> OUT["トークン列<br/>最良パスの語だけ素性（品詞・活用・読み）を復号"]
 ```
 
-#### 分かち書き
-
-```python
-print(analyzer.wakachi("東京都に住んでいる"))
-# => 東京都 に 住ん で いる
-```
-
-#### 並行解析（Python マルチスレッド）
-
-`tokenize` 系メソッドは内部で GIL を解放するため、複数スレッドで真の並列処理が可能です。`clone_for_worker()` で辞書を共有しつつ、スレッドごとにワークスペースを独立化します。
-
-```python
-import hasami
-from concurrent.futures import ThreadPoolExecutor
-
-analyzer = hasami.Analyzer("dict/ipadic-neologd.hsd")
-analyzer.prewarm()  # 解析で触れる辞書のページを先に読み込む（初回の待ちを避ける）
-
-def tokenize_one(args):
-    worker, text = args
-    return [t.surface for t in worker.tokenize(text)]
-
-# ワーカーごとにクローン（辞書はゼロコピー共有）
-texts = ["文1", "文2", "文3", "文4"]
-workers = [analyzer.clone_for_worker() for _ in texts]
-
-with ThreadPoolExecutor(max_workers=4) as ex:
-    results = list(ex.map(tokenize_one, zip(workers, texts)))
-```
-
-#### Token オブジェクトの属性
-
-```python
-token = analyzer.tokenize("猫")[0]
-token.surface        # 表層形: "猫"
-token.pos            # 品詞: "名詞,一般,*,*"
-token.conj_type      # 活用型: ""（活用しない語・未知語は空文字列。動詞なら "五段・カ行イ音便" など）
-token.conj_form      # 活用形: ""（動詞なら "連用形" など）
-token.base_form      # 原形: "猫"
-token.reading        # 読み: "ネコ"
-token.pronunciation  # 発音: "ネコ"
-token.start          # 開始バイト位置: 0
-token.end            # 終了バイト位置: 3
-token.word_cost      # 単語コスト: 3987
-token.is_known       # 辞書語かどうか: True
-token.coarse_pos     # 辞書の品詞体系をそろえた粗い品詞: "Noun"（Rust の CoarsePos の名前）
-token.is_negation    # 否定の形態素か: False
-token.mora_count     # モーラ数: 2
-```
-
-辞書が壊れていて解析中に不正な参照を見つけたときは `ValueError`、辞書ファイルを開けないときは `IOError` を送出する。
-
-### C FFI
-
-```c
-#include "hasami.h"
-
-HasamiAnalyzer* analyzer = hasami_new("dict/ipadic-neologd.hsd");
-if (!analyzer) {
-    fprintf(stderr, "load error: %s\n", hasami_last_error(NULL));
-    return 1;
-}
-
-HasamiTokenList tokens = hasami_tokenize(analyzer, "東京都に住んでいる");
-const char* error = hasami_last_error(analyzer);
-if (error) {
-    fprintf(stderr, "tokenize error: %s\n", error);
-    hasami_free(analyzer);
-    return 1;
-}
-
-for (uint32_t i = 0; i < tokens.len; i++) {
-    printf("%s\t%s\n", tokens.tokens[i].surface, tokens.tokens[i].pos);
-}
-
-hasami_free_tokens(tokens);
-hasami_free(analyzer);
-```
-
-`HasamiToken` のフィールドは `surface`・`start`・`end`・`pos`・`conj_type`・`conj_form`・`base_form`・`reading`・
-`pronunciation`・`is_known`（文字列はすべて UTF-8 のヌル終端）。解析中に辞書の不正な参照を見つけたときは、
-空のリストを返して `hasami_last_error` にエラーを入れる。
+空白と未知語の扱いは、MeCab と比べながら [docs/architecture.md](docs/architecture.md) で説明しています。辞書形式を作り直したときと解析を速くしたときの記録は、[docs/hsd-format.md](docs/hsd-format.md) と [docs/performance.md](docs/performance.md) にあります。
 
 ## ベンチマーク
 
-```bash
-# 同じ文を繰り返す
-hasami bench --dict dict/ipadic-neologd.hsd --text "東京都に住んでいる人々が増えている。" --iterations 100000
-
-# 1 行 1 文のファイルの全行を解析する時間（ファイル全体を 3 回解析して最速の回）
-hasami bench --dict dict/ipadic-neologd.hsd --file corpus.txt
-```
-
-livedoor ニュースコーパスの本文 132,876 行（24.3MB）で測った値。Apple M2（P コア 4 + E コア 4）。
-
-### 解析速度（ライブラリ、1 スレッド）
-
-`Analyzer::try_tokenize` を行ごとに呼んで全行を解析する時間（`hasami bench --file` と同じ。出力の書式化なし）。
-
-| 辞書 | 時間 | 速度 |
-|------|-----:|-----:|
-| ipadic | 1.00s | 24 MB/s |
-| ipadic-neologd | 1.29s | 19 MB/s |
-| ipadic-neologd-sudachi | 1.34s | 18 MB/s |
-
-### CLI（標準入力 → MeCab 形式）
+livedoor ニュースコーパスの本文 132,876 行（24.3MB）を標準入力から読み、MeCab 形式で出力するまでの時間です（Apple M2）。
 
 | | ipadic | ipadic-neologd-sudachi |
 |---|---:|---:|
@@ -1064,158 +219,51 @@ livedoor ニュースコーパスの本文 132,876 行（24.3MB）で測った�
 | hasami（`-j 1`） | 1.24s | 1.62s |
 | hasami（既定。CPU の数だけ並列） | 0.43s | 0.49s |
 
-表の値は、未知語の品詞を unk.def のテンプレートすべてから選ぶようにする（PR #14）前に測ったもの。テンプレートの数だけ
-未知語のノードを作るので、解析の時間は約 15% 増えた（変更の前後を交互に走らせた CPU 時間。ipadic・推奨辞書とも）。
-推奨辞書は、その前にカタカナの複合語の規則（PR #10）で未知語の候補が減って約 8% 速くなっている（ipadic は変わらない）。
-
-辞書のロードは 3 辞書とも 1ms 未満（mmap。ロード時はヘッダと小さな表だけを検査する）。
-計測の方法と、速くしたときに試したこと・見送ったことは [docs/performance.md](docs/performance.md)。
+表の値は、未知語の品詞を unk.def のテンプレートすべてから選ぶようにする前に測ったもので、この変更で解析の時間は約 15% 増えています（ipadic・推奨辞書とも）。辞書のロードは 3 辞書とも 1ms 未満です。ライブラリだけの解析速度と計測の方法は [docs/benchmark.md](docs/benchmark.md) にあります。
 
 ## 開発
 
-[mise](https://mise.jdx.dev/) を使う。ツールの版は `mise.toml` で固定している（Rust・Python・uv・maturin と、Linux だけの cross）。
-Makefile はこれらを `mise exec --` 経由で呼ぶので、`mise activate` していなくても同じ版で動く。
+<!-- standard:dev:start -->
+[mise](https://mise.jdx.dev/) が必要です。ツールの版は `mise.toml` で固定しています。
 
 ```bash
-make setup   # mise.toml のツールを入れ、Cargo.lock どおりに依存を取る
-make ci      # CI の quality ジョブと同じ検査（整形・clippy・テスト）
+make setup   # ツールチェーン (mise) と依存を取得する
+make ci      # CI と同じ検査 (書き換えない)
 ```
-
-CI（`.github/workflows/ci.yml`）の Quality ジョブは、Linux と macOS でこの 2 つだけを実行する。Windows は make を使わず、
-Build ジョブで `cargo test` を直接回す。
 
 | コマンド | 説明 |
 |---|---|
-| `make setup` | Install the toolchain (mise.toml) and fetch the dependencies (Cargo.lock) |
-| `make setup-hooks` | Enable repository hooks for this clone |
-| `make build` | Build debug version |
-| `make release` | Build release version |
-| `make run` | Run the CLI (arguments in ARGS="...") |
-| `make test` | Run tests (the workspace and the library-only feature sets) |
-| `make lint` | Run clippy with warnings denied (the workspace and the library-only feature sets) |
-| `make fmt` | Format code |
-| `make fmt-check` | Check formatting (does not rewrite) |
-| `make check` | Check formatting and run clippy (no tests) |
-| `make ci` | Run the same checks as the CI quality job (check + test) |
-| `make install` | Build release and install to INSTALL_PATH (default /usr/local/bin) |
-| `make uninstall` | Remove the installed binary from INSTALL_PATH |
-| `make clean` | Clean build artifacts |
-| `make dict-download` | Download the distributed dictionaries of this version's release into dict/ |
-| `make dict` | Build the distributed dictionaries (IPAdic, +NEologd, +SudachiDict) |
-| `make dict-ipadic` | Build IPAdic dictionary |
-| `make dict-neologd` | Build IPAdic + NEologd dictionary |
-| `make dict-sudachi` | Build IPAdic + NEologd + SudachiDict dictionary (recommended) |
-| `make dict-repair` | Repair a dictionary in place (DICT=path/to/dict.hsd) |
-| `make dict-unidic-cwj` | Build UniDic CWJ (書き言葉) dictionary |
-| `make dict-unidic-csj` | Build UniDic CSJ (話し言葉) dictionary |
-| `make dict-clean` | Remove downloaded dictionary sources |
-| `make help` | Show this help message |
+| `make setup` | ツールチェーン (mise) と依存を取得する |
+| `make build` | デバッグ版をビルドする |
+| `make release` | リリース版をビルドする |
+| `make run` | デバッグ版を実行する (引数は ARGS="...") |
+| `make test` | テストを実行する |
+| `make lint` | clippy を警告ゼロで通す |
+| `make fmt` | コードを整形する (書き換える) |
+| `make fmt-check` | 整形済みかを確かめる (書き換えない) |
+| `make check` | 整形と静的検査 (書き換えない) |
+| `make ci` | CI と同じ検査 (書き換えない) |
+| `make install` | リリース版を INSTALL_PATH (既定 /usr/local/bin) に入れる |
+| `make uninstall` | INSTALL_PATH から取り除く |
+| `make clean` | ビルド成果物を消す |
 
-`make test` と `make lint` は、ライブラリとして使う 3 つの構成（feature なし・`analyzer`・`download`）も確かめる。
-hasami-python は pyo3 の extension-module のため、macOS・Linux ではテストバイナリをリンクできない。そこで `make test` からは外し、
-コンパイルは `make lint`（`clippy --workspace`）で確かめる。make のターゲットが無い操作は、コマンドの前に `mise exec --` を付ける。
+`make` でターゲットの一覧を表示します。リリースは GitHub Actions で行います (**Actions → Release → Run workflow**)。
+<!-- standard:dev:end -->
+
+clone したら、大きなファイルのコミットを止めるフックを一度入れてください。
 
 ```bash
-# Python バインディングを含むワークスペース全体のビルド（make build はルートのクレートだけ）
-mise exec -- cargo build --workspace
-
-# 配布辞書を使う #[ignore] のテスト（先に make dict-download で dict/ に辞書を取る。
-# -- --ignored だけにすると、ネットワークを使うテストまで走る）
-mise exec -- cargo test --locked --workspace --exclude hasami-python -- --ignored distributed
+make setup-hooks   # 50MB を超えるファイルをコミットしようとすると pre-commit が止める
 ```
 
-mise で入れられないものは OS のものを使う。`make dict` 系（`scripts/build-dict.sh`）と UniDic の取得には git・curl・xz・unzip が、
-リリースの辞書の圧縮（CI）には zstd が要る。
-
-CI も `.github/actions/setup-mise`（jdx/mise-action）で同じ版を入れる。mise 自身の版はそこに書く。`mise.toml` の版を変えたら
-`MISE_GITHUB_TOKEN=$(gh auth token) mise lock --platform linux-x64,macos-arm64,macos-x64,windows-x64` で `mise.lock` を
-作り直す（CI は lock の URL と SHA-256 で取る。トークンが無いと GitHub API の制限で記録が黙って欠ける）。
-`mise.lock` は書式 1 のまま持つ（CI の mise は書式 2 を読めない。`mise lock --upgrade` はしない）。
-
-## リリース
-
-GitHub Actions の Release（`.github/workflows/release.yml`）を手で動かす（Actions > Release > Run workflow）。
-版は `yy.m.counter`（例: `26.9.104`）で、同じ月のうちは counter を 1 つずつ上げ、月が変わると 100 から数え直す。
-Release は版を上げた Cargo.toml と Cargo.lock をコミットし、タグを切る。その後、5 ターゲットのバイナリと、タグのソースから
-作った配布辞書（`dict-build.yml` を呼ぶ）をリリースに添付する。
-
-`dry_run` にチェックを入れて動かすと、次の版を計算して表示するだけで、コミット・タグ・ビルド・リリースはしない。
+`make dict` 系と UniDic の取得には git・curl・xz・unzip が要ります（mise では入れません）。ライブラリとして使う 3 つの構成の検査、Python バインディングのビルド、配布辞書を使うテスト、CI とリリースの流れは [docs/development.md](docs/development.md) にあります。
 
 ## ライセンス
 
-[MIT](LICENSE)
+<!-- standard:license:start -->
+[MIT AND NAIST-2003 AND Apache-2.0 AND BSD-3-Clause](LICENSE)
+<!-- standard:license:end -->
 
-ただし、ライブラリに埋め込む文分割の例外表（`src/sentence/builtin_exceptions.txt`）は配布辞書の表層形から抽出したもので、
-mecab-ipadic（NAIST-2003）・mecab-ipadic-NEologd（Apache-2.0）・SudachiDict（Apache-2.0。UniDic（BSD-3-Clause）を含む）に由来する。
-hasami をリンクしたバイナリには辞書を同梱しなくてもこの表が入るので、配布するときは
-[`src/sentence/builtin_exceptions.NOTICE`](src/sentence/builtin_exceptions.NOTICE) の表示を添える（詳細は [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md)）。
+コードは MIT です。ライブラリに埋め込む文分割の例外表（`src/sentence/builtin_exceptions.txt`）は、配布辞書の表層形から抽出したものです。元のデータは mecab-ipadic（NAIST-2003）・mecab-ipadic-NEologd（Apache-2.0）・SudachiDict（Apache-2.0。UniDic（BSD-3-Clause）を含む）です。hasami をリンクしたバイナリには、辞書を同梱しなくてもこの表が入るので、配布するときは [`src/sentence/builtin_exceptions.NOTICE`](src/sentence/builtin_exceptions.NOTICE) の表示を添えてください（詳細は [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md)）。
 
-### 配布辞書のライセンス
-
-リリースに添付している配布辞書は、以下のソースから構築されています。各辞書の著作権・ライセンスにしたがってご利用ください。
-ライセンスの全文はリリースにも `THIRD_PARTY_LICENSES.md` として添付しています。辞書を再配布するときは、このファイルを一緒に配ってください。
-
-#### IPAdic (`ipadic.hsd`, `ipadic-neologd.hsd`)
-
-[MeCab用IPAdic](https://taku910.github.io/mecab/#download) (2.7.0-20070801) を基に構築。
-
-> Copyright 2000, 2001, 2002, 2003 Nara Institute of Science and Technology. All Rights Reserved.
->
-> Use, reproduction, and distribution of this software is permitted. Any copy of this software, whether in its original form or modified, must include both the above copyright notice and the following paragraphs.
->
-> Nara Institute of Science and Technology (NAIST), the copyright holders, disclaims all warranties with regard to this software, including all implied warranties of merchantability and fitness, in no event shall NAIST be liable for any special, indirect or consequential damages or any damages whatsoever resulting from loss of use, data or profits, whether in an action of contract, negligence or other tortuous action, arising out of or in connection with the use or performance of this software.
->
-> A large portion of the dictionary entries originate from ICOT Free Software. The following conditions for ICOT Free Software apply to the current dictionary as well.
->
-> Each User may also freely distribute the Program, whether in its original form or modified, to any third party or parties, PROVIDED that the provisions of Section 3 ("NO WARRANTY") will ALWAYS appear on, or be attached to, the Program, which is distributed substantially in the same form as set out herein and that such intended distribution, if actually made, will neither violate or otherwise contravene any of the laws and regulations of the countries having jurisdiction over the User or the intended distribution itself.
-
-詳細は [NAIST-jdic](https://ja.osdn.net/projects/naist-jdic/) を参照してください。
-
-#### mecab-ipadic-NEologd (`ipadic-neologd.hsd`)
-
-[mecab-ipadic-NEologd](https://github.com/neologd/mecab-ipadic-neologd) のシードデータを IPAdic に統合。
-
-> Copyright 2015-2019 Toshinori Sato (@overlast)
->
-> Licensed under the Apache License, Version 2.0 (the "License");
-> you may not use this file except in compliance with the License.
-> You may obtain a copy of the License at
->
->     http://www.apache.org/licenses/LICENSE-2.0
->
-> Unless required by applicable law or agreed to in writing, software
-> distributed under the License is distributed on an "AS IS" BASIS,
-> WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-> See the License for the specific language governing permissions and
-> limitations under the License.
-
-NEologd は Apache License 2.0 に加え、IPAdic のライセンス条件も適用されます。
-
-#### SudachiDict (`ipadic-neologd-sudachi.hsd`)
-
-[SudachiDict](https://github.com/WorksApplications/SudachiDict) の raw 辞書ソース（small + core）の語彙データを変換して構築。統合辞書では品詞体系と文脈 ID を IPAdic に写しています。
-
-> Copyright (c) 2017-2023 Works Applications Co., Ltd.
->
-> Licensed under the Apache License, Version 2.0
-
-SudachiDict には UniDic（BSD 3-Clause）および NEologd（Apache 2.0）由来のデータが含まれます。詳細は [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) を参照してください。
-
-#### UniDic (`dict/unidic-cwj.hsd`, `dict/unidic-csj.hsd` — ローカルビルド時)
-
-[UniDic](https://clrd.ninjal.ac.jp/unidic/) を基に構築。CWJ（現代書き言葉 202512）および CSJ（現代話し言葉 202512）。リポジトリには同梱されず、`make dict-unidic-cwj` / `make dict-unidic-csj` でビルドした場合に適用されます。
-
-> Copyright (c) 2011-2021, The UniDic Consortium
->
-> All rights reserved.
->
-> UniDic is released under any of the following licenses:
-> - GNU General Public License (GPL), version 2.0 or later
-> - GNU Lesser General Public License (LGPL), version 2.1 or later
-> - BSD License (3-clause)
->
-> You may choose any of the above licenses.
-
-UniDic は GPL v2 / LGPL v2.1 / BSD 3-clause のトリプルライセンスです。商用利用の場合は BSD ライセンスを選択できます。
-
-詳細は [UniDic ダウンロードページ](https://clrd.ninjal.ac.jp/unidic/download.html) を参照してください。
+配布辞書は IPAdic（NAIST-2003）・mecab-ipadic-NEologd（Apache-2.0）・SudachiDict（Apache-2.0）から作っています。辞書を再配布するときは、リリースに添付している `THIRD_PARTY_LICENSES.md` を一緒に配ってください。各辞書の著作権表示は [docs/dictionaries.md](docs/dictionaries.md) の「配布辞書のライセンス」にあります。
