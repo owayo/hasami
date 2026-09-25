@@ -23,6 +23,8 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  # mise.lock にない版を解決させず、mise.lock を書き換えさせない
+  MISE_LOCKED: "1"
   # 配布辞書の名前 (dict/<名前>.hsd)
   DICTS: ipadic ipadic-neologd ipadic-neologd-sudachi
 
@@ -33,7 +35,7 @@ jobs:
     timeout-minutes: 60
     steps:
       # dispatch では inputs.ref が空になり、選んだブランチを取る
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           ref: ${{ inputs.ref }}
           lfs: false
@@ -43,14 +45,15 @@ jobs:
         with:
           tools: rust python
 
+      # Rust の版を上げると target の中身は使えなくなるので、mise.toml もキーに含める（ci.yml と同じ）
       - name: Cache cargo registry
-        uses: actions/cache@v5
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-cargo-dict-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-dict-${{ hashFiles('mise.toml', '**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-dict-
 
@@ -104,7 +107,7 @@ jobs:
       # 失敗したジョブを再実行したときは、前の試行で上げた同じ名前の artifact を置き換える
       - name: Upload dictionaries
         id: upload
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: dictionaries
           path: |
