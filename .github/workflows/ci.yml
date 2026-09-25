@@ -6,62 +6,60 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
+  # mise.lock にない版を解決させず、mise.lock を書き換えさせない（make ci が呼ぶ mise exec にも効く）
+  MISE_LOCKED: "1"
 
 jobs:
-  test:
-    name: Test
-    runs-on: ubuntu-latest
+  # 検査の中身は Makefile の ci が定義する（ここにコマンドを重ねて書かない。手元の make ci と同じになる）。
+  # Windows は入れない: ランナーの make は MinGW の mingw32-make の写しで、レシピの POSIX シェル前提の
+  # 解釈に癖がある。Windows のテストは下の build ジョブで cargo を直接呼ぶ
+  quality:
+    name: Quality (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    env:
+      # make ci は Rust だけを使う。mise exec は mise.toml の全ツールを入れる（名指しでは絞れない）ので、
+      # 使わないものを外す。名前は mise.toml の書き方のまま書く（uv・maturin・cross だけでは効かない）。
+      # mise.toml にツールを足したら、make ci で使わないものはここにも足す
+      MISE_DISABLE_TOOLS: python,aqua:astral-sh/uv,github:PyO3/maturin,cargo:https://github.com/cross-rs/cross
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
       # Rust の版は mise.toml で固定する（clippy・rustfmt も mise.toml の components で入る）
       - uses: ./.github/actions/setup-mise
         with:
           tools: rust
 
+      # Rust の版を上げると target の中身は使えなくなるので、mise.toml もキーに含める
+      # （キーが一致したままだと古いキャッシュを戻し続け、新しい版で作ったものを保存しない）
       - name: Cache cargo registry
-        uses: actions/cache@v5
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-${{ hashFiles('mise.toml', '**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
 
-      # hasami-python は pyo3/extension-module のため Linux ではテストバイナリの
-      # リンクに失敗する（未解決の libpython シンボル）。コンパイル検証は clippy
-      # --workspace --all-targets 側でカバーする。
-      - name: Run tests
-        run: cargo test --workspace --exclude hasami-python --verbose
-
-      - name: Run clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
-
-      # ライブラリとして使う 3 つの構成が CLI・CSV 系の依存なしでビルドでき、警告も出ないことを確かめる。
-      # 文分割だけ（default-features = false。依存なし）と、解析まで（features = ["analyzer"]。
-      # 依存は memmap2 と bytemuck）と、配布辞書の取得まで（features = ["download"]。analyzer に
-      # HTTP・TLS・SHA-256・zstd の展開を足す）
-      - name: Check library without default features
-        run: |
-          cargo clippy --lib --no-default-features -- -D warnings
-          cargo test --lib --no-default-features
-          cargo clippy --lib --no-default-features --features analyzer -- -D warnings
-          cargo test --lib --no-default-features --features analyzer
-          cargo clippy --lib --no-default-features --features download -- -D warnings
-          cargo test --lib --no-default-features --features download
-
-      - name: Check formatting
-        run: cargo fmt --all -- --check
+      - run: make setup
+      - run: make ci
 
   # リリースと同じ 5 ターゲットを同じ方法でビルドする。TLS の依存は C のコードを含むので、
-  # クロスビルド (aarch64 Linux) と Windows で壊れないことを PR のうちに確かめる
+  # クロスビルド (aarch64 Linux) と Windows で壊れないことを PR のうちに確かめる。
+  # Windows は quality で make ci を回さないので、ここでテストも回す（README の対応 OS の裏付け）
   build:
     name: Build (${{ matrix.target }})
-    needs: test
+    needs: quality
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -89,7 +87,13 @@ jobs:
             tools: rust
 
     steps:
-      - uses: actions/checkout@v5
+      # Windows のランナーは既定で LF を CRLF に変えて checkout する。release.yml の build にも同じ行を置き、
+      # 埋め込む例外表（include_str!）などの改行を CI と配布物でそろえる
+      - name: Keep LF line endings
+        if: runner.os == 'Windows'
+        run: git config --global core.autocrlf false
+
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
       # Rust と cross の版は mise.toml で固定する
       - uses: ./.github/actions/setup-mise
@@ -99,6 +103,11 @@ jobs:
       # mise が RUSTUP_TOOLCHAIN を mise.toml の版にするので、そのツールチェーンにターゲットを足す
       - name: Add Rust target
         run: rustup target add ${{ matrix.target }}
+
+      # make test と同じく hasami-python は除く（コンパイルは quality の clippy --workspace で確かめる）
+      - name: Test (Windows)
+        if: runner.os == 'Windows'
+        run: cargo test --locked --workspace --exclude hasami-python
 
       # ビルドは cross のコンテナの中で行う（コンテナにクロスのコンパイラがある）
       - name: Build with cross
