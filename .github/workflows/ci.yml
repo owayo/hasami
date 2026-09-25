@@ -1,3 +1,7 @@
+# - quality: Linux と macOS で make setup と make ci だけを呼ぶ（検査の中身は Makefile の ci が決める。
+#   ここにコマンドを重ねて書かない。手元の make ci と同じになる）
+# - build: release.yml の build と同じ組（os / target）でビルドする。release.yml の dry_run では build が
+#   走らないので、配布物を作れることはここで確かめる。Windows はここでテストも回す
 name: CI
 
 on:
@@ -9,54 +13,46 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
   # mise.lock にない版を解決させず、mise.lock を書き換えさせない（make ci が呼ぶ mise exec にも効く）
   MISE_LOCKED: "1"
 
 jobs:
-  # 検査の中身は Makefile の ci が定義する（ここにコマンドを重ねて書かない。手元の make ci と同じになる）。
-  # Windows は入れない: ランナーの make は MinGW の mingw32-make の写しで、レシピの POSIX シェル前提の
-  # 解釈に癖がある。Windows のテストは下の build ジョブで cargo を直接呼ぶ
   quality:
     name: Quality (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        # Windows は入れない。ランナーの make は MinGW の mingw32-make の写しで、レシピの POSIX シェル前提の
+        # 解釈に癖がある。Windows のテストは下の build で cargo を直接呼ぶ
         os: [ubuntu-latest, macos-latest]
     env:
       # make ci は Rust だけを使う。mise exec は mise.toml の全ツールを入れる（名指しでは絞れない）ので、
-      # 使わないものを外す。名前は mise.toml の書き方のまま書く（uv・maturin・cross だけでは効かない）。
+      # 使わないものを外す。名前は mise.toml の書き方のまま書く（uv・maturin だけでは効かない）。
       # mise.toml にツールを足したら、make ci で使わないものはここにも足す
-      MISE_DISABLE_TOOLS: python,aqua:astral-sh/uv,github:PyO3/maturin,cargo:https://github.com/cross-rs/cross
+      MISE_DISABLE_TOOLS: python,aqua:astral-sh/uv,github:PyO3/maturin
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       # Rust の版は mise.toml で固定する（clippy・rustfmt も mise.toml の components で入る）
       - uses: ./.github/actions/setup-mise
         with:
           tools: rust
 
-      # Rust の版を上げると target の中身は使えなくなるので、mise.toml もキーに含める
-      # （キーが一致したままだと古いキャッシュを戻し続け、新しい版で作ったものを保存しない）
-      - name: Cache cargo registry
-        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('mise.toml', '**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
+      # target/ と ~/.cargo のキャッシュ（鍵に rustc の版が入るので、mise.toml の rust を上げると作り直す）
+      - uses: Swatinem/rust-cache@v2
 
       - run: make setup
       - run: make ci
 
-  # リリースと同じ 5 ターゲットを同じ方法でビルドする。TLS の依存は C のコードを含むので、
-  # クロスビルド (aarch64 Linux) と Windows で壊れないことを PR のうちに確かめる。
-  # Windows は quality で make ci を回さないので、ここでテストも回す（README の対応 OS の裏付け）
   build:
     name: Build (${{ matrix.target }})
     needs: quality
@@ -64,56 +60,48 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # release.yml の build と同じ組（行を足したら両方に足す）。Linux ARM64 は arm64 のランナーでそのまま
+        # ビルドする（クロスビルドをしない）
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            cross: false
-            tools: rust
-          - os: ubuntu-latest
+          - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
-            cross: true
-            tools: rust cargo:https://github.com/cross-rs/cross
-          - os: macos-latest
-            target: x86_64-apple-darwin
-            cross: false
-            tools: rust
           - os: macos-latest
             target: aarch64-apple-darwin
-            cross: false
-            tools: rust
+          - os: macos-latest
+            target: x86_64-apple-darwin
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-            cross: false
-            tools: rust
-
     steps:
-      # Windows のランナーは既定で LF を CRLF に変えて checkout する。release.yml の build にも同じ行を置き、
+      # Windows のランナーは既定で LF を CRLF に変えて checkout する。release.yml の build と同じく LF のまま取り、
       # 埋め込む例外表（include_str!）などの改行を CI と配布物でそろえる
       - name: Keep LF line endings
-        if: runner.os == 'Windows'
         run: git config --global core.autocrlf false
 
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
-      # Rust と cross の版は mise.toml で固定する
+      # Rust の版は mise.toml で固定する
       - uses: ./.github/actions/setup-mise
         with:
-          tools: ${{ matrix.tools }}
+          tools: rust
 
-      # mise が RUSTUP_TOOLCHAIN を mise.toml の版にするので、そのツールチェーンにターゲットを足す
-      - name: Add Rust target
+      # macOS の 2 行は同じランナーの OS なので、target で鍵を分ける（分けないと片方の成果物しか保存されない）
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      # mise が RUSTUP_TOOLCHAIN を mise.toml の版にするので、そのツールチェーンに配布のターゲットを足す
+      - name: Add the Rust target
         run: rustup target add ${{ matrix.target }}
 
+      # Windows は quality で make ci を回さないので、配る OS の裏付けとしてここでテストする。
       # make test と同じく hasami-python は除く（コンパイルは quality の clippy --workspace で確かめる）
       - name: Test (Windows)
         if: runner.os == 'Windows'
         run: cargo test --locked --workspace --exclude hasami-python
 
-      # ビルドは cross のコンテナの中で行う（コンテナにクロスのコンパイラがある）
-      - name: Build with cross
-        if: matrix.cross
-        run: cross build --release --locked --target ${{ matrix.target }}
-
       - name: Build
-        if: "!matrix.cross"
         run: cargo build --release --locked --target ${{ matrix.target }}

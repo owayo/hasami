@@ -1,10 +1,10 @@
 name: Set up mise
-description: mise.toml のツールを jdx/mise-action で入れる。mise 自身の版の正はここ（mise.toml には書けない）
+description: mise.toml のツールのうち、ジョブに要るものだけを jdx/mise-action で入れる
 
-# mise の版と jdx/mise-action の commit は、公開から 14 日たったものを選ぶ。上げるときはこの 2 か所を書き換える。
-# mise.lock があれば jdx/mise-action が mise install に --locked を付ける（lock の URL と SHA-256 で取る）。
-# 2026.9.5 は lock の書式 1 までしか読めない（書式 2 は 2026.9.7 から）。読めない lock は「rust@… is not in the
-# lockfile」で失敗するので、mise を 2026.9.7 以上に上げるまで mise.lock は書式 1 のまま（mise lock --upgrade しない）
+# mise 本体は公開から 14 日以上たった最新の版を、署名付きの checksum で確かめて入れる (minimum_release_age)。
+# 版は書かないので、日がたつと上がる。mise.lock があれば jdx/mise-action が mise install に --locked を付ける
+# (lock の URL と SHA-256 で取る)。lock の書式 2 を読めるのは mise 2026.9.7 からなので、CI の mise がそれ以上に
+# なるまで mise.lock は書式 1 のまま持つ (mise lock --upgrade しない。mise.toml の冒頭を参照)
 inputs:
   tools:
     description: 入れるツール（mise install の引数。ジョブに要るものだけを挙げる）
@@ -13,12 +13,13 @@ inputs:
 runs:
   using: composite
   steps:
-    # キャッシュは使わない。rust は rustup が入れるので、mise のキャッシュだけ戻すと component が欠けることがある
-    - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+    # キャッシュは使わない。rust は rustup が入れるので、mise のキャッシュだけ戻すと component が欠ける
+    # (jdx/mise-action#215)。ビルドのキャッシュは Swatinem/rust-cache に任せる
+    - uses: jdx/mise-action@v4
       with:
-        version: 2026.9.5
-        install_args: ${{ inputs.tools }}
+        minimum_release_age: 14d
         cache: false
+        install_args: ${{ inputs.tools }}
 
     - name: Show tool versions
       shell: bash
