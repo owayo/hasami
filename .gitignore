@@ -41,3 +41,7 @@ target
 
 # VS Code の設定と拡張が作るキャッシュ (PythonImportHelper-v2-Completion.json など)。エディタごとのものなので追跡しない
 /.vscode/
+
+# mise の個人の上書き (ツールの版の正は mise.toml)
+mise.local.toml
+.mise.local.toml

@@ -14,6 +14,7 @@ description = "High-performance Japanese morphological analyzer"
 # コードは MIT。埋め込む文分割の例外表（src/sentence/builtin_exceptions.txt）は辞書のデータに由来する
 # （src/sentence/builtin_exceptions.NOTICE）
 license = "MIT AND NAIST-2003 AND Apache-2.0 AND BSD-3-Clause"
+repository = "https://github.com/owayo/hasami"
 rust-version = "1.98"
 
 [lib]
