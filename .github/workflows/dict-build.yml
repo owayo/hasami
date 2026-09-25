@@ -38,8 +38,10 @@ jobs:
           ref: ${{ inputs.ref }}
           lfs: false
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      # Rust と、辞書を作るスクリプト（scripts/*.py）の Python は mise.toml の版を使う
+      - uses: ./.github/actions/setup-mise
+        with:
+          tools: rust python
 
       - name: Cache cargo registry
         uses: actions/cache@v5
@@ -52,6 +54,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-dict-
 
+      # zstd は mise で入れられない（GitHub のリリースに Linux のバイナリが無い）ので apt で入れる
       - name: Install zstd
         run: |
           if ! command -v zstd >/dev/null; then
