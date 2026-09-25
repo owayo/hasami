@@ -249,13 +249,13 @@ pub(crate) fn build_sections(
             "the connection matrix has {num_left} left context IDs (limit {LEFT_ID_LIMIT})"
         )));
     }
-    if let Some(m) = src.matrix {
-        if m.costs.len() != num_left * num_right {
-            return Err(DictError::invalid(format!(
-                "the connection matrix has {} costs, expected {num_left} x {num_right}",
-                m.costs.len()
-            )));
-        }
+    if let Some(m) = src.matrix
+        && m.costs.len() != num_left * num_right
+    {
+        return Err(DictError::invalid(format!(
+            "the connection matrix has {} costs, expected {num_left} x {num_right}",
+            m.costs.len()
+        )));
     }
     let check_ids = |left: u16, right: u16, what: &dyn Fn() -> String| {
         if (left as usize) < num_left && (right as usize) < num_right {

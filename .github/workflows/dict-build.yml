@@ -1,24 +1,41 @@
 name: Build Dictionaries
 
-# 配布辞書 (dict/*.hsd) を scripts/build-dict.sh で上流から作り直してコミットする。
-# 上流の版はスクリプトで固定しているので、定期実行はせず、版や削除リストを変えたときに手で動かす。
+# 配布辞書 3 つ (dict/<名前>.hsd) を scripts/build-dict.sh で上流から作り、検査・圧縮して artifact
+# `dictionaries` に上げる。辞書はリポジトリに置かない (コミットしない)。リリースでは release.yml がタグを
+# 渡してこのワークフローを呼び、artifact の中身を添付ファイルにする。
+#
+# 辞書を変える PR では、ブランチを選んで手で動かし、作った辞書を確かめる:
+#   gh workflow run dict-build.yml --ref <ブランチ>
+#   gh run list --workflow dict-build.yml --branch <ブランチ> --limit 1   # run-id を調べる
+#   gh run download <run-id> -n dictionaries -D <dir>                   # 辞書は <dir>/dict/ に入る
+# 受け入れテストや例外表の検査で失敗しても、辞書を作れていれば artifact は上がる (手元で調べ直せる)
 on:
+  workflow_call:
+    inputs:
+      ref:
+        description: 辞書を作るコミット (リリースのタグ)
+        type: string
+        required: true
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
+  # 配布辞書の名前 (dict/<名前>.hsd)
+  DICTS: ipadic ipadic-neologd ipadic-neologd-sudachi
 
 jobs:
   build-dict:
     name: Build Dictionaries
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
-      # 既存の辞書は作り直すので LFS の実体は取らない (約 1.3GB の取得を省く)
+      # dispatch では inputs.ref が空になり、選んだブランチを取る
       - uses: actions/checkout@v5
         with:
+          ref: ${{ inputs.ref }}
           lfs: false
 
       - name: Install Rust toolchain
@@ -35,31 +52,82 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-dict-
 
+      - name: Install zstd
+        run: |
+          if ! command -v zstd >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y zstd
+          fi
+          zstd --version
+
       - name: Build hasami
-        run: cargo build --release
+        run: cargo build --release --locked
 
       - name: Build dictionaries
         run: scripts/build-dict.sh --hasami ./target/release/hasami
 
-      - name: Show dictionary info
+      # 全エントリを検査する (壊れた参照・範囲外の文脈 ID があれば失敗する)
+      - name: Verify dictionaries
         run: |
-          for hsd in dict/*.hsd; do
-            echo "=== $(basename "$hsd") ==="
-            ./target/release/hasami info --dict "$hsd"
+          for name in $DICTS; do
+            echo "=== $name.hsd ==="
+            ./target/release/hasami info --dict "dict/$name.hsd" --verify
             echo ""
           done
 
-      - name: Commit dictionaries
+      # hasami dict download は圧縮した方を取り、展開後の SHA-256 で確かめる。生のファイルも添付するので残す
+      - name: Compress dictionaries
         run: |
-          git lfs install
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add dict/ipadic.hsd dict/ipadic-neologd.hsd dict/ipadic-neologd-sudachi.hsd
-          if git diff --staged --quiet; then
-            echo "No dictionary changes detected"
-          else
-            git commit -m "chore: update pre-built dictionaries
+          for name in $DICTS; do
+            zstd -19 -T0 -q "dict/$name.hsd" -o "dict/$name.hsd.zst"
+            awk -v file="$name.hsd" -v raw="$(stat -c %s "dict/$name.hsd")" -v zst="$(stat -c %s "dict/$name.hsd.zst")" \
+              'BEGIN { printf "%-28s %11d -> %11d bytes (%.1f%%)\n", file, raw, zst, 100 * zst / raw }'
+          done
 
-          Built by scripts/build-dict.sh (IPAdic, mecab-ipadic-NEologd, SudachiDict)."
-            git push
+      # hasami dict download が読む目録。3 辞書を過不足なく載せ、生のファイルと圧縮したファイルの SHA-256 が
+      # 実物と合うことを確かめる
+      - name: Write manifest
+        run: |
+          ./target/release/hasami dict manifest dict --output dict/dictionaries.json
+          jq . dict/dictionaries.json
+          if ! diff -u <(tr ' ' '\n' <<<"$DICTS" | LC_ALL=C sort) \
+            <(jq -r '.dictionaries[].name' dict/dictionaries.json | LC_ALL=C sort); then
+            echo "::error::dictionaries.json の辞書が配布辞書 ($DICTS) と一致しない"
+            exit 1
+          fi
+          jq -r '.dictionaries[] | "\(.sha256)  \(.file)", "\(.compressed.sha256)  \(.compressed.file)"' \
+            dict/dictionaries.json | (cd dict && sha256sum --check --strict -)
+
+      # 失敗したジョブを再実行したときは、前の試行で上げた同じ名前の artifact を置き換える
+      - name: Upload dictionaries
+        id: upload
+        uses: actions/upload-artifact@v6
+        with:
+          name: dictionaries
+          path: |
+            dict/*.hsd
+            dict/*.hsd.zst
+            dict/dictionaries.json
+            THIRD_PARTY_LICENSES.md
+          compression-level: 0
+          retention-days: 7
+          if-no-files-found: error
+          overwrite: true
+
+      # 下の 2 つは、辞書を上げられていれば片方が失敗してももう片方を走らせる (1 回の実行で両方の結果を見る)
+
+      # 配布辞書を使う受け入れテスト (#[ignore] で名前に distributed を含むもの。ネットワークを使うテストは含めない)
+      - name: Acceptance tests
+        if: ${{ !cancelled() && steps.upload.outcome == 'success' }}
+        run: cargo test --locked --workspace --exclude hasami-python -- --ignored distributed
+
+      # 組み込みの文分割の例外表は推奨辞書から抽出したもの。辞書が変わって食い違えば作り直してコミットする
+      - name: Check sentence exceptions
+        if: ${{ !cancelled() && steps.upload.outcome == 'success' }}
+        run: |
+          ./target/release/hasami export-sentence-exceptions --dict dict/ipadic-neologd-sudachi.hsd \
+            --output "$RUNNER_TEMP/builtin_exceptions.txt"
+          if ! diff -u src/sentence/builtin_exceptions.txt "$RUNNER_TEMP/builtin_exceptions.txt"; then
+            echo "::error file=src/sentence/builtin_exceptions.txt::例外表が推奨辞書と食い違う。artifact dictionaries の辞書で hasami export-sentence-exceptions --dict <dir>/dict/ipadic-neologd-sudachi.hsd --output src/sentence/builtin_exceptions.txt を実行して作り直し、コミットする"
+            exit 1
           fi
