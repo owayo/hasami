@@ -5,15 +5,17 @@ Rust製の日本語形態素解析エンジン。外部エンジン（MeCab等�
 
 ## 技術スタック
 - **言語**: Rust (2024 edition, MSRV 1.98。let chains を使う)
-- **ツールの版**: `mise.toml` で固定（Rust 1.98.1（minimal + clippy・rustfmt・rust-src）・Python 3.13・uv・maturin・
-  CI の cross（Linux だけ。main の commit）。`eval/` の uv も mise の Python を使う（`UV_PYTHON_PREFERENCE=only-system`）。
+- **ツールの版**: `mise.toml` で固定（Rust 1.98.1（minimal + clippy・rustfmt・rust-src）・Python 3.13・uv・maturin）。
+  `eval/` の uv も mise の Python を使う（`UV_PYTHON_PREFERENCE=only-system`）。
   版ファイル（.python-version など）や cargo install / pip install で入れない。CI は `.github/actions/setup-mise`
-  （jdx/mise-action。mise 自身の版と action の commit はここだけに書く）でジョブに要るツールだけを入れる。`make ci` を回す
+  （jdx/mise-action@v4 に `minimum_release_age: 14d` と `cache: false` を渡す。mise 自身の版は書かず、公開から 14 日たった
+  最新の版になる）でジョブに要るツールだけを入れる。`make ci` を回す
   Quality ジョブは、`mise exec` が mise.toml の全ツールを入れないよう `MISE_DISABLE_TOOLS` で Rust 以外を外す
   （名前は mise.toml の書き方のまま。`uv` のような短い名前は効かない）。workflow の env は `MISE_LOCKED=1`。版は公開から
-  14 日たったものを選び、変えたら `MISE_GITHUB_TOKEN=$(gh auth token) mise lock --platform linux-x64,macos-arm64,macos-x64,windows-x64`
-  （トークンが無いと GitHub API の制限で記録が黙って欠ける）。`mise.lock` は書式 1（CI の mise 2026.9.5 は書式 2 を
-  読めず「rust@… is not in the lockfile」で落ちる。`mise lock --upgrade` は CI の mise を 2026.9.7 以上にしてから）。
+  14 日たったものを選び、変えたら `MISE_GITHUB_TOKEN=$(gh auth token) mise lock --platform linux-x64,linux-arm64,macos-arm64,macos-x64,windows-x64`
+  （トークンが無いと GitHub API の制限で記録が黙って欠ける）。`mise.lock` は書式 1（書式 2 を読めるのは mise 2026.9.7 から。
+  CI の mise がそれより古いと「rust@… is not in the lockfile」で落ちる。`mise lock --upgrade` は CI の mise が 2026.9.7 以上に
+  なってから）。lock は CI の mise と同じ版の mise で作る（新しい mise も既存の書式 1 は保つ）。
   zstd（辞書の圧縮）と git・curl・xz・unzip は mise で入れられないので OS のもの
 - **辞書**: mmap-native バイナリ形式 (.hsd v4) + bytemuck Pod 構造体。ロード時はヘッダと小さな表だけ検査
 - **Trie**: 文字単位 Double-Array Trie（文字を出現頻度順に符号化、単独の末尾は TAIL に圧縮、ゼロコピー mmap 参照）
@@ -77,19 +79,20 @@ hasami/
 │   ├── build.rs        # PyO3 拡張モジュール向けリンク設定
 │   ├── Cargo.toml
 │   └── pyproject.toml
-├── .github/actions/setup-mise/  # jdx/mise-action で mise.toml のツールを入れる（mise 自身の版はここ）
+├── .github/actions/setup-mise/  # jdx/mise-action で mise.toml のツールのうちジョブに要るものを入れる
 ├── .github/workflows/
 │   ├── ci.yml          # Quality（ubuntu・macOS で make setup と make ci）と、リリースと同じ 5 ターゲットのビルド
-│   │                   # （Windows は make を使わず、Build ジョブで cargo test も回す）
+│   │                   # （Linux ARM64 は ubuntu-24.04-arm でそのまま作る。Windows は make を使わず、Build ジョブで cargo test も回す）
 │   ├── dict-build.yml  # 配布辞書を作り、検証・受け入れテスト・例外表との照合・圧縮・目録を経て artifact に上げる
 │   │                   # （release.yml がタグで呼ぶ。辞書を変える PR ではブランチで手で動かす）
 │   └── release.yml     # 版を上げてタグを切り、バイナリと配布辞書（.hsd・.hsd.zst・dictionaries.json）を添付する
 ├── build.rs            # 例外表の索引と版の識別子を作る（src/sentence/index.rs・chars.rs を #[path] で共有）
 ├── Cargo.toml          # ワークスペース + メインクレート
 ├── Makefile            # 開発用タスク（make help で一覧。ツールは mise exec -- 経由で呼ぶ。CI の quality は make setup と make ci）
-├── mise.toml           # ツールの版（Rust・Python・uv・maturin・cross）
-├── mise.lock           # mise.toml のツールの URL と SHA-256（linux-x64・macos-arm64・macos-x64・windows-x64）
-└── README.md
+├── mise.toml           # ツールの版（Rust・Python・uv・maturin）
+├── mise.lock           # mise.toml のツールの URL と SHA-256（linux-x64・linux-arm64・macos-arm64・macos-x64・windows-x64）
+├── docs/               # README から分けた文書（辞書・修復・解析の仕組み・Rust / Python / C の API・ベンチマーク・開発）と設計の記録
+└── README.md           # 日本語だけ（Cargo.toml の [workspace.metadata.project-standard] で readme-languages = ["ja"]）
 ```
 
 ## feature
@@ -214,7 +217,7 @@ target/release/hasami bench --dict dict/ipadic.hsd --file corpus.txt  # 1 行 1 
 ## 辞書ソースの既知の欠陥
 
 複数の辞書ソースをマージしているため、ソース側の欠陥がそのまま解析結果に出る。
-`hasami repair` で修復・除去する（詳細は README の「辞書の修復」）。
+`hasami repair` で修復・除去する（詳細は `docs/dictionary-repair.md`）。
 
 | ソース | 欠陥 | 影響 | 対処 |
 | --- | --- | --- | --- |
@@ -229,12 +232,12 @@ target/release/hasami bench --dict dict/ipadic.hsd --file corpus.txt  # 1 行 1 
 | IPAdic | char.def の未知語の候補（group・length。hasami は MeCab と同じ意味で読む）が、ひらがなの並びを 1 つの名詞にし（HIRAGANA 0 1 2）、英数字を 1 文字に分けない（ALPHA・NUMERIC 1 1 0）。中黒・× ÷ がカタカナ・英字の範囲にある | 「なき / ゃいけないってこともないし」、「ジョン・カーター」が 1 語になって読みを補えない、「microSD×C」が 1 語 | `scripts/prepare_ipadic.py` が HIRAGANA 0 0 2、ALPHA・NUMERIC 1 1 1 にし、U+30FB・U+00D7・U+00F7 を SYMBOL にする（カタカナは 1 1 2 のまま、並び全体を 1 語にできる） |
 | IPAdic | CSV が EUC-JP で、ダッシュ・波ダッシュ・マイナス等 7 字は変換表で写し先が分かれる | encoding_rs（WHATWG）の変換だと「—」「〜」「−」の語が辞書に無くなる | `DictBuilder::decode_to_utf8` が JIS の対応表（MeCab と同じ字）にそろえ、`prepare_ipadic.py` が Windows 側の「―」「～」「－」の別表記を足す |
 | IPAdic | 「−」「－」を「ヒク」と読む | 文章ではハイフン代わりが多く「K−POP」が「ケーヒクポップ」になる | `dict/user-remove/misreading-entries.csv`（NEologd を含む 2 辞書） |
-| IPAdic / NEologd / SudachiDict | 中国・朝鮮系の姓・名（1 文字姓の音読み、朝鮮語・普通話の字音で読む名、カタカナの外国人名） | 「金がない」→「キムガナイ」（朝鮮の姓の「金(キム)」）。「何なのか」→「ガナノカ」 | `dict/user-remove/foreign-names.csv` を `repair --remove`。生成は `scripts/find_foreign_names.py`（README の「外国人名の除去」） |
-| NEologd | 一般語を「名詞,固有名詞,一般」で登録している（成果物・多角的・包括的・可視化・言語化・心理的・安全性・担当者 など） | 固有名詞を具体性の手掛かりに数える処理（noslop）で抽象的な文が具体的に見える。品詞が固有名詞なので接続も固有名詞のもの（「言語化と」が「言語 / 化 / と」に割れる） | `repair --demote-common-proper-nouns <IPAdic の中間辞書>`。IPAdic で「一般名詞 + 一般名詞を作る接尾辞」に分かれる語を `名詞,一般`（〜化はサ変接続、〜的は形容動詞語幹）にし、文脈 ID も付け替える（README の「一般語の固有名詞の降格」） |
+| IPAdic / NEologd / SudachiDict | 中国・朝鮮系の姓・名（1 文字姓の音読み、朝鮮語・普通話の字音で読む名、カタカナの外国人名） | 「金がない」→「キムガナイ」（朝鮮の姓の「金(キム)」）。「何なのか」→「ガナノカ」 | `dict/user-remove/foreign-names.csv` を `repair --remove`。生成は `scripts/find_foreign_names.py`（`docs/dictionary-repair.md` の「外国人名の除去」） |
+| NEologd | 一般語を「名詞,固有名詞,一般」で登録している（成果物・多角的・包括的・可視化・言語化・心理的・安全性・担当者 など） | 固有名詞を具体性の手掛かりに数える処理（noslop）で抽象的な文が具体的に見える。品詞が固有名詞なので接続も固有名詞のもの（「言語化と」が「言語 / 化 / と」に割れる） | `repair --demote-common-proper-nouns <IPAdic の中間辞書>`。IPAdic で「一般名詞 + 一般名詞を作る接尾辞」に分かれる語を `名詞,一般`（〜化はサ変接続、〜的は形容動詞語幹）にし、文脈 ID も付け替える（`docs/dictionary-repair.md` の「一般語の固有名詞の降格」） |
 | NEologd | 規則で拾えない一般語が固有名詞・人名になっている（ステークホルダー、原形が「ANGAGEMENT」「Youth case」の人名もあるエンゲージメント・ユースケース、爆速） | 同上 | `dict/user-remove/common-words-as-proper-nouns.csv` で固有名詞のエントリを落とし、`dict/user/common-word-fixes.csv` で一般名詞を足す |
-| NEologd `mecab-user-dict-seed` | 曲名・作品名・キャッチフレーズとして、文や句そのもの（どうでしょう、作りました、個人の感想です、辻褄を合わせる、一緒に、なのか（人名））や句点付きの語（好きだ。、こんにちは。、…。（人名、読みはサイレンス））を固有名詞 1 語で登録している | 文末の表現が固有名詞 1 語になり、文末の「。」を取り込む。否定・意志の助動詞や終助詞が消え、文末の型・否定の判定が誤る（Issue #1・#2） | `repair --drop-sentence-like-nouns <IPAdic の中間辞書>`。IPAdic で文法に合う文や句（述語・助詞で終わる並び、機能語だけの並び、感動詞、記号 + 文末記号）に分かれるエントリを落とす（README の「文や句の名詞の削除」）。文末記号で終わる文は内容語 1 つ以下だけを落とし、長い作品名（やはり俺の青春ラブコメはまちがっている。）は文分割の例外表のために残す。名詞で終わる決まり文句（個人の感想）は `dict/user-remove/common-words-as-proper-nouns.csv` |
+| NEologd `mecab-user-dict-seed` | 曲名・作品名・キャッチフレーズとして、文や句そのもの（どうでしょう、作りました、個人の感想です、辻褄を合わせる、一緒に、なのか（人名））や句点付きの語（好きだ。、こんにちは。、…。（人名、読みはサイレンス））を固有名詞 1 語で登録している | 文末の表現が固有名詞 1 語になり、文末の「。」を取り込む。否定・意志の助動詞や終助詞が消え、文末の型・否定の判定が誤る（Issue #1・#2） | `repair --drop-sentence-like-nouns <IPAdic の中間辞書>`。IPAdic で文法に合う文や句（述語・助詞で終わる並び、機能語だけの並び、感動詞、記号 + 文末記号）に分かれるエントリを落とす（`docs/dictionary-repair.md` の「文や句の名詞の削除」）。文末記号で終わる文は内容語 1 つ以下だけを落とし、長い作品名（やはり俺の青春ラブコメはまちがっている。）は文分割の例外表のために残す。名詞で終わる決まり文句（個人の感想）は `dict/user-remove/common-words-as-proper-nouns.csv` |
 | NEologd `*-ortho-variant-dict-seed` | 漢字語をかなで書いた表記ゆれを機械的に作り、機能語・活用形と同じ形になる（ありません=有馬線、しません=志摩線、回ろう=回廊、いって=一手、しながら=品柄、および=お呼び、では=出端、きっと=キット） | 「ありません」が固有名詞、「および」「では」が名詞になり、活用形と助動詞の並びが崩れる（Issue #1・#3） | 同上（表記ゆれは名詞を含まない並びと、1 語の副詞・接続詞・連体詞・用言に限る）。削除した語の位置で助詞に勝つようになった表記ゆれ（とはい=徒輩、かじゃ=冠者、にそう=尼僧）は `dict/user-remove/misreading-entries.csv` |
-| NEologd `mecab-user-dict-seed` | 数と単位の記号だけの語（50%、0.1℃、30℃（原形「30度」、読み「サンジュウドシー」））を「名詞,固有名詞,一般」で登録している（2,549 語） | 単位が数から分かれず、単位を 名詞,接尾,助数詞 にする処理（Issue #7）が効かない | `repair --drop-quantity-nouns <IPAdic の中間辞書>`。人名・組織（100%ORANGE、4℃）は残す（README の「数と単位の組の削除」） |
+| NEologd `mecab-user-dict-seed` | 数と単位の記号だけの語（50%、0.1℃、30℃（原形「30度」、読み「サンジュウドシー」））を「名詞,固有名詞,一般」で登録している（2,549 語） | 単位が数から分かれず、単位を 名詞,接尾,助数詞 にする処理（Issue #7）が効かない | `repair --drop-quantity-nouns <IPAdic の中間辞書>`。人名・組織（100%ORANGE、4℃）は残す（`docs/dictionary-repair.md` の「数と単位の組の削除」） |
 | `dict/user/vocab-from-training.csv`（音声合成の学習語彙） | 活用の途中で切れた動詞（やって、出さ、合わ、頑張ろう、守れない など 29 語）を文脈 ID 619（一段動詞の基本形）・コスト -5000 で入れていた。「どうか」も -5000 | 「やってきた」が やって/きた(名詞)、「どうかしら」が どうか/しら(名詞)（IPAdic の名詞「きた」「しら」と組む。Issue #3）。「出さ/ない」の「ない」が形容詞になり、意志の「う」・否定の「ない」が 1 語に埋もれる | 活用の途中の動詞を除き、「どうか」のコストを 4500 にした（「どうかお願いします」は どうか のまま）。IPAdic の 助詞,格助詞,連語「という」に勝っていた接続詞「という」（原形「というより」）も除いた |
 | IPAdic / NEologd | 「深掘り」「深堀り」「腹落ち」が 1 語にならない | 「深(形容詞) / 掘り(動詞)」「深堀(人名) / り」「腹 / 落ち(接尾)」 | `dict/user/common-word-fixes.csv`（名詞,サ変接続。「深堀り」の原形は「深掘り」） |
 | NEologd `neologd-adjective-std-dict-seed` | 形容詞・イ段の 143 語で、ガル接続のエントリの表層形が基本形のまま（「うそ寂しい」がガル接続） | 原形は正しい。このエントリが選ばれると活用形がガル接続になる（「くどくどしい説明」の「くどくどしい」） | 対処なし（原形の修復は不要。活用語で「活用形が基本形でも `*` でもなく原形 = 表層形」の 173 件は、この 143 件と IPAdic の「乞う(連用タ接続)」「あり(ラ変連用形)」など原形と同形の活用形だけ） |
@@ -248,7 +251,7 @@ target/release/hasami bench --dict dict/ipadic.hsd --file corpus.txt  # 1 行 1 
 未知語の候補は MeCab と同じ（`UnkGrouping::for_each_len`）。候補ごとに unk.def の文字種のテンプレートの数だけノードを
 作り（`Dictionary::unk_templates`、`Node::entry` は `UNK_FLAG | テンプレートの番号`）、品詞は接続コストで決まる
 （MeCab と同じ。解析の時間は約 15% 増えた。`docs/performance.md`）。`lattice.rs` はカタカナの並び全体の候補に規則を足す
-（詳細は README の「未知語」、経緯は `docs/hsd-format.md` の 7 章）。
+（詳細は `docs/architecture.md` の「未知語」、経緯は `docs/hsd-format.md` の 7 章）。
 
 - 3 字以上の並び全体の候補は、3 字以上（`COMPOUND_MIN_CHARS`）の既知語を隙間なく並べて覆えるなら作らない（`RunCover`）。
   最初の語は並びの前から、最後の語は並びの後まで伸びてよい。候補と同じ表層の 1 語だけでは覆えたことにしない

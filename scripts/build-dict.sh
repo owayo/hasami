@@ -47,7 +47,7 @@ SUDACHI_FILES=(
 )
 # SudachiDict から取り込む範囲 (scripts/convert_sudachi_raw.py の --scope)。内容語 (名詞・固有名詞・形状詞・
 # 連体詞・副詞・接続詞・感動詞・動詞・形容詞) と記号。助詞・助動詞・数詞・接頭辞・接尾辞・代名詞は、IPAdic の語を
-# 押しのけて誤分割・誤読を増やすので入れない (取り込み範囲ごとの比較は README の「辞書のローカルビルド」)
+# 押しのけて誤分割・誤読を増やすので入れない (取り込み範囲ごとの比較は docs/dictionaries.md の「辞書のローカルビルド」)
 SUDACHI_SCOPE=content-symbol
 
 # 辞書のメタデータ (hasami info で見える) に残す上流の版

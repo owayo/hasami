@@ -2,6 +2,10 @@
 members = [".", "hasami-python"]
 resolver = "2"
 
+# README を日本語の README.md 1 本にする（日本語の文章を扱う道具なので、読者は日本語の話者に限られる）
+[workspace.metadata.project-standard]
+readme-languages = ["ja"]
+
 [package]
 name = "hasami"
 version = "26.9.105"
