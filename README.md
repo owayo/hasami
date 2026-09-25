@@ -56,11 +56,16 @@ hasami tokenize "形態素解析のテスト"    # --dict を省くと、置い�
 
 ### ソースからビルド
 
+開発に使うツールの版は `mise.toml` で固定している（Rust 1.98.1・Python 3.13・uv・maturin）。
+[mise](https://mise.jdx.dev/) で入れると同じ版がそろう。`mise install` は取得するだけなので、`mise activate` していなければ
+コマンドの前に `mise exec --` を付ける（activate 済みなら省ける）。
+
 ```bash
-make install
+mise install                        # mise.toml のツールを入れる
+mise exec -- make install
 
 # ワークスペース全体をビルド
-cargo build --workspace
+mise exec -- cargo build --workspace
 ```
 
 clone したら一度フックを入れておく（50MB を超えるファイルをコミットしようとすると pre-commit が止める）。
@@ -206,7 +211,8 @@ grep ' ipadic-neologd-sudachi.hsd$' SHA256SUMS | sha256sum --check --strict -   
 
 ### 辞書のローカルビルド
 
-配布辞書 3 つは `scripts/build-dict.sh` が上流のソースから作る。`git`, `curl`, `xz`, `unzip`, `python3` が必要。
+配布辞書 3 つは `scripts/build-dict.sh` が上流のソースから作る。`git`・`curl`・`xz`・`unzip` と、`mise.toml` の
+Python（`mise install`）が要る。
 
 ```bash
 # 配布辞書 3 つをすべて作る（dict/ に書き出す）
@@ -902,10 +908,14 @@ let results: Vec<Vec<_>> = std::thread::scope(|s| {
 
 #### インストール
 
+maturin と Python は `mise.toml` で固定している（`mise install` で入る）。`maturin develop` は有効にした仮想環境に入れる。
+
 ```bash
 cd hasami-python
-pip install maturin
-maturin develop --release
+mise install
+mise exec -- python -m venv .venv
+source .venv/bin/activate
+mise exec -- maturin develop --release
 ```
 
 #### 基本的な使い方
@@ -1053,7 +1063,17 @@ livedoor ニュースコーパスの本文 132,876 行（24.3MB）で測った�
 
 ## 開発
 
+ツールの版は `mise.toml` で固定している（`mise install` で入れる。下のコマンドは `mise activate` 済みの前提。
+そうでなければ前に `mise exec --` を付ける）。CI も `.github/actions/setup-mise`（jdx/mise-action）で同じ版を入れる。
+mise 自身の版はそこに書く。`mise.toml` の版を変えたら
+`MISE_GITHUB_TOKEN=$(gh auth token) mise lock --platform linux-x64,macos-arm64,macos-x64,windows-x64` で `mise.lock` を
+作り直す（CI は lock の URL と SHA-256 で取る。トークンが無いと GitHub API の制限で記録が黙って欠ける）。
+`mise.lock` は書式 1 のまま持つ（CI の mise は書式 2 を読めない。`mise lock --upgrade` はしない）。
+
 ```bash
+# 開発用のツールを入れる（Rust 1.98.1・Python・uv・maturin）
+mise install
+
 # ワークスペース全体のビルド
 cargo build --workspace
 

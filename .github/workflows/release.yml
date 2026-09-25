@@ -32,6 +32,11 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
+      # 版を Cargo.lock に写す cargo update も mise.toml の版の Rust で行う
+      - uses: ./.github/actions/setup-mise
+        with:
+          tools: rust
+
       - name: Bump version
         id: bump
         run: |
@@ -103,52 +108,53 @@ jobs:
             artifact_name: hasami
             asset_name: hasami-x86_64-unknown-linux-gnu.tar.gz
             cross: false
+            tools: rust
 
           - os: ubuntu-latest
             target: aarch64-unknown-linux-gnu
             artifact_name: hasami
             asset_name: hasami-aarch64-unknown-linux-gnu.tar.gz
             cross: true
+            tools: rust cargo:https://github.com/cross-rs/cross
 
           - os: macos-latest
             target: x86_64-apple-darwin
             artifact_name: hasami
             asset_name: hasami-x86_64-apple-darwin.tar.gz
             cross: false
+            tools: rust
 
           - os: macos-latest
             target: aarch64-apple-darwin
             artifact_name: hasami
             asset_name: hasami-aarch64-apple-darwin.tar.gz
             cross: false
+            tools: rust
 
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             artifact_name: hasami.exe
             asset_name: hasami-x86_64-pc-windows-msvc.zip
             cross: false
+            tools: rust
 
     steps:
       - uses: actions/checkout@v5
         with:
           ref: ${{ needs.prepare-release.outputs.tag }}
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      # Rust と cross の版は mise.toml で固定する（ci.yml の build と同じ）
+      - uses: ./.github/actions/setup-mise
         with:
-          targets: ${{ matrix.target }}
+          tools: ${{ matrix.tools }}
 
-      - name: Install cross-compilation tools
-        if: matrix.cross
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu
+      - name: Add Rust target
+        run: rustup target add ${{ matrix.target }}
 
+      # ビルドは cross のコンテナの中で行う（コンテナにクロスのコンパイラがある）
       - name: Build with cross
         if: matrix.cross
-        run: |
-          cargo install cross --git https://github.com/cross-rs/cross
-          cross build --release --locked --target ${{ matrix.target }}
+        run: cross build --release --locked --target ${{ matrix.target }}
 
       - name: Build
         if: "!matrix.cross"
