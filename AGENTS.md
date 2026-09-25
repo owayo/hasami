@@ -5,6 +5,14 @@ Rust製の日本語形態素解析エンジン。外部エンジン（MeCab等�
 
 ## 技術スタック
 - **言語**: Rust (2024 edition, MSRV 1.98。let chains を使う)
+- **ツールの版**: `mise.toml` で固定（Rust 1.98.1（minimal + clippy・rustfmt・rust-src）・Python 3.13・uv・maturin・
+  CI の cross（Linux だけ。main の commit）。`eval/` の uv も mise の Python を使う（`UV_PYTHON_PREFERENCE=only-system`）。
+  版ファイル（.python-version など）や cargo install / pip install で入れない。CI は `.github/actions/setup-mise`
+  （jdx/mise-action。mise 自身の版と action の commit はここだけに書く）でジョブに要るツールだけを入れる。版は公開から
+  14 日たったものを選び、変えたら `MISE_GITHUB_TOKEN=$(gh auth token) mise lock --platform linux-x64,macos-arm64,macos-x64,windows-x64`
+  （トークンが無いと GitHub API の制限で記録が黙って欠ける）。`mise.lock` は書式 1（CI の mise 2026.9.5 は書式 2 を
+  読めず「rust@… is not in the lockfile」で落ちる。`mise lock --upgrade` は CI の mise を 2026.9.7 以上にしてから）。
+  zstd（辞書の圧縮）と git・curl・xz・unzip は mise で入れられないので OS のもの
 - **辞書**: mmap-native バイナリ形式 (.hsd v4) + bytemuck Pod 構造体。ロード時はヘッダと小さな表だけ検査
 - **Trie**: 文字単位 Double-Array Trie（文字を出現頻度順に符号化、単独の末尾は TAIL に圧縮、ゼロコピー mmap 参照）
 - **解析アルゴリズム**: ラティス構築 + Viterbi（コスト最小化、文分割最適化、転置した接続行列）。
@@ -67,6 +75,7 @@ hasami/
 │   ├── build.rs        # PyO3 拡張モジュール向けリンク設定
 │   ├── Cargo.toml
 │   └── pyproject.toml
+├── .github/actions/setup-mise/  # jdx/mise-action で mise.toml のツールを入れる（mise 自身の版はここ）
 ├── .github/workflows/
 │   ├── ci.yml          # テスト・clippy（3 つのライブラリ構成）・fmt と、リリースと同じ 5 ターゲットのビルド
 │   ├── dict-build.yml  # 配布辞書を作り、検証・受け入れテスト・例外表との照合・圧縮・目録を経て artifact に上げる
@@ -74,6 +83,8 @@ hasami/
 │   └── release.yml     # 版を上げてタグを切り、バイナリと配布辞書（.hsd・.hsd.zst・dictionaries.json）を添付する
 ├── build.rs            # 例外表の索引と版の識別子を作る（src/sentence/index.rs・chars.rs を #[path] で共有）
 ├── Cargo.toml          # ワークスペース + メインクレート
+├── mise.toml           # ツールの版（Rust・Python・uv・maturin・cross）
+├── mise.lock           # mise.toml のツールの URL と SHA-256（linux-x64・macos-arm64・macos-x64・windows-x64）
 └── README.md
 ```
 
@@ -166,6 +177,7 @@ hasami/
 
 ## ビルド・テスト
 ```bash
+mise install              # mise.toml のツールを入れる（activate していなければ以下は mise exec -- を前に付ける）
 cargo build --release     # リリースビルド
 cargo build --workspace   # Python バインディングを含むワークスペース全体をビルド
 cargo test --workspace --exclude hasami-python  # テスト実行（hasami-python は extension-module のため
