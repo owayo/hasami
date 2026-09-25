@@ -15,7 +15,7 @@
 [tools]
 # Cargo.toml の rust-version（MSRV）と同じ 1.98。CI も同じ版を使う。クロスビルドのターゲットは CI のジョブで足す。
 # rust-src は rust-analyzer が標準ライブラリを辿るため
-rust = { version = "1.98.1", profile = "minimal", components = "clippy,rustfmt,rust-src" }
+rust = { version = "1.98.1", profile = "minimal", components = ["rustfmt", "clippy", "rust-src"] }
 # scripts/*.py（辞書の作成）・eval/（uv。requires-python は >=3.12,<3.14）・hasami-python（maturin）
 python = "3.13.15"
 "aqua:astral-sh/uv" = "0.12.13"
