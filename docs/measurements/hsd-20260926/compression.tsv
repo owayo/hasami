@@ -1,0 +1,7 @@
+*** Zstandard CLI (64-bit) v1.5.7, by Yann Collet ***
+command: zstd -q -19 -f INPUT -o INPUT.zst
+scope: FEATURE_OFFSETS + [GRAMMAR_TABLE] + FEATURES; not a complete HSD file
+dictionary	original_bytes	compact_bytes	original_zstd_bytes	compact_zstd_bytes	saved_zstd_bytes
+ipadic	8166128	6858178	2051396	1998907	52489
+ipadic-neologd	107580110	95426808	28576105	27928378	647727
+ipadic-neologd-sudachi	116247007	102815845	30738494	30038605	699889
