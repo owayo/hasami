@@ -2,6 +2,32 @@
 
 use super::*;
 
+#[test]
+fn invalid_http_settings_are_rejected_without_exposing_credentials() {
+    for options in [
+        HttpOptions {
+            user_agent: Some("client\r\nX-Injected: yes"),
+            ..HttpOptions::default()
+        },
+        HttpOptions {
+            proxy: ProxySetting::Url("http://user:secret@bad host"),
+            ..HttpOptions::default()
+        },
+        HttpOptions {
+            proxy: ProxySetting::Url("socks5://user:secret@localhost"),
+            ..HttpOptions::default()
+        },
+    ] {
+        let err = match Client::new(options) {
+            Ok(_) => panic!("不正な設定を受け入れた"),
+            Err(err) => err,
+        };
+        assert!(matches!(err, DownloadError::HttpConfig(_)));
+        assert!(!err.to_string().contains("secret"));
+        assert!(!format!("{err:?}").contains("secret"));
+    }
+}
+
 /// 中身 `bytes` の大きさと SHA-256 を持つ、テスト用の配布辞書
 fn distributed(name: &str, bytes: &[u8]) -> DistributedDict {
     DistributedDict::new(name, bytes.len() as u64, &to_hex(&Sha256::digest(bytes)))
@@ -216,8 +242,8 @@ mod with_dictionaries {
     use crate::dict::DictBuilder;
     use std::io::{BufRead, BufReader};
     use std::net::{TcpListener, TcpStream};
-    use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
     use std::thread;
 
     /// テスト用の小さな辞書（.hsd）のバイト列。`words` で中身を変える
@@ -262,6 +288,7 @@ mod with_dictionaries {
     struct Server {
         url: String,
         requests: Arc<AtomicUsize>,
+        received: Arc<Mutex<Vec<String>>>,
     }
 
     impl Server {
@@ -276,26 +303,46 @@ mod with_dictionaries {
         let url = format!("http://{}", listener.local_addr().unwrap());
         let requests = Arc::new(AtomicUsize::new(0));
         let count = Arc::clone(&requests);
+        let received = Arc::new(Mutex::new(Vec::new()));
+        let log = Arc::clone(&received);
         thread::spawn(move || {
             for stream in listener.incoming() {
                 let Ok(stream) = stream else { continue };
                 count.fetch_add(1, Ordering::SeqCst);
                 // 読み手が途中でやめたときの書き込みの失敗は気にしない
-                let _ = respond(stream, &routes);
+                let _ = respond(stream, &routes, &log);
             }
         });
-        Server { url, requests }
+        Server {
+            url,
+            requests,
+            received,
+        }
     }
 
-    fn respond(mut stream: TcpStream, routes: &[(&'static str, Reply)]) -> io::Result<()> {
+    fn respond(
+        mut stream: TcpStream,
+        routes: &[(&'static str, Reply)],
+        log: &Mutex<Vec<String>>,
+    ) -> io::Result<()> {
+        stream.set_read_timeout(Some(Duration::from_secs(5)))?;
         let mut reader = BufReader::new(stream.try_clone()?);
         let mut request_line = String::new();
         reader.read_line(&mut request_line)?;
+        let mut request = request_line.clone();
         loop {
             let mut line = String::new();
             if reader.read_line(&mut line)? == 0 || line == "\r\n" {
                 break;
             }
+            request.push_str(&line);
+        }
+        log.lock().unwrap().push(request);
+        // 明示プロキシのテストでは外部ホストへ接続せず、この接続上で応答する。
+        if request_line.starts_with("CONNECT ") {
+            stream.write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")?;
+            stream.flush()?;
+            return respond(stream, routes, log);
         }
         let requested = request_line.split_whitespace().nth(1).unwrap_or_default();
         let reply = routes
@@ -319,7 +366,15 @@ mod with_dictionaries {
 
     /// プロキシの環境変数に左右されない HTTP の設定（ほかは本番と同じ）
     fn test_agent() -> ureq::Agent {
-        agent_config().proxy(None).build().new_agent()
+        test_client().agent
+    }
+
+    fn test_client() -> Client {
+        Client::new(HttpOptions {
+            proxy: ProxySetting::None,
+            ..HttpOptions::default()
+        })
+        .unwrap()
     }
 
     fn fetch(
@@ -393,6 +448,254 @@ mod with_dictionaries {
         assert_eq!(again, Outcome::Present(path));
         assert_eq!(server.requests(), 1);
         assert_eq!(calls.len(), calls_before);
+    }
+
+    #[test]
+    fn compressed_404_notifies_before_retry_and_resets_progress() {
+        let bytes = sample_bytes();
+        let compressed = zstd(&bytes);
+        let dict = with_compressed(distributed("test", &bytes), &compressed);
+        let server = serve(vec![("/test.hsd", Reply::Body(bytes.clone()))]);
+        let dir = tempfile::tempdir().unwrap();
+        let mut progress = Vec::new();
+        let mut events = Vec::new();
+        let result = test_client()
+            .download_with_events(
+                &dict,
+                dir.path(),
+                DownloadOptions {
+                    base_url: Some(&server.url),
+                    progress: Some(&mut |r, t| progress.push((r, t))),
+                    ..DownloadOptions::default()
+                },
+                &mut |event| {
+                    assert_eq!(server.requests(), 1, "raw 要求より前に通知する");
+                    events.push(event);
+                },
+            )
+            .unwrap();
+        assert_eq!(fs::read(result.path()).unwrap(), bytes);
+        assert_eq!(
+            events,
+            [DownloadEvent::UncompressedFallback {
+                compressed_url: format!("{}/test.hsd.zst", server.url),
+                uncompressed_url: format!("{}/test.hsd", server.url),
+            }]
+        );
+        assert_eq!(
+            progress[..2],
+            [(0, compressed.len() as u64), (0, dict.size)]
+        );
+        assert_eq!(progress.last(), Some(&(dict.size, dict.size)));
+        let requests = server.received.lock().unwrap();
+        assert!(requests[0].starts_with("GET /test.hsd.zst "));
+        assert!(requests[1].starts_with("GET /test.hsd "));
+        drop(requests);
+        assert!(parts(dir.path()).is_empty());
+        let present = test_client()
+            .download_with_events(&dict, dir.path(), DownloadOptions::default(), &mut |_| {
+                panic!("通信しないときは通知しない")
+            })
+            .unwrap();
+        assert!(matches!(present, Outcome::Present(_)));
+        assert_eq!(server.requests(), 2);
+    }
+
+    #[test]
+    fn fallback_failure_preserves_the_existing_file() {
+        let bytes = sample_bytes();
+        let dict = with_compressed(distributed("test", &bytes), &zstd(&bytes));
+        let mut corrupt = bytes.clone();
+        corrupt[0] ^= 1;
+        for reply in [Reply::Status(404, "Not Found"), Reply::Body(corrupt)] {
+            let server = serve(vec![("/test.hsd", reply)]);
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("test.hsd");
+            fs::write(&path, b"original").unwrap();
+            let mut notified = 0;
+            let err = test_client()
+                .download_with_events(
+                    &dict,
+                    dir.path(),
+                    DownloadOptions {
+                        base_url: Some(&server.url),
+                        force: true,
+                        ..DownloadOptions::default()
+                    },
+                    &mut |_| {
+                        notified += 1;
+                        assert_eq!(server.requests(), 1);
+                    },
+                )
+                .unwrap_err();
+            assert!(
+                matches!(
+                    err,
+                    DownloadError::Status { status: 404, .. } | DownloadError::Checksum { .. }
+                ),
+                "{err}"
+            );
+            assert_eq!(notified, 1);
+            assert_eq!(server.requests(), 2);
+            assert_eq!(fs::read(path).unwrap(), b"original");
+            assert!(parts(dir.path()).is_empty());
+        }
+    }
+
+    #[test]
+    fn other_compressed_statuses_do_not_fall_back() {
+        let bytes = sample_bytes();
+        let dict = with_compressed(distributed("test", &bytes), &zstd(&bytes));
+        for status in [304, 403, 429, 500] {
+            let server = serve(vec![
+                ("/test.hsd.zst", Reply::Status(status, "Error")),
+                ("/test.hsd", Reply::Body(bytes.clone())),
+            ]);
+            let dir = tempfile::tempdir().unwrap();
+            let err = test_client()
+                .download_with_events(
+                    &dict,
+                    dir.path(),
+                    DownloadOptions {
+                        base_url: Some(&server.url),
+                        ..DownloadOptions::default()
+                    },
+                    &mut |_| panic!("404 以外では通知しない"),
+                )
+                .unwrap_err();
+            assert!(
+                matches!(err, DownloadError::Status { status: actual, .. } if status == actual)
+            );
+            assert_eq!(server.requests(), 1);
+            assert!(fs::read_dir(dir.path()).unwrap().next().is_none());
+        }
+    }
+
+    #[test]
+    fn a_connection_failure_does_not_fall_back() {
+        let bytes = sample_bytes();
+        let dict = with_compressed(distributed("test", &bytes), &zstd(&bytes));
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let base_url = format!("http://{}", listener.local_addr().unwrap());
+        // HTTP 応答を返さず閉じる。切り替えがあれば通知コールバックで検出する。
+        let server_thread = thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            let mut reader = BufReader::new(stream);
+            let mut line = String::new();
+            reader.read_line(&mut line).unwrap();
+            assert!(line.starts_with("GET /test.hsd.zst "));
+        });
+        let dir = tempfile::tempdir().unwrap();
+        let err = test_client()
+            .download_with_events(
+                &dict,
+                dir.path(),
+                DownloadOptions {
+                    base_url: Some(&base_url),
+                    ..DownloadOptions::default()
+                },
+                &mut |_| panic!("接続の失敗では切り替えない"),
+            )
+            .unwrap_err();
+        assert!(matches!(err, DownloadError::Request { .. }));
+        server_thread.join().unwrap();
+        assert!(parts(dir.path()).is_empty());
+    }
+
+    #[test]
+    fn custom_proxy_and_user_agent_apply_to_catalog_and_both_downloads() {
+        let bytes = sample_bytes();
+        let dict = with_compressed(distributed("test", &bytes), &zstd(&bytes));
+        let mut catalog = sample_catalog();
+        catalog.recommended = "test".into();
+        catalog.dictionaries = vec![dict.clone()];
+        let proxy = serve(vec![
+            (
+                "/dictionaries.json",
+                Reply::Body(catalog.to_json().into_bytes()),
+            ),
+            ("/test.hsd", Reply::Body(bytes.clone())),
+        ]);
+        let client = Client::new(HttpOptions {
+            proxy: ProxySetting::Url(&proxy.url),
+            user_agent: Some("downstream-test/1.0"),
+        })
+        .unwrap();
+        // このホストは解決できない。全要求が指定プロキシを通ったことも確かめる。
+        let base_url = "http://dictionary.invalid";
+        assert_eq!(client.catalog_from(base_url).unwrap(), catalog);
+        let dir = tempfile::tempdir().unwrap();
+        let result = client
+            .download(
+                &dict,
+                dir.path(),
+                DownloadOptions {
+                    base_url: Some(base_url),
+                    ..DownloadOptions::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(fs::read(result.path()).unwrap(), bytes);
+        let requests = proxy.received.lock().unwrap();
+        let gets: Vec<_> = requests.iter().filter(|r| r.starts_with("GET ")).collect();
+        assert_eq!(gets.len(), 3);
+        for request in requests.iter() {
+            assert!(
+                request
+                    .to_ascii_lowercase()
+                    .contains("user-agent: downstream-test/1.0\r\n"),
+                "{request}"
+            );
+        }
+        assert!(gets[0].starts_with("GET /dictionaries.json "));
+        assert!(gets[1].starts_with("GET /test.hsd.zst "));
+        assert!(gets[2].starts_with("GET /test.hsd "));
+    }
+
+    #[test]
+    fn disabling_proxy_ignores_environment_without_mutating_it() {
+        const CHILD: &str = "HASAMI_TEST_PROXY_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+            command.args(["--exact", "download::tests::with_dictionaries::disabling_proxy_ignores_environment_without_mutating_it"]);
+            command.env(CHILD, "1");
+            for key in [
+                "HTTP_PROXY",
+                "HTTPS_PROXY",
+                "ALL_PROXY",
+                "http_proxy",
+                "https_proxy",
+                "all_proxy",
+            ] {
+                command.env(key, "http://127.0.0.1:0");
+            }
+            command.env("NO_PROXY", "").env("no_proxy", "");
+            let output = command.output().unwrap();
+            assert!(
+                output.status.success(),
+                "{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+        let catalog = sample_catalog();
+        let server = serve(vec![(
+            "/dictionaries.json",
+            Reply::Body(catalog.to_json().into_bytes()),
+        )]);
+        assert!(matches!(
+            Client::default().catalog_from(&server.url),
+            Err(DownloadError::Request { .. })
+        ));
+        assert_eq!(test_client().catalog_from(&server.url).unwrap(), catalog);
+        assert_eq!(server.requests(), 1);
+        let expected = format!("user-agent: hasami/{}\r\n", env!("CARGO_PKG_VERSION"));
+        assert!(
+            server.received.lock().unwrap()[0]
+                .to_ascii_lowercase()
+                .contains(&expected)
+        );
     }
 
     #[test]
@@ -472,6 +775,7 @@ mod with_dictionaries {
         assert!(expected(&err), "{err:?}");
         assert!(!dir.path().join(&dict.file).exists());
         assert!(parts(dir.path()).is_empty(), "{:?}", parts(dir.path()));
+        assert_eq!(server.requests(), 1, "失敗時に別のファイルを要求しない");
         err.to_string()
     }
 

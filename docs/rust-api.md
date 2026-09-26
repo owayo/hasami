@@ -114,6 +114,40 @@ let outcome = download::download(dict, &dir, options)?; // 正しいファイル
 let analyzer = hasami::Analyzer::load(outcome.path())?;
 ```
 
+圧縮版が HTTP 404 の場合は、同じ取得元の非圧縮版 `.hsd` に切り替える。ほかの HTTP エラー、接続失敗、
+大きさ・SHA-256 の不一致、展開失敗では切り替えない。切り替え時の `progress` は、受信量 0 と非圧縮版の
+全体量で始め直す。
+
+プロキシや User-Agent を指定する場合は `Client` を作る。設定は目録と辞書の両方に適用される。
+`ProxySetting::Env`（既定）は環境変数に従い、`None` は環境変数によらずプロキシを無効にする。
+`Url("http://proxy.example.com:8080")` は指定した HTTP / HTTPS プロキシを使い、`NO_PROXY` も参照しない。
+User-Agent は省略すると `hasami/<版>`、空文字列なら送らない。TLS の検証には OS の証明書ストアを使う。
+
+```rust
+use hasami::download::{Client, HttpOptions, ProxySetting, DownloadEvent};
+
+let client = Client::new(HttpOptions {
+    proxy: ProxySetting::None,
+    user_agent: Some("my-app/1.0"),
+})?;
+let base = "https://mirror.example.com/hasami";
+let catalog = client.catalog_from(base)?; // タグ指定なら client.catalog(tag)
+catalog.check_format()?;
+let dict = catalog.find("ipadic").expect("目録にある辞書");
+let outcome = client.download_with_events(dict, &dir, DownloadOptions {
+    base_url: Some(base),
+    ..DownloadOptions::default()
+}, &mut |event| {
+    if let DownloadEvent::UncompressedFallback { uncompressed_url, .. } = event {
+        eprintln!("圧縮版がないため {uncompressed_url} を取得します");
+    }
+})?;
+```
+
+通知は非圧縮版を要求する前に呼ばれるため、その取得に失敗した場合も切り替えを把握できる。
+通知が不要なら `client.download(dict, &dir, options)` を使う。既存の関数と `DownloadOptions`・`Outcome` は
+そのまま使える。
+
 大きさと SHA-256 を自分のソースに固定するなら、目録を取らずに `DistributedDict` を組み立てて渡す
 （取得元を信用しきらずに使える。圧縮版も固定するなら `compressed` を埋める）。
 

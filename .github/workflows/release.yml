@@ -223,9 +223,20 @@ jobs:
     outputs:
       assets: ${{ steps.files.outputs.assets }}
     steps:
-      - uses: actions/download-artifact@v8
+      # archive: false で上げた Windows の ZIP も、既定では自動展開される。
+      # 配布用アーカイブはそのまま取り、辞書の artifact だけ別に展開する。
+      - name: Download binary archives
+        uses: actions/download-artifact@v8
         with:
-          path: artifacts
+          pattern: hasami-*
+          path: artifacts/binaries
+          skip-decompress: true
+
+      - name: Download dictionaries
+        uses: actions/download-artifact@v8
+        with:
+          name: dictionaries
+          path: artifacts/dictionaries
 
       # バイナリ 5 つ、配布辞書 3 つ（生のままと zstd で圧縮したもの）、目録、辞書のライセンスを release/ に
       # 平らに集め、過不足と目録の中身を確かめてから SHA256SUMS を作る
