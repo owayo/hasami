@@ -1,0 +1,123 @@
+DICT dict/ipadic.hsd bytes=18125804
+section_1=431
+section_2=8704
+section_3=47616
+section_4=3397560
+section_5=689954
+section_6=2345094
+section_7=1563396
+section_8=6602732
+section_9=1941
+section_10=1141
+section_11=497
+section_12=3463720
+section_13=176
+section_14=1408
+section_15=72
+section_16=360
+section_17=128
+slots=424695 holes=21384 internal=78501 leaf=254868 tail=69942
+tail_count=69942 tail_unique=13145 tail_pool_bytes=136027 tail_shared_total=695563 tail_u16_codes_total=576542
+string_unique=262875 string_pool_bytes=1914362 string_shared_feature_total=6331290 delta_pron_bytes=287087 delta_pron_saving=184546
+grammar_varint_id_bytes=331361 grammar_varint_saving=1632565
+features=327988 tuples=667 max_ids=[68, 57, 27] base_explicit=141344 pron_explicit=60921 reading_bytes=1657570 pron_bytes=410712 base_bytes=1708281 compact_features=5290780 tuple_bytes=4002 saved=1307950
+offset_block=32 wide_blocks=0 size=1282482 saved=280914
+offset_block=64 wide_blocks=0 size=1227519 saved=335877
+offset_block=128 wide_blocks=0 size=1200033 saved=363363
+offset_block=256 wide_blocks=0 size=1186290 saved=377106
+matrix=1316x1316 unique_rows=1282 unique_cols=1281 quotient_bytes=3289756
+decode_round=0 variant=0 ns=288.73 checksum=1020644749
+decode_round=0 variant=1 ns=259.34 checksum=1020644749
+decode_round=1 variant=1 ns=203.86 checksum=1020644749
+decode_round=1 variant=0 ns=212.91 checksum=1020644749
+decode_round=2 variant=0 ns=175.99 checksum=1020644749
+decode_round=2 variant=1 ns=175.34 checksum=1020644749
+decode_round=3 variant=1 ns=150.85 checksum=1020644749
+decode_round=3 variant=0 ns=167.25 checksum=1020644749
+decode_round=4 variant=0 ns=217.80 checksum=1020644749
+decode_round=4 variant=1 ns=186.44 checksum=1020644749
+decode_round=5 variant=1 ns=154.91 checksum=1020644749
+decode_round=5 variant=0 ns=173.78 checksum=1020644749
+scan_seconds=2.821
+DICT dict/ipadic-neologd.hsd bytes=221759218
+section_1=691
+section_2=8704
+section_3=92672
+section_4=50853872
+section_5=31810719
+section_6=27942186
+section_7=18628124
+section_8=88951986
+section_9=1941
+section_10=1141
+section_11=497
+section_12=3463720
+section_13=176
+section_14=1408
+section_15=72
+section_16=360
+section_17=128
+slots=6356734 holes=32417 internal=1980181 leaf=2017972 tail=2326164
+tail_count=2326164 tail_unique=448682 tail_pool_bytes=8278568 tail_shared_total=26887880 tail_u16_codes_total=26435965
+string_unique=3588082 string_pool_bytes=51738044 string_shared_feature_total=92744859 delta_pron_bytes=5853717 delta_pron_saving=5690812
+grammar_varint_id_bytes=3042819 grammar_varint_saving=15189141
+features=3039329 tuples=669 max_ids=[68, 57, 27] base_explicit=1060637 pron_explicit=832912 reading_bytes=29480401 pron_bytes=10711607 base_bytes=22551718 compact_features=76794670 tuple_bytes=4014 saved=12153302
+offset_block=32 wide_blocks=65257 size=17369089 saved=1259035
+offset_block=64 wide_blocks=38848 size=17112211 saved=1515913
+offset_block=128 wide_blocks=22130 size=17131068 saved=1497056
+offset_block=256 wide_blocks=11909 size=17183404 saved=1444720
+matrix=1316x1316 unique_rows=1282 unique_cols=1281 quotient_bytes=3289756
+decode_round=0 variant=0 ns=695.61 checksum=2067576881
+decode_round=0 variant=1 ns=679.60 checksum=2067576881
+decode_round=1 variant=1 ns=538.17 checksum=2067576881
+decode_round=1 variant=0 ns=602.61 checksum=2067576881
+decode_round=2 variant=0 ns=618.44 checksum=2067576881
+decode_round=2 variant=1 ns=659.15 checksum=2067576881
+decode_round=3 variant=1 ns=558.63 checksum=2067576881
+decode_round=3 variant=0 ns=569.24 checksum=2067576881
+decode_round=4 variant=0 ns=415.81 checksum=2067576881
+decode_round=4 variant=1 ns=458.74 checksum=2067576881
+decode_round=5 variant=1 ns=422.61 checksum=2067576881
+decode_round=5 variant=0 ns=475.71 checksum=2067576881
+scan_seconds=14.146
+DICT dict/ipadic-neologd-sudachi.hsd bytes=237760279
+section_1=753
+section_2=8704
+section_3=94720
+section_4=54809896
+section_5=32786522
+section_6=30342348
+section_7=20228232
+section_8=96018775
+section_9=1941
+section_10=1141
+section_11=497
+section_12=3463720
+section_13=176
+section_14=1408
+section_15=72
+section_16=360
+section_17=128
+slots=6851237 holes=40140 internal=2097974 leaf=2279373 tail=2433750
+tail_count=2433750 tail_unique=453973 tail_pool_bytes=8318099 tail_shared_total=27788099 tail_u16_codes_total=27367729
+string_unique=3801946 string_pool_bytes=54072749 string_shared_feature_total=99176987 delta_pron_bytes=5903627 delta_pron_saving=5729384
+grammar_varint_id_bytes=3363235 grammar_varint_saving=16785515
+features=3358794 tuples=669 max_ids=[68, 57, 27] base_explicit=1196614 pron_explicit=842762 reading_bytes=31949347 pron_bytes=10790239 base_bytes=24369381 compact_features=82583599 tuple_bytes=4014 saved=13431162
+offset_block=32 wide_blocks=76081 size=19028042 saved=1200190
+offset_block=64 wide_blocks=44344 size=18720313 saved=1507919
+offset_block=128 wide_blocks=24934 size=18718213 saved=1510019
+offset_block=256 wide_blocks=13342 size=18764299 saved=1463933
+matrix=1316x1316 unique_rows=1282 unique_cols=1281 quotient_bytes=3289756
+decode_round=0 variant=0 ns=462.37 checksum=1990476124
+decode_round=0 variant=1 ns=398.29 checksum=1990476124
+decode_round=1 variant=1 ns=423.09 checksum=1990476124
+decode_round=1 variant=0 ns=418.20 checksum=1990476124
+decode_round=2 variant=0 ns=531.59 checksum=1990476124
+decode_round=2 variant=1 ns=524.48 checksum=1990476124
+decode_round=3 variant=1 ns=523.69 checksum=1990476124
+decode_round=3 variant=0 ns=529.69 checksum=1990476124
+decode_round=4 variant=0 ns=450.67 checksum=1990476124
+decode_round=4 variant=1 ns=416.62 checksum=1990476124
+decode_round=5 variant=1 ns=488.37 checksum=1990476124
+decode_round=5 variant=0 ns=457.79 checksum=1990476124
+scan_seconds=13.688
