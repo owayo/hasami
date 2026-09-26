@@ -12,6 +12,9 @@
 //!   置き場所にある既存のファイルは消さず、壊さない
 //! - 大きさと SHA-256 を自分のソースに固定したい利用者は、[`DistributedDict`] を組み立てて [`download`] に
 //!   渡す（取得元を信用しきらずに使える）
+//! - 圧縮版が HTTP 404 の場合だけ非圧縮版に切り替える。切り替えの通知を受けるには
+//!   [`Client::download_with_events`] を使う。通信・検証・展開の失敗では切り替えない
+//! - プロキシや User-Agent を指定するには [`HttpOptions`] を渡して [`Client`] を作る
 //!
 //! ```no_run
 //! use hasami::download::{self, DownloadOptions};
@@ -354,9 +357,7 @@ fn is_sha256(hex: &str) -> bool {
 
 /// タグ `tag` のリリースの目録を取る。目録の `hasami_version` がタグの版と合うことも確かめる
 pub fn catalog(tag: &str) -> Result<Catalog, DownloadError> {
-    let base_url = release_url(tag);
-    let catalog = catalog_from(&base_url)?;
-    ensure_version(catalog, tag, &catalog_url(&base_url))
+    Client::default().catalog(tag)
 }
 
 /// 目録の `hasami_version` がタグ `tag`（`v<版>`）の版と合うことを確かめる
@@ -374,7 +375,7 @@ fn ensure_version(catalog: Catalog, tag: &str, url: &str) -> Result<Catalog, Dow
 
 /// 取得元 `base_url`（URL の接頭辞。ミラーなど）の目録（`<base_url>/dictionaries.json`）を取る
 pub fn catalog_from(base_url: &str) -> Result<Catalog, DownloadError> {
-    catalog_with(&agent(), base_url)
+    Client::default().catalog_from(base_url)
 }
 
 fn catalog_url(base_url: &str) -> String {
@@ -474,12 +475,13 @@ pub struct DownloadOptions<'a> {
     /// 取得元（URL の接頭辞。`<base_url>/<ファイル名>` を取る）。`None` なら [`CURRENT_TAG`] のリリース。
     /// [`catalog`] で別の版の目録を取ったときは、その版の [`release_url`] を渡す
     pub base_url: Option<&'a str>,
-    /// 圧縮版があればそちらを取って展開する（既定は true。受け取る量が 3 分の 1 ほどになる）
+    /// 圧縮版があればそちらを取って展開する（既定は true）。HTTP 404 の場合だけ非圧縮版に切り替える
     pub compressed: bool,
     /// 正しいファイルがあっても取り直す。中身の違うファイルも置き換える
     pub force: bool,
     /// 進み具合（受信したバイト数、受信する全体のバイト数）。通信を始める前に 1 度（受信 0 で）、
-    /// その後は受け取るたびに呼ぶ。通信しないときは呼ばない
+    /// その後は受け取るたびに呼ぶ。切り替え時は非圧縮版の全体量と受信 0 で呼び直す。
+    /// 通信しないときは呼ばない
     pub progress: Option<&'a mut dyn FnMut(u64, u64)>,
 }
 
@@ -521,7 +523,139 @@ pub fn download(
     dir: &Path,
     options: DownloadOptions<'_>,
 ) -> Result<Outcome, DownloadError> {
-    download_with(&agent(), dict, dir, options)
+    Client::default().download(dict, dir, options)
+}
+
+/// HTTP プロキシの選び方
+#[derive(Clone, Copy, Default)]
+pub enum ProxySetting<'a> {
+    /// 環境変数（`HTTPS_PROXY`・`HTTP_PROXY`・`ALL_PROXY`・`NO_PROXY` など）に従う
+    #[default]
+    Env,
+    /// 環境変数にかかわらず、プロキシを使わない
+    None,
+    /// 指定した HTTP / HTTPS プロキシを使う（`NO_PROXY` も参照しない）
+    Url(&'a str),
+}
+
+/// 目録と辞書の取得に共通する HTTP 設定
+#[derive(Clone, Copy, Default)]
+pub struct HttpOptions<'a> {
+    /// プロキシの選び方。既定は [`ProxySetting::Env`]
+    pub proxy: ProxySetting<'a>,
+    /// `User-Agent` ヘッダー。`None` は `hasami/<版>`、空文字列はヘッダーを送らない
+    pub user_agent: Option<&'a str>,
+}
+
+/// 辞書の取得中の通知。切り替え先の取得に失敗しても、切り替える前に通知する
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum DownloadEvent {
+    /// 圧縮版が HTTP 404 だったため、非圧縮版を要求する
+    UncompressedFallback {
+        compressed_url: String,
+        uncompressed_url: String,
+    },
+}
+
+/// HTTP 設定と接続を共有して、目録と辞書を取得するクライアント
+///
+/// [`Default`] は環境変数のプロキシと `hasami/<版>` の User-Agent を使う。
+/// TLS は rustls と OS の証明書ストアで検証する。
+///
+/// ```no_run
+/// use hasami::download::{Client, HttpOptions, ProxySetting, DownloadOptions, DownloadEvent};
+/// let client = Client::new(HttpOptions {
+///     proxy: ProxySetting::None,
+///     user_agent: Some("my-app/1.0"),
+/// })?;
+/// let base = "https://mirror.example.com/hasami";
+/// let catalog = client.catalog_from(base)?;
+/// catalog.check_format()?;
+/// let dict = catalog.find("ipadic").expect("目録にある辞書");
+/// let dir = std::path::Path::new("dict");
+/// client.download_with_events(dict, dir, DownloadOptions {
+///     base_url: Some(base), ..DownloadOptions::default()
+/// }, &mut |event| {
+///     if let DownloadEvent::UncompressedFallback { uncompressed_url, .. } = event {
+///         eprintln!("圧縮版がないため {uncompressed_url} を取得します");
+///     }
+/// })?;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+pub struct Client {
+    agent: ureq::Agent,
+}
+
+impl Default for Client {
+    fn default() -> Self {
+        Self {
+            agent: agent_config().build().new_agent(),
+        }
+    }
+}
+
+impl Client {
+    /// HTTP 設定を検査してクライアントを作る。設定の文字列は内部で所有する
+    pub fn new(options: HttpOptions<'_>) -> Result<Self, DownloadError> {
+        let mut config = agent_config();
+        if let Some(value) = options.user_agent {
+            ureq::http::HeaderValue::from_str(value)
+                .map_err(|_| DownloadError::HttpConfig("invalid User-Agent header"))?;
+            config = config.user_agent(value);
+        }
+        config = match options.proxy {
+            ProxySetting::Env => config,
+            ProxySetting::None => config.proxy(None),
+            ProxySetting::Url(url) => {
+                // この構成は SOCKS を含まない。設定時点で対応する方式かを確かめる。
+                if !url.starts_with("http://") && !url.starts_with("https://") {
+                    return Err(DownloadError::HttpConfig(
+                        "proxy URL must use http:// or https://",
+                    ));
+                }
+                let proxy = ureq::Proxy::new(url)
+                    .map_err(|_| DownloadError::HttpConfig("invalid proxy URL"))?;
+                config.proxy(Some(proxy))
+            }
+        };
+        Ok(Self {
+            agent: config.build().new_agent(),
+        })
+    }
+
+    /// タグの目録を取得し、目録の版がタグと一致することを確かめる
+    pub fn catalog(&self, tag: &str) -> Result<Catalog, DownloadError> {
+        let base_url = release_url(tag);
+        let catalog = self.catalog_from(&base_url)?;
+        ensure_version(catalog, tag, &catalog_url(&base_url))
+    }
+
+    /// ミラーなどの目録を取得する（`<base_url>/dictionaries.json`）
+    pub fn catalog_from(&self, base_url: &str) -> Result<Catalog, DownloadError> {
+        catalog_with(&self.agent, base_url)
+    }
+
+    /// 辞書を取得する。検証・配置の手順は [`download`] と同じ
+    pub fn download(
+        &self,
+        dict: &DistributedDict,
+        dir: &Path,
+        options: DownloadOptions<'_>,
+    ) -> Result<Outcome, DownloadError> {
+        download_with(&self.agent, dict, dir, options)
+    }
+
+    /// 辞書を取得し、圧縮版から非圧縮版への切り替えを通知する
+    pub fn download_with_events(
+        &self,
+        dict: &DistributedDict,
+        dir: &Path,
+        options: DownloadOptions<'_>,
+        events: &mut dyn FnMut(DownloadEvent),
+    ) -> Result<Outcome, DownloadError> {
+        download_with_events(&self.agent, dict, dir, options, events)
+    }
 }
 
 /// 取得に使う HTTP の設定。プロキシは ureq の既定（環境変数 `HTTPS_PROXY`・`NO_PROXY` など）のまま
@@ -543,15 +677,21 @@ fn agent_config() -> ConfigBuilder<AgentScope> {
         )
 }
 
-fn agent() -> ureq::Agent {
-    agent_config().build().new_agent()
-}
-
 fn download_with(
     agent: &ureq::Agent,
     dict: &DistributedDict,
     dir: &Path,
     options: DownloadOptions<'_>,
+) -> Result<Outcome, DownloadError> {
+    download_with_events(agent, dict, dir, options, &mut |_| {})
+}
+
+fn download_with_events(
+    agent: &ureq::Agent,
+    dict: &DistributedDict,
+    dir: &Path,
+    options: DownloadOptions<'_>,
+    events: &mut dyn FnMut(DownloadEvent),
 ) -> Result<Outcome, DownloadError> {
     dict.validate().map_err(DownloadError::InvalidDict)?;
     fs::create_dir_all(dir).map_err(|source| DownloadError::CreateDir {
@@ -599,7 +739,23 @@ fn download_with(
             None => receive(agent, &from, dict, out, progress),
         },
         |part, ()| check_loadable(part, &from),
-    )?;
+    );
+    let placed = match placed {
+        Err(DownloadError::Status { status: 404, .. }) if compressed.is_some() => {
+            let raw = format!("{base_url}/{}", dict.file);
+            events(DownloadEvent::UncompressedFallback {
+                compressed_url: from,
+                uncompressed_url: raw.clone(),
+            });
+            place(
+                dir,
+                &dict.file,
+                |out| receive(agent, &raw, dict, out, progress),
+                |part, ()| check_loadable(part, &raw),
+            )?
+        }
+        result => result?,
+    };
     Ok(Outcome::Downloaded(placed))
 }
 
@@ -1224,6 +1380,8 @@ fn copy<R: Read, W: Write>(input: &mut R, sink: &mut Sink<W>) -> Result<(), Deco
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum DownloadError {
+    /// HTTP 設定が使えない（認証情報を含みうる設定値はエラーに含めない）
+    HttpConfig(&'static str),
     /// 辞書の項目が使えない（名前・ファイル名・SHA-256 の書き方）
     InvalidDict(String),
     /// 目録を読めない（JSON の形、項目の書き方）
@@ -1286,6 +1444,7 @@ pub enum DownloadError {
 impl fmt::Display for DownloadError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            DownloadError::HttpConfig(reason) => write!(f, "invalid HTTP configuration: {reason}"),
             DownloadError::InvalidDict(reason) => write!(f, "invalid dictionary entry: {reason}"),
             DownloadError::Catalog { url, reason } => {
                 write!(f, "invalid dictionary catalog {url}: {reason}")

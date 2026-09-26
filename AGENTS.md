@@ -127,6 +127,11 @@ hasami/
   `Dictionary::load` を確かめてから一時ファイルを rename。正しいファイルがあれば通信しない。目録のファイル名は
   置き場所の外を指せない（`[A-Za-z0-9._-]`、`.` 始まりを拒む）。`DistributedDict::new(name, size, sha256)` で
   利用側が値を固定して渡せる（noslop はこの形）
+- 圧縮版が HTTP 404 の場合だけ非圧縮版に切り替える（ほかの通信・検証・展開エラーでは切り替えない）。
+  `download::Client::new(HttpOptions { proxy, user_agent })` で目録・辞書に共通の HTTP 設定を渡せる。
+  `ProxySetting::{Env, None, Url}` で環境変数・無効・明示指定を選ぶ。
+  `Client::download_with_events` は非圧縮版を要求する前に `DownloadEvent::UncompressedFallback` を通知する。
+  切り替え時の `progress` は受信 0・非圧縮版の全体量で呼び直す
 - `download::verify(path, &dict)` / `download::install(file, Option<&dict>, dir, force)` / `Catalog::from_dir(dir)`（目録を作る）
 - `hsd::FORMAT_VERSION` - 読み書きする辞書の形式の版（目録の `format_version` と比べる）
 - `Analyzer::tokenize_sentences(text, &SplitOptions)` - 文ごとの範囲とトークン列

@@ -1521,8 +1521,8 @@ fn download_one(
                     display_path(dir)
                 );
             }
-            bar.set_length(total);
         }
+        bar.set_length(total);
         bar.set_position(received);
     };
     let options = DownloadOptions {
@@ -1531,7 +1531,19 @@ fn download_one(
         force,
         progress: Some(&mut progress),
     };
-    let result = download::download(dict, dir, options);
+    let mut events = |event| {
+        if show && let download::DownloadEvent::UncompressedFallback { .. } = event {
+            bar.suspend(|| {
+                eprintln!(
+                    "Compressed dictionary not found (HTTP 404); downloading uncompressed {} ({})",
+                    dict.file,
+                    megabytes(dict.size)
+                );
+            });
+            bar.reset_elapsed();
+        }
+    };
+    let result = download::Client::default().download_with_events(dict, dir, options, &mut events);
     bar.finish_and_clear();
     result.map_err(download_error)
 }
