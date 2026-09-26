@@ -1,0 +1,13 @@
+{"corpus": "mixed", "dictionary": "ipadic", "round": 0, "variant": "v4", "pass": 0.0, "wall": 7.429852, "cpu": 4.911052, "lines": 143663.0, "tokens": 5178522.0}
+{"corpus": "mixed", "dictionary": "ipadic", "round": 0, "variant": "v5", "pass": 0.0, "wall": 8.954418, "cpu": 5.743672, "lines": 143663.0, "tokens": 5178522.0}
+{"corpus": "mixed", "dictionary": "ipadic", "round": 0, "variant": "fixed", "pass": 0.0, "wall": 7.044206, "cpu": 4.48711, "lines": 143663.0, "tokens": 5178522.0}
+{"corpus": "mixed", "dictionary": "ipadic", "round": 1, "variant": "v4", "pass": 0.0, "wall": 7.25025, "cpu": 4.769327, "lines": 143663.0, "tokens": 5178522.0}
+{"corpus": "mixed", "dictionary": "ipadic", "round": 1, "variant": "fixed", "pass": 0.0, "wall": 6.617582, "cpu": 4.346302, "lines": 143663.0, "tokens": 5178522.0}
+{"corpus": "mixed", "dictionary": "ipadic", "round": 1, "variant": "v5", "pass": 0.0, "wall": 6.523754, "cpu": 4.188033, "lines": 143663.0, "tokens": 5178522.0}
+{"corpus": "mixed", "dictionary": "ipadic", "round": 2, "variant": "fixed", "pass": 0.0, "wall": 6.908117, "cpu": 4.451553, "lines": 143663.0, "tokens": 5178522.0}
+{"corpus": "mixed", "dictionary": "ipadic", "round": 2, "variant": "v4", "pass": 0.0, "wall": 6.435539, "cpu": 4.183991, "lines": 143663.0, "tokens": 5178522.0}
+{"corpus": "mixed", "dictionary": "ipadic", "round": 2, "variant": "v5", "pass": 0.0, "wall": 7.527565, "cpu": 4.838949, "lines": 143663.0, "tokens": 5178522.0}
+{"corpus": "mixed", "dictionary": "ipadic", "round": 3, "variant": "fixed", "pass": 0.0, "wall": 7.458437, "cpu": 4.761606, "lines": 143663.0, "tokens": 5178522.0}
+{"corpus": "mixed", "dictionary": "ipadic", "round": 3, "variant": "v5", "pass": 0.0, "wall": 7.318798, "cpu": 4.628413, "lines": 143663.0, "tokens": 5178522.0}
+{"corpus": "mixed", "dictionary": "ipadic", "round": 3, "variant": "v4", "pass": 0.0, "wall": 6.848207, "cpu": 4.370173, "lines": 143663.0, "tokens": 5178522.0}
+{"corpus": "mixed", "dictionary": "ipadic", "round": 4, "variant": "v5", "pass": 0.0, "wall": 7.396563, "cpu": 4.684602, "lines": 143663.0, "tokens": 5178522.0}

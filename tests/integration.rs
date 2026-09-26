@@ -758,18 +758,18 @@ fn test_prewarm_idempotent() {
 }
 
 // ==========================================================================
-// char.def 復元テスト（v3 フォーマット）
+// 旧形式の拒否と char.def 復元テスト
 // ==========================================================================
 
 #[test]
 fn test_old_format_versions_are_rejected_with_rebuild_hint() {
-    // v4 のファイルの version (offset=8..12) を旧形式の番号に書き換えると、
+    // 現行のファイルの version (offset=8..12) を旧形式の番号に書き換えると、
     // 作り直しを案内するエラーで拒否する
     let tmp = std::env::temp_dir().join(format!("hasami_{}_old_version.hsd", std::process::id()));
     write_hsd(&test_builder(), &tmp);
     let original = std::fs::read(&tmp).unwrap();
 
-    for version in [2u32, 3] {
+    for version in [1u32, 2, 3, 4] {
         let mut bytes = original.clone();
         bytes[8..12].copy_from_slice(&version.to_le_bytes());
         std::fs::write(&tmp, &bytes).unwrap();

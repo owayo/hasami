@@ -1,0 +1,48 @@
+v4
+Merged 300 entries from dict/user
+Building trie with 5057058 entries...
+Repaired in 39.62s: 5057058 entries (4713123 surfaces, 3358794 feature records), 226.7 MB -> .dict-src/build.uQwdPd/ipadic-neologd-sudachi.tmp.hsd
+[16:55:35] wrote /tmp/hasami-hsd-adopt-20260926/rebuilt-v4/ipadic-neologd-sudachi.hsd (Entries: 5057058)
+[16:55:35] done
+      560.07 real       224.02 user        38.33 sys
+          2914189312  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+             1124923  page reclaims
+               16222  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   9  signals received
+               97101  voluntary context switches
+             2128793  involuntary context switches
+           182896471  instructions retired
+           158914303  cycles elapsed
+             1851824  peak memory footprint
+v5
+Merged 300 entries from dict/user
+Building trie with 5057058 entries...
+Repaired in 37.10s: 5057058 entries (4713123 surfaces, 3358794 feature records), 210.7 MB -> .dict-src/build.8GMd0X/ipadic-neologd-sudachi.tmp.hsd
+[17:05:03] wrote /tmp/hasami-hsd-adopt-20260926/rebuilt-v5/ipadic-neologd-sudachi.hsd (Entries: 5057058)
+[17:05:03] done
+      400.07 real       225.59 user        42.74 sys
+          2938191872  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+             1081878  page reclaims
+               17087  page faults
+                   0  swaps
+                   0  block input operations
+                   1  block output operations
+                   0  messages sent
+                   0  messages received
+                  15  signals received
+               48371  voluntary context switches
+             2581756  involuntary context switches
+           180770994  instructions retired
+           159642527  cycles elapsed
+             1851824  peak memory footprint

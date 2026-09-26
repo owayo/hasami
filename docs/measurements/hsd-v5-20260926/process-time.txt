@@ -1,0 +1,2160 @@
+time-mixed-ipadic-0-fixed.txt
+       13.24 real         7.24 user         1.27 sys
+            66125824  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                4225  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+              199941  involuntary context switches
+         30496495796  instructions retired
+         17667156924  cycles elapsed
+            44581416  peak memory footprint
+
+time-mixed-ipadic-0-v4.txt
+       13.28 real         7.24 user         1.30 sys
+            67895296  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                4334  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+              202510  involuntary context switches
+         30424311776  instructions retired
+         17435613258  cycles elapsed
+            45023760  peak memory footprint
+
+time-mixed-ipadic-0-v5.txt
+       13.04 real         7.07 user         1.27 sys
+            64602112  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                4132  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+              204356  involuntary context switches
+         30718980421  instructions retired
+         17271573788  cycles elapsed
+            43385384  peak memory footprint
+
+time-mixed-ipadic-1-fixed.txt
+       13.69 real         7.47 user         1.33 sys
+            65667072  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                4197  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+              204485  involuntary context switches
+         30532666066  instructions retired
+         17750999563  cycles elapsed
+            44122640  peak memory footprint
+
+time-mixed-ipadic-1-v4.txt
+       13.49 real         7.42 user         1.28 sys
+            67452928  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                4306  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+              199725  involuntary context switches
+         30395184378  instructions retired
+         17709065501  cycles elapsed
+            44581368  peak memory footprint
+
+time-mixed-ipadic-1-v5.txt
+       13.59 real         7.34 user         1.33 sys
+            65437696  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                4184  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+              207229  involuntary context switches
+         30776309081  instructions retired
+         17568761229  cycles elapsed
+            44220968  peak memory footprint
+
+time-mixed-ipadic-2-fixed.txt
+       13.35 real         7.22 user         1.30 sys
+            65552384  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                4189  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+              203968  involuntary context switches
+         30496675602  instructions retired
+         17267470087  cycles elapsed
+            44007976  peak memory footprint
+
+time-mixed-ipadic-2-v4.txt
+       13.56 real         7.33 user         1.32 sys
+            67321856  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                4299  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+              205861  involuntary context switches
+         30459526216  instructions retired
+         17539872021  cycles elapsed
+            44450296  peak memory footprint
+
+time-mixed-ipadic-2-v5.txt
+       13.67 real         7.40 user         1.34 sys
+            65716224  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                4200  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+              206230  involuntary context switches
+         30756666712  instructions retired
+         17728334452  cycles elapsed
+            44499496  peak memory footprint
+
+time-mixed-ipadic-3-fixed.txt
+       14.69 real         7.95 user         1.35 sys
+            64405504  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                4121  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+              200024  involuntary context switches
+         30426467126  instructions retired
+         18849306595  cycles elapsed
+            42844688  peak memory footprint
+
+time-mixed-ipadic-3-v4.txt
+       13.48 real         7.34 user         1.32 sys
+            67223552  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                4292  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+              205591  involuntary context switches
+         30464285988  instructions retired
+         17549250331  cycles elapsed
+            44352016  peak memory footprint
+
+time-mixed-ipadic-3-v5.txt
+       13.45 real         7.29 user         1.32 sys
+            65126400  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                4162  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+              206148  involuntary context switches
+         30590075416  instructions retired
+         17469246774  cycles elapsed
+            43909672  peak memory footprint
+
+time-mixed-ipadic-4-fixed.txt
+       13.38 real         7.29 user         1.31 sys
+            65486848  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                4184  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+              204178  involuntary context switches
+         30529616998  instructions retired
+         17571238377  cycles elapsed
+            43942440  peak memory footprint
+
+time-mixed-ipadic-4-v4.txt
+       13.50 real         7.31 user         1.32 sys
+            66617344  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                4255  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+              204605  involuntary context switches
+         30437257338  instructions retired
+         17450408053  cycles elapsed
+            43745784  peak memory footprint
+
+time-mixed-ipadic-4-v5.txt
+       13.76 real         7.53 user         1.30 sys
+            65126400  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                4165  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+              200894  involuntary context switches
+         30702819677  instructions retired
+         18016120475  cycles elapsed
+            43909672  peak memory footprint
+
+time-mixed-ipadic-5-fixed.txt
+       14.39 real         7.88 user         1.33 sys
+            66060288  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                4219  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+              198144  involuntary context switches
+         30466438181  instructions retired
+         17988991886  cycles elapsed
+            44499472  peak memory footprint
+
+time-mixed-ipadic-5-v4.txt
+       13.70 real         7.43 user         1.32 sys
+            67518464  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                4309  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+              202486  involuntary context switches
+         30443410623  instructions retired
+         17556513486  cycles elapsed
+            44646928  peak memory footprint
+
+time-mixed-ipadic-5-v5.txt
+       13.68 real         7.41 user         1.32 sys
+            66502656  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                4248  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+              204014  involuntary context switches
+         30748637587  instructions retired
+         17688121991  cycles elapsed
+            45269520  peak memory footprint
+
+time-mixed-ipadic-neologd-0-fixed.txt
+       19.15 real         9.69 user         1.91 sys
+           252329984  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                4170  page reclaims
+               11508  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                 210  voluntary context switches
+              260192  involuntary context switches
+         33456124675  instructions retired
+         23619069911  cycles elapsed
+            58016440  peak memory footprint
+
+time-mixed-ipadic-neologd-0-v4.txt
+       18.47 real         9.87 user         1.82 sys
+           261947392  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+               13925  page reclaims
+                2339  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   5  voluntary context switches
+              260208  involuntary context switches
+         32863258710  instructions retired
+         23362720225  cycles elapsed
+            57869008  peak memory footprint
+
+time-mixed-ipadic-neologd-0-v5.txt
+       18.78 real         9.54 user         1.92 sys
+           250134528  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                4203  page reclaims
+               11339  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                  10  voluntary context switches
+              268782  involuntary context switches
+         33537467521  instructions retired
+         23277383815  cycles elapsed
+            59163320  peak memory footprint
+
+time-mixed-ipadic-neologd-1-fixed.txt
+       17.23 real         9.26 user         1.70 sys
+           251183104  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+               15606  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+              258085  involuntary context switches
+         32860665680  instructions retired
+         22284780084  cycles elapsed
+            57524920  peak memory footprint
+
+time-mixed-ipadic-neologd-1-v4.txt
+       17.39 real         9.46 user         1.70 sys
+           262782976  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+               16316  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+              259139  involuntary context switches
+         32787650325  instructions retired
+         22803271729  cycles elapsed
+            59802296  peak memory footprint
+
+time-mixed-ipadic-neologd-1-v5.txt
+       17.59 real         9.55 user         1.70 sys
+           248840192  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+               15465  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+              253455  involuntary context switches
+         32980092918  instructions retired
+         22507519884  cycles elapsed
+            57918136  peak memory footprint
+
+time-mixed-ipadic-neologd-2-fixed.txt
+       17.87 real         9.72 user         1.72 sys
+           252575744  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+               15693  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+              253576  involuntary context switches
+         32807435912  instructions retired
+         22803960902  cycles elapsed
+            58950328  peak memory footprint
+
+time-mixed-ipadic-neologd-2-v4.txt
+       17.76 real         9.63 user         1.70 sys
+           260489216  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+               16176  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+              254136  involuntary context switches
+         32710799411  instructions retired
+         22946088858  cycles elapsed
+            57377464  peak memory footprint
+
+time-mixed-ipadic-neologd-2-v5.txt
+       17.06 real         9.25 user         1.68 sys
+           248938496  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+               15471  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+              257357  involuntary context switches
+         32836163476  instructions retired
+         22218602068  cycles elapsed
+            58000032  peak memory footprint
+
+time-mixed-ipadic-neologd-3-fixed.txt
+       17.31 real         9.43 user         1.67 sys
+           252755968  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+               15704  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+              256017  involuntary context switches
+         32828856617  instructions retired
+         22625808976  cycles elapsed
+            59097784  peak memory footprint
+
+time-mixed-ipadic-neologd-3-v4.txt
+       17.03 real         9.26 user         1.66 sys
+           261226496  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+               16222  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+              253450  involuntary context switches
+         32714806173  instructions retired
+         22163742799  cycles elapsed
+            58000080  peak memory footprint
+
+time-mixed-ipadic-neologd-3-v5.txt
+       16.72 real         9.03 user         1.68 sys
+           248741888  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+               15457  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+              260299  involuntary context switches
+         33049446956  instructions retired
+         21928712221  cycles elapsed
+            57983696  peak memory footprint
+
+time-mixed-ipadic-neologd-4-fixed.txt
+       17.31 real         9.35 user         1.72 sys
+           252887040  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+               15713  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+              261311  involuntary context switches
+         32890345656  instructions retired
+         22617743971  cycles elapsed
+            59491000  peak memory footprint
+
+time-mixed-ipadic-neologd-4-v4.txt
+       16.61 real         9.00 user         1.65 sys
+           260898816  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+               16200  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+              256742  involuntary context switches
+         32739815921  instructions retired
+         21850165460  cycles elapsed
+            57934520  peak memory footprint
+
+time-mixed-ipadic-neologd-4-v5.txt
+       17.28 real         9.34 user         1.72 sys
+           249839616  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+               15526  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+              259867  involuntary context switches
+         33015029490  instructions retired
+         22564013210  cycles elapsed
+            59228832  peak memory footprint
+
+time-mixed-ipadic-neologd-5-fixed.txt
+       17.24 real         9.34 user         1.68 sys
+           252133376  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+               15664  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+              252642  involuntary context switches
+         32796496908  instructions retired
+         22203773693  cycles elapsed
+            57655992  peak memory footprint
+
+time-mixed-ipadic-neologd-5-v4.txt
+       17.47 real         9.63 user         1.63 sys
+           262291456  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+               16286  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+              245840  involuntary context switches
+         32629811546  instructions retired
+         22760755130  cycles elapsed
+            59114192  peak memory footprint
+
+time-mixed-ipadic-neologd-5-v5.txt
+       16.99 real         9.25 user         1.64 sys
+           249643008  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+               15515  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+              253044  involuntary context switches
+         32975103481  instructions retired
+         22338032741  cycles elapsed
+            57688760  peak memory footprint
+
+time-mixed-ipadic-neologd-sudachi-0-fixed.txt
+       20.07 real         9.25 user         1.95 sys
+           267354112  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                4274  page reclaims
+               12319  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                 339  voluntary context switches
+              275303  involuntary context switches
+         34743054200  instructions retired
+         23291565764  cycles elapsed
+            60539576  peak memory footprint
+
+time-mixed-ipadic-neologd-sudachi-0-v4.txt
+       19.99 real        10.16 user         2.00 sys
+           278757376  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                4282  page reclaims
+               13009  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                  26  voluntary context switches
+              272953  involuntary context switches
+         34309936902  instructions retired
+         24365616449  cycles elapsed
+            60850872  peak memory footprint
+
+time-mixed-ipadic-neologd-sudachi-0-v5.txt
+       22.89 real        10.33 user         2.16 sys
+           262963200  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                4171  page reclaims
+               12156  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                 307  voluntary context switches
+              277279  involuntary context switches
+         34956264122  instructions retired
+         25409958741  cycles elapsed
+            59130552  peak memory footprint
+
+time-mixed-ipadic-neologd-sudachi-1-fixed.txt
+       17.18 real         9.32 user         1.67 sys
+           267288576  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+               16591  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+              262632  involuntary context switches
+         33860249160  instructions retired
+         22919786454  cycles elapsed
+            60342992  peak memory footprint
+
+time-mixed-ipadic-neologd-sudachi-1-v4.txt
+       16.79 real         9.17 user         1.65 sys
+           279216128  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+               17317  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+              263185  involuntary context switches
+         33783243651  instructions retired
+         22616350138  cycles elapsed
+            61293264  peak memory footprint
+
+time-mixed-ipadic-neologd-sudachi-1-v5.txt
+       17.06 real         9.26 user         1.68 sys
+           264077312  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+               16395  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+              262856  involuntary context switches
+         34040458209  instructions retired
+         22821370008  cycles elapsed
+            59179728  peak memory footprint
+
+time-mixed-ipadic-neologd-sudachi-2-fixed.txt
+       16.29 real         8.91 user         1.56 sys
+           266960896  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+               16569  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+              250791  involuntary context switches
+         33688431993  instructions retired
+         21516199143  cycles elapsed
+            58999504  peak memory footprint
+
+time-mixed-ipadic-neologd-sudachi-2-v4.txt
+       16.40 real         8.91 user         1.63 sys
+           277151744  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+               17191  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+              261928  involuntary context switches
+         33785386748  instructions retired
+         21989838844  cycles elapsed
+            59065016  peak memory footprint
+
+time-mixed-ipadic-neologd-sudachi-2-v5.txt
+       16.81 real         9.15 user         1.65 sys
+           264306688  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+               16410  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+              262005  involuntary context switches
+         33879109143  instructions retired
+         22412580666  cycles elapsed
+            60474064  peak memory footprint
+
+time-mixed-ipadic-neologd-sudachi-3-fixed.txt
+       17.02 real         9.17 user         1.70 sys
+           267354112  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+               16593  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+              268296  involuntary context switches
+         33924429863  instructions retired
+         22463642723  cycles elapsed
+            60687056  peak memory footprint
+
+time-mixed-ipadic-neologd-sudachi-3-v4.txt
+       16.73 real         9.19 user         1.59 sys
+           277266432  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+               17199  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+              251326  involuntary context switches
+         33655126663  instructions retired
+         22252522028  cycles elapsed
+            59097784  peak memory footprint
+
+time-mixed-ipadic-neologd-sudachi-3-v5.txt
+       17.11 real         9.23 user         1.66 sys
+           264355840  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+               16410  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+              260524  involuntary context switches
+         34014253402  instructions retired
+         22343900308  cycles elapsed
+            60506832  peak memory footprint
+
+time-mixed-ipadic-neologd-sudachi-4-fixed.txt
+       16.81 real         9.13 user         1.67 sys
+           266993664  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+               16574  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+              263784  involuntary context switches
+         33872827340  instructions retired
+         22418698204  cycles elapsed
+            59343568  peak memory footprint
+
+time-mixed-ipadic-neologd-sudachi-4-v4.txt
+       17.04 real         9.24 user         1.66 sys
+           278249472  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+               17260  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+              260613  involuntary context switches
+         33748582839  instructions retired
+         22546534166  cycles elapsed
+            59179728  peak memory footprint
+
+time-mixed-ipadic-neologd-sudachi-4-v5.txt
+       17.44 real         9.46 user         1.71 sys
+           262963200  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+               16325  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+              265631  involuntary context switches
+         34055576292  instructions retired
+         23135812271  cycles elapsed
+            58933944  peak memory footprint
+
+time-mixed-ipadic-neologd-sudachi-5-fixed.txt
+       17.37 real         9.40 user         1.70 sys
+           267141120  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+               16580  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+              264470  involuntary context switches
+         33883051459  instructions retired
+         22867256261  cycles elapsed
+            60146384  peak memory footprint
+
+time-mixed-ipadic-neologd-sudachi-5-v4.txt
+       17.07 real         9.23 user         1.71 sys
+           278806528  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+               17295  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+              267425  involuntary context switches
+         33841273308  instructions retired
+         22670113759  cycles elapsed
+            60916432  peak memory footprint
+
+time-mixed-ipadic-neologd-sudachi-5-v5.txt
+       17.25 real         9.30 user         1.72 sys
+           263323648  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+               16349  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+              269681  involuntary context switches
+         34118558194  instructions retired
+         22822477009  cycles elapsed
+            59589328  peak memory footprint
+
+time-short-ipadic-0-fixed.txt
+        1.15 real         0.61 user         0.12 sys
+            15122432  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                1113  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+               17807  involuntary context switches
+          5574573593  instructions retired
+          1521097706  cycles elapsed
+             9257440  peak memory footprint
+
+time-short-ipadic-0-v4.txt
+        1.17 real         0.63 user         0.12 sys
+            15106048  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                1112  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+               17214  involuntary context switches
+          5568977791  instructions retired
+          1531088322  cycles elapsed
+             9257440  peak memory footprint
+
+time-short-ipadic-0-v5.txt
+        1.19 real         0.63 user         0.12 sys
+            15089664  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                1112  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+               17908  involuntary context switches
+          5575981598  instructions retired
+          1557413708  cycles elapsed
+             9224672  peak memory footprint
+
+time-short-ipadic-1-fixed.txt
+        1.14 real         0.63 user         0.10 sys
+            15089664  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                1112  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+               15652  involuntary context switches
+          5549277484  instructions retired
+          1555953734  cycles elapsed
+             9224672  peak memory footprint
+
+time-short-ipadic-1-v4.txt
+        1.16 real         0.62 user         0.11 sys
+            15073280  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                1108  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+               17652  involuntary context switches
+          5571720292  instructions retired
+          1536157706  cycles elapsed
+             9224672  peak memory footprint
+
+time-short-ipadic-1-v5.txt
+        1.21 real         0.66 user         0.11 sys
+            15155200  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                1116  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+               17022  involuntary context switches
+          5565503965  instructions retired
+          1589091341  cycles elapsed
+             9290208  peak memory footprint
+
+time-short-ipadic-2-fixed.txt
+        1.16 real         0.61 user         0.12 sys
+            15106048  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                1112  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+               17515  involuntary context switches
+          5570909750  instructions retired
+          1530030898  cycles elapsed
+             9241056  peak memory footprint
+
+time-short-ipadic-2-v4.txt
+        1.17 real         0.61 user         0.12 sys
+            15138816  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                1112  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+               17960  involuntary context switches
+          5574757519  instructions retired
+          1531945018  cycles elapsed
+             9290208  peak memory footprint
+
+time-short-ipadic-2-v5.txt
+        1.17 real         0.62 user         0.11 sys
+            15138816  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                1112  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+               17490  involuntary context switches
+          5569659080  instructions retired
+          1553145598  cycles elapsed
+             9273824  peak memory footprint
+
+time-short-ipadic-3-fixed.txt
+        1.15 real         0.61 user         0.11 sys
+            15089664  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                1111  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+               17484  involuntary context switches
+          5571180454  instructions retired
+          1519377173  cycles elapsed
+             9224672  peak memory footprint
+
+time-short-ipadic-3-v4.txt
+        1.13 real         0.61 user         0.11 sys
+            15122432  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                1111  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+               17287  involuntary context switches
+          5570275189  instructions retired
+          1522666736  cycles elapsed
+             9273824  peak memory footprint
+
+time-short-ipadic-3-v5.txt
+        1.16 real         0.61 user         0.11 sys
+            15106048  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                1112  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+               17763  involuntary context switches
+          5573046225  instructions retired
+          1538897148  cycles elapsed
+             9241056  peak memory footprint
+
+time-short-ipadic-4-fixed.txt
+        1.20 real         0.66 user         0.11 sys
+            15155200  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                1114  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+               16171  involuntary context switches
+          5554770812  instructions retired
+          1572982913  cycles elapsed
+             9290208  peak memory footprint
+
+time-short-ipadic-4-v4.txt
+        1.14 real         0.61 user         0.11 sys
+            15138816  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                1112  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+               17047  involuntary context switches
+          5566530673  instructions retired
+          1508196532  cycles elapsed
+             9290208  peak memory footprint
+
+time-short-ipadic-4-v5.txt
+        1.24 real         0.68 user         0.10 sys
+            15106048  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                1110  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+               14733  involuntary context switches
+          5538715834  instructions retired
+          1619520321  cycles elapsed
+             9241056  peak memory footprint
+
+time-short-ipadic-5-fixed.txt
+        1.15 real         0.60 user         0.11 sys
+            15122432  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                1113  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+               17428  involuntary context switches
+          5569756219  instructions retired
+          1521303286  cycles elapsed
+             9257440  peak memory footprint
+
+time-short-ipadic-5-v4.txt
+        1.15 real         0.61 user         0.11 sys
+            15106048  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                1112  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+               16999  involuntary context switches
+          5566044043  instructions retired
+          1533301977  cycles elapsed
+             9257440  peak memory footprint
+
+time-short-ipadic-5-v5.txt
+        1.14 real         0.61 user         0.11 sys
+            15138816  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                1112  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+               16894  involuntary context switches
+          5564375042  instructions retired
+          1530388432  cycles elapsed
+             9273824  peak memory footprint
+
+time-short-ipadic-neologd-0-fixed.txt
+        1.16 real         0.66 user         0.09 sys
+            15253504  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                1119  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+               13683  involuntary context switches
+          5519627746  instructions retired
+          1621353310  cycles elapsed
+             9323096  peak memory footprint
+
+time-short-ipadic-neologd-0-v4.txt
+        1.17 real         0.63 user         0.10 sys
+            15220736  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                1117  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+               15539  involuntary context switches
+          5539789645  instructions retired
+          1557847327  cycles elapsed
+             9306712  peak memory footprint
+
+time-short-ipadic-neologd-0-v5.txt
+        1.16 real         0.62 user         0.11 sys
+            15269888  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                1107  page reclaims
+                  14  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+               17341  involuntary context switches
+          5564759282  instructions retired
+          1540354043  cycles elapsed
+             9323096  peak memory footprint
+
+time-short-ipadic-neologd-1-fixed.txt
+        1.16 real         0.64 user         0.11 sys
+            15253504  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                1119  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+               15497  involuntary context switches
+          5542442269  instructions retired
+          1562646246  cycles elapsed
+             9323096  peak memory footprint
+
+time-short-ipadic-neologd-1-v4.txt
+        1.15 real         0.68 user         0.08 sys
+            15171584  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                1116  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+               11547  involuntary context switches
+          5494030838  instructions retired
+          1634915823  cycles elapsed
+             9241152  peak memory footprint
+
+time-short-ipadic-neologd-1-v5.txt
+        1.15 real         0.61 user         0.12 sys
+            15253504  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                1121  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+               17952  involuntary context switches
+          5570448585  instructions retired
+          1531456691  cycles elapsed
+             9306712  peak memory footprint
+
+time-short-ipadic-neologd-2-fixed.txt
+        1.13 real         0.60 user         0.11 sys
+            15237120  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                1118  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+               17481  involuntary context switches
+          5565524580  instructions retired
+          1515680425  cycles elapsed
+             9306712  peak memory footprint
+
+time-short-ipadic-neologd-2-v4.txt
+        1.16 real         0.62 user         0.11 sys
+            15237120  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                1118  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+               17181  involuntary context switches
+          5561108584  instructions retired
+          1566761113  cycles elapsed
+             9306688  peak memory footprint
+
+time-short-ipadic-neologd-2-v5.txt
+        1.12 real         0.60 user         0.11 sys
+            15253504  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                1120  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+               16610  involuntary context switches
+          5554091278  instructions retired
+          1510013055  cycles elapsed
+             9306712  peak memory footprint
+
+time-short-ipadic-neologd-3-fixed.txt
+        1.14 real         0.60 user         0.12 sys
+            15237120  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                1119  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+               17676  involuntary context switches
+          5568354899  instructions retired
+          1530875558  cycles elapsed
+             9306712  peak memory footprint
+
+time-short-ipadic-neologd-3-v4.txt
+        1.13 real         0.59 user         0.12 sys
+            15253504  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                1121  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+               17935  involuntary context switches
+          5569369748  instructions retired
+          1516808731  cycles elapsed
+             9323072  peak memory footprint
+
+time-short-ipadic-neologd-3-v5.txt
+        1.16 real         0.60 user         0.11 sys
+            15237120  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                1120  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+               17818  involuntary context switches
+          5567516964  instructions retired
+          1524917592  cycles elapsed
+             9290328  peak memory footprint
+
+time-short-ipadic-neologd-4-fixed.txt
+        1.13 real         0.60 user         0.12 sys
+            15269888  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                1121  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+               18187  involuntary context switches
+          5573923954  instructions retired
+          1535865742  cycles elapsed
+             9355888  peak memory footprint
+
+time-short-ipadic-neologd-4-v4.txt
+        1.11 real         0.59 user         0.11 sys
+            15187968  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                1115  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+               17860  involuntary context switches
+          5568587241  instructions retired
+          1510222593  cycles elapsed
+             9273944  peak memory footprint
+
+time-short-ipadic-neologd-4-v5.txt
+        1.11 real         0.60 user         0.10 sys
+            15253504  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                1119  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+               16625  involuntary context switches
+          5554767579  instructions retired
+          1532459433  cycles elapsed
+             9306712  peak memory footprint
+
+time-short-ipadic-neologd-5-fixed.txt
+        1.12 real         0.59 user         0.11 sys
+            15220736  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                1119  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+               17434  involuntary context switches
+          5563878155  instructions retired
+          1523611469  cycles elapsed
+             9290328  peak memory footprint
+
+time-short-ipadic-neologd-5-v4.txt
+        1.11 real         0.60 user         0.11 sys
+            15204352  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                1116  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+               17047  involuntary context switches
+          5559433918  instructions retired
+          1534795750  cycles elapsed
+             9273920  peak memory footprint
+
+time-short-ipadic-neologd-5-v5.txt
+        1.11 real         0.58 user         0.11 sys
+            15253504  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                1119  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+               17601  involuntary context switches
+          5564626203  instructions retired
+          1492363527  cycles elapsed
+             9306712  peak memory footprint
+
+time-short-ipadic-neologd-sudachi-0-fixed.txt
+        1.12 real         0.59 user         0.11 sys
+            15220736  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                1119  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+               18281  involuntary context switches
+          5572903955  instructions retired
+          1516636962  cycles elapsed
+             9339504  peak memory footprint
+
+time-short-ipadic-neologd-sudachi-0-v4.txt
+        1.10 real         0.58 user         0.11 sys
+            15187968  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                1115  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+               18443  involuntary context switches
+          5574382028  instructions retired
+          1498158494  cycles elapsed
+             9323120  peak memory footprint
+
+time-short-ipadic-neologd-sudachi-0-v5.txt
+        1.14 real         0.59 user         0.11 sys
+            15253504  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                1121  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+               19000  involuntary context switches
+          5580482458  instructions retired
+          1520964368  cycles elapsed
+             9355888  peak memory footprint
+
+time-short-ipadic-neologd-sudachi-1-fixed.txt
+        1.09 real         0.59 user         0.11 sys
+            15187968  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                1115  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+               18049  involuntary context switches
+          5570882619  instructions retired
+          1488078589  cycles elapsed
+             9306736  peak memory footprint
+
+time-short-ipadic-neologd-sudachi-1-v4.txt
+        1.09 real         0.59 user         0.10 sys
+            15204352  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                1116  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+               16392  involuntary context switches
+          5550327326  instructions retired
+          1503924544  cycles elapsed
+             9339504  peak memory footprint
+
+time-short-ipadic-neologd-sudachi-1-v5.txt
+        1.10 real         0.59 user         0.11 sys
+            15220736  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                1117  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+               17603  involuntary context switches
+          5565362143  instructions retired
+          1511213334  cycles elapsed
+             9323120  peak memory footprint
+
+time-short-ipadic-neologd-sudachi-2-fixed.txt
+        1.11 real         0.59 user         0.11 sys
+            15187968  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                1115  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+               17922  involuntary context switches
+          5570050866  instructions retired
+          1521463714  cycles elapsed
+             9306736  peak memory footprint
+
+time-short-ipadic-neologd-sudachi-2-v4.txt
+        1.10 real         0.59 user         0.11 sys
+            15204352  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                1117  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+               17769  involuntary context switches
+          5566737650  instructions retired
+          1513036250  cycles elapsed
+             9339504  peak memory footprint
+
+time-short-ipadic-neologd-sudachi-2-v5.txt
+        1.11 real         0.59 user         0.11 sys
+            15237120  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                1120  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+               18128  involuntary context switches
+          5571667093  instructions retired
+          1514855275  cycles elapsed
+             9339504  peak memory footprint
+
+time-short-ipadic-neologd-sudachi-3-fixed.txt
+        1.11 real         0.59 user         0.11 sys
+            15187968  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                1118  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+               18473  involuntary context switches
+          5575281645  instructions retired
+          1518238536  cycles elapsed
+             9306736  peak memory footprint
+
+time-short-ipadic-neologd-sudachi-3-v4.txt
+        1.09 real         0.59 user         0.11 sys
+            15187968  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                1116  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+               17732  involuntary context switches
+          5567090009  instructions retired
+          1495391975  cycles elapsed
+             9323120  peak memory footprint
+
+time-short-ipadic-neologd-sudachi-3-v5.txt
+        1.14 real         0.61 user         0.11 sys
+            15237120  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                1118  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+               18257  involuntary context switches
+          5573703720  instructions retired
+          1568090710  cycles elapsed
+             9339504  peak memory footprint
+
+time-short-ipadic-neologd-sudachi-4-fixed.txt
+        1.11 real         0.59 user         0.12 sys
+            15237120  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                1120  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+               18178  involuntary context switches
+          5573500360  instructions retired
+          1516236478  cycles elapsed
+             9355888  peak memory footprint
+
+time-short-ipadic-neologd-sudachi-4-v4.txt
+        1.09 real         0.59 user         0.11 sys
+            15187968  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                1115  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+               17931  involuntary context switches
+          5569421277  instructions retired
+          1501174447  cycles elapsed
+             9306712  peak memory footprint
+
+time-short-ipadic-neologd-sudachi-4-v5.txt
+        1.06 real         0.59 user         0.10 sys
+            15220736  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                1119  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+               15515  involuntary context switches
+          5541002387  instructions retired
+          1487777730  cycles elapsed
+             9323120  peak memory footprint
+
+time-short-ipadic-neologd-sudachi-5-fixed.txt
+        1.09 real         0.58 user         0.11 sys
+            15187968  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                1116  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+               17917  involuntary context switches
+          5569722067  instructions retired
+          1488084118  cycles elapsed
+             9306736  peak memory footprint
+
+time-short-ipadic-neologd-sudachi-5-v4.txt
+        1.14 real         0.60 user         0.11 sys
+            15187968  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                1115  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+               18768  involuntary context switches
+          5579610432  instructions retired
+          1537890151  cycles elapsed
+             9323120  peak memory footprint
+
+time-short-ipadic-neologd-sudachi-5-v5.txt
+        1.14 real         0.60 user         0.11 sys
+            15237120  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                1120  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+               18807  involuntary context switches
+          5578371494  instructions retired
+          1537433644  cycles elapsed
+             9339504  peak memory footprint
+

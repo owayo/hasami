@@ -1,0 +1,326 @@
+[
+  {
+    "corpus": "mixed",
+    "dictionary": "ipadic",
+    "variant": "v4",
+    "cpu_median": 4.2899705,
+    "cpu_min": 4.150064,
+    "wall_median": 6.695143,
+    "paired_cpu_pct": 0.0,
+    "paired_cpu_pct_all": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "rss_median": 67387392.0
+  },
+  {
+    "corpus": "mixed",
+    "dictionary": "ipadic",
+    "variant": "v5",
+    "cpu_median": 4.3007595,
+    "cpu_min": 4.141436,
+    "wall_median": 6.7232515,
+    "paired_cpu_pct": -0.2762892960248453,
+    "paired_cpu_pct_all": [
+      -0.20790040828287948,
+      1.9965745989173334,
+      1.894960682431912,
+      -0.34467818376681114,
+      -0.411438602480918,
+      -2.2307072635832093
+    ],
+    "rss_median": 65282048.0
+  },
+  {
+    "corpus": "mixed",
+    "dictionary": "ipadic",
+    "variant": "fixed",
+    "cpu_median": 4.32158,
+    "cpu_min": 4.241833,
+    "wall_median": 6.737605,
+    "paired_cpu_pct": 2.3460770896004512,
+    "paired_cpu_pct_all": [
+      2.211267103350689,
+      2.4808870758502133,
+      -1.001469617459061,
+      6.642581245738444,
+      -0.3088289640124309,
+      4.296995159090011
+    ],
+    "rss_median": 65609728.0
+  },
+  {
+    "corpus": "mixed",
+    "dictionary": "ipadic-neologd",
+    "variant": "v4",
+    "cpu_median": 5.571588,
+    "cpu_min": 5.247193,
+    "wall_median": 8.701918,
+    "paired_cpu_pct": 0.0,
+    "paired_cpu_pct_all": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "rss_median": 261586944.0
+  },
+  {
+    "corpus": "mixed",
+    "dictionary": "ipadic-neologd",
+    "variant": "v5",
+    "cpu_median": 5.446329,
+    "cpu_min": 5.26055,
+    "wall_median": 8.4900325,
+    "paired_cpu_pct": -4.437064701928306,
+    "paired_cpu_pct_all": [
+      -6.177794953472682,
+      3.6419457682244083,
+      -5.57904260280746,
+      -3.295086801049152,
+      4.960347370489315,
+      -9.533903787339115
+    ],
+    "rss_median": 249290752.0
+  },
+  {
+    "corpus": "mixed",
+    "dictionary": "ipadic-neologd",
+    "variant": "fixed",
+    "cpu_median": 5.457086500000001,
+    "cpu_min": 5.404558,
+    "wall_median": 8.559701,
+    "paired_cpu_pct": -1.9621667950049715,
+    "paired_cpu_pct_all": [
+      -5.164162708666009,
+      0.9235811552814388,
+      -4.847914745291382,
+      1.0399838523356353,
+      2.9990320539000415,
+      -6.642619470688638
+    ],
+    "rss_median": 252452864.0
+  },
+  {
+    "corpus": "mixed",
+    "dictionary": "ipadic-neologd-sudachi",
+    "variant": "v4",
+    "cpu_median": 5.4200085,
+    "cpu_min": 5.201651,
+    "wall_median": 8.4677695,
+    "paired_cpu_pct": 0.0,
+    "paired_cpu_pct_all": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "rss_median": 278503424.0
+  },
+  {
+    "corpus": "mixed",
+    "dictionary": "ipadic-neologd-sudachi",
+    "variant": "v5",
+    "cpu_median": 5.4596705,
+    "cpu_min": 5.290792,
+    "wall_median": 8.5311255,
+    "paired_cpu_pct": -0.8329147341723075,
+    "paired_cpu_pct_all": [
+      -3.9812971174631007,
+      -2.1967861018221235,
+      4.968999265810026,
+      -2.965839375123591,
+      0.5309566334775084,
+      2.1688701342583494
+    ],
+    "rss_median": 263700480.0
+  },
+  {
+    "corpus": "mixed",
+    "dictionary": "ipadic-neologd-sudachi",
+    "variant": "fixed",
+    "cpu_median": 5.341103,
+    "cpu_min": 5.1736,
+    "wall_median": 8.360444000000001,
+    "paired_cpu_pct": -1.6981390336253455,
+    "paired_cpu_pct_all": [
+      -10.338332501128434,
+      -1.373236247210996,
+      -0.5392710891215069,
+      -4.13820874238191,
+      -2.023041820039695,
+      3.1222832915560828
+    ],
+    "rss_median": 267214848.0
+  },
+  {
+    "corpus": "short",
+    "dictionary": "ipadic",
+    "variant": "v4",
+    "cpu_median": 0.3583005,
+    "cpu_min": 0.352919,
+    "wall_median": 0.5664739999999999,
+    "paired_cpu_pct": 0.0,
+    "paired_cpu_pct_all": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "rss_median": 15114240.0
+  },
+  {
+    "corpus": "short",
+    "dictionary": "ipadic",
+    "variant": "v5",
+    "cpu_median": 0.36283,
+    "cpu_min": 0.354228,
+    "wall_median": 0.570532,
+    "paired_cpu_pct": 1.0642386634548973,
+    "paired_cpu_pct_all": [
+      1.1060059524625965,
+      1.5035526396195653,
+      1.022471374447198,
+      0.8769717697262092,
+      8.595364754514968,
+      -2.269799009532225
+    ],
+    "rss_median": 15122432.0
+  },
+  {
+    "corpus": "short",
+    "dictionary": "ipadic",
+    "variant": "fixed",
+    "cpu_median": 0.357246,
+    "cpu_min": 0.351236,
+    "wall_median": 0.5595905,
+    "paired_cpu_pct": -0.11149138583515517,
+    "paired_cpu_pct_all": [
+      -1.822770226714765,
+      1.7790974795424574,
+      -0.0014021823566134906,
+      -0.22158058931369684,
+      2.1445351765888354,
+      -3.095280793477817
+    ],
+    "rss_median": 15114240.0
+  },
+  {
+    "corpus": "short",
+    "dictionary": "ipadic-neologd",
+    "variant": "v4",
+    "cpu_median": 0.354896,
+    "cpu_min": 0.341239,
+    "wall_median": 0.5438155,
+    "paired_cpu_pct": 0.0,
+    "paired_cpu_pct_all": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "rss_median": 15212544.0
+  },
+  {
+    "corpus": "short",
+    "dictionary": "ipadic-neologd",
+    "variant": "v5",
+    "cpu_median": 0.348648,
+    "cpu_min": 0.340809,
+    "wall_median": 0.5459375,
+    "paired_cpu_pct": -1.5369216215030623,
+    "paired_cpu_pct_all": [
+      -3.4731782721058924,
+      -2.9478318550932414,
+      -4.491760245005105,
+      1.0058578807117247,
+      1.1829494523543982,
+      -0.12601138791288324
+    ],
+    "rss_median": 15253504.0
+  },
+  {
+    "corpus": "short",
+    "dictionary": "ipadic-neologd",
+    "variant": "fixed",
+    "cpu_median": 0.3546355,
+    "cpu_min": 0.344856,
+    "wall_median": 0.556837,
+    "paired_cpu_pct": 0.08154273972911241,
+    "paired_cpu_pct_all": [
+      -0.8968754277065338,
+      -3.221190366653459,
+      -1.9011009270240242,
+      1.844265253153421,
+      2.3993895957527878,
+      1.0599609071647587
+    ],
+    "rss_median": 15245312.0
+  },
+  {
+    "corpus": "short",
+    "dictionary": "ipadic-neologd-sudachi",
+    "variant": "v4",
+    "cpu_median": 0.3427605,
+    "cpu_min": 0.341989,
+    "wall_median": 0.5363035,
+    "paired_cpu_pct": 0.0,
+    "paired_cpu_pct_all": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "rss_median": 15187968.0
+  },
+  {
+    "corpus": "short",
+    "dictionary": "ipadic-neologd-sudachi",
+    "variant": "v5",
+    "cpu_median": 0.3485505,
+    "cpu_min": 0.339964,
+    "wall_median": 0.547061,
+    "paired_cpu_pct": 1.085715089221484,
+    "paired_cpu_pct_all": [
+      1.3754035877052928,
+      0.7960265907376751,
+      2.778744345578388,
+      1.9329396620420658,
+      -0.8660558591449208,
+      0.09626278889485196
+    ],
+    "rss_median": 15237120.0
+  },
+  {
+    "corpus": "short",
+    "dictionary": "ipadic-neologd-sudachi",
+    "variant": "fixed",
+    "cpu_median": 0.34535899999999997,
+    "cpu_min": 0.338874,
+    "wall_median": 0.5389885000000001,
+    "paired_cpu_pct": 0.8460110100579343,
+    "paired_cpu_pct_all": [
+      1.2256244681967177,
+      -0.9354701029601675,
+      0.7956396258359311,
+      1.112126262817914,
+      0.8963823942799376,
+      -2.9875539880906743
+    ],
+    "rss_median": 15187968.0
+  }
+]

@@ -1,9 +1,9 @@
-//! v4 のコンテナ: 64 バイトのヘッダとセクション表
+//! v5 のコンテナ: 64 バイトのヘッダとセクション表
 //!
 //! | オフセット | 型 | 内容 |
 //! | --- | --- | --- |
 //! | 0 | [u8; 8] | magic `HSMDICT\0` |
-//! | 8 | u32 | version = 4 |
+//! | 8 | u32 | version = 5 |
 //! | 12 | u32 | flags。bit0 = 支配エントリを除いた最終辞書。それ以外のビットはエラー |
 //! | 16 | u32 | セクション数 (1 以上 64 以下) |
 //! | 20 | u32 | 予約 (0) |
@@ -20,14 +20,14 @@ use super::DictError;
 use std::io::{self, Write};
 
 pub const MAGIC: [u8; 8] = *b"HSMDICT\0";
-pub const VERSION: u32 = 4;
+pub const VERSION: u32 = 5;
 pub const HEADER_LEN: usize = 64;
 pub const SECTION_ENTRY_LEN: usize = 24;
 pub const MAX_SECTIONS: usize = 64;
 /// セクションの配置境界（キャッシュライン）
 pub const SECTION_ALIGN: usize = 64;
 /// 既知のセクション id の最大値 + 1（id で引く配列の長さ）
-const SECTION_SLOTS: usize = SectionId::CategoryNames as usize + 1;
+const SECTION_SLOTS: usize = SectionId::Grammar as usize + 1;
 
 /// flags の bit0: 支配エントリを除いた最終辞書（repair・merge の入力にできない）
 pub const FLAG_PRUNED_DOMINATED: u32 = 1;
@@ -71,10 +71,12 @@ pub enum SectionId {
     UnkTemplates = 16,
     /// char.def のカテゴリ名の文字列表
     CategoryNames = 17,
+    /// 共有文法情報: `{pos_id: u16, conj_type_id: u16, conj_form_id: u16}`
+    Grammar = 18,
 }
 
 impl SectionId {
-    pub const ALL: [SectionId; 17] = [
+    pub const ALL: [SectionId; 18] = [
         SectionId::Meta,
         SectionId::CharBlocks,
         SectionId::CharTables,
@@ -92,6 +94,7 @@ impl SectionId {
         SectionId::UnkBuckets,
         SectionId::UnkTemplates,
         SectionId::CategoryNames,
+        SectionId::Grammar,
     ];
 
     pub fn from_u32(id: u32) -> Option<SectionId> {
@@ -117,6 +120,7 @@ impl SectionId {
             SectionId::UnkBuckets => "UNK_BUCKETS",
             SectionId::UnkTemplates => "UNK_TEMPLATES",
             SectionId::CategoryNames => "CATEGORY_NAMES",
+            SectionId::Grammar => "GRAMMAR",
         }
     }
 
@@ -402,10 +406,12 @@ mod tests {
     #[test]
     fn rejects_old_versions_with_rebuild_hint() {
         let mut buf = write_to_vec(0, &all_sections());
-        buf[8..12].copy_from_slice(&3u32.to_le_bytes());
-        let err = parse(&buf).unwrap_err();
-        assert!(matches!(err, DictError::UnsupportedVersion(3)));
-        assert!(err.to_string().contains("build-dict.sh"));
+        for version in 1..VERSION {
+            buf[8..12].copy_from_slice(&version.to_le_bytes());
+            let err = parse(&buf).unwrap_err();
+            assert!(matches!(err, DictError::UnsupportedVersion(v) if v == version));
+            assert!(err.to_string().contains("build-dict.sh"));
+        }
     }
 
     #[test]

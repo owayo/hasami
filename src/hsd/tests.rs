@@ -833,7 +833,7 @@ fn detects_broken_references() {
         // FEATURE_OFFSETS の件数がエントリと合わない → ロード時にエラー
         let layout = container::parse(&bytes).unwrap();
         let r = layout.get(SectionId::FeatureOffsets);
-        let entry_at = (0..17)
+        let entry_at = (0..SectionId::ALL.len())
             .map(|i| container::HEADER_LEN + i * container::SECTION_ENTRY_LEN)
             .find(|&at| {
                 u32::from_le_bytes(bytes[at..at + 4].try_into().unwrap())

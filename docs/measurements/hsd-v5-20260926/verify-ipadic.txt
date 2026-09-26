@@ -1,0 +1,38 @@
+Dictionary: /tmp/hasami-hsd-adopt-20260926/rebuilt-v5/ipadic.hsd
+Load time: 0.7ms
+File size: 15.7 MB
+Entries: 390849
+Matrix: 1316 left IDs x 1316 right IDs
+Tables: 69 parts of speech, 58 conjugation types, 28 conjugation forms
+Pruned dominated entries: false
+Metadata:
+  name=ipadic
+  pos_scheme=ipadic
+  sources=ipadic@61b90ba6e669
+  ipadic_patch=char.def SYMBOL 0 0 0, HIRAGANA 0 0 2, ALPHA 1 1 1, NUMERIC 1 1 1, U+30FB/U+00D7/U+00F7 SYMBOL, 0x000D SPACE (not 0x00D0); unk.def SYMBOL=記号,一般; 33 CP932-side variants of dashes, tildes and minus signs; 181 unit symbols as 名詞,接尾,助数詞
+  hasami_version=26.9.105
+  pruned_dominated=false
+  repairs=drop-invalid-context-ids,remove:foreign-names.csv
+Sections:
+  META                        431 bytes
+  CHAR_BLOCKS                8704 bytes
+  CHAR_TABLES               47616 bytes
+  TRIE_NODES              3397560 bytes
+  TRIE_TAILS               689954 bytes
+  ENTRIES                 2345094 bytes
+  FEATURE_OFFSETS         1563396 bytes
+  FEATURES                4966165 bytes
+  POS_STRINGS                1941 bytes
+  CONJ_TYPE_STRINGS          1141 bytes
+  CONJ_FORM_STRINGS           497 bytes
+  MATRIX                  3463720 bytes
+  CHAR_CATEGORIES             176 bytes
+  CHAR_RANGES                1408 bytes
+  UNK_BUCKETS                  72 bytes
+  UNK_TEMPLATES               360 bytes
+  CATEGORY_NAMES              128 bytes
+  GRAMMAR                    4002 bytes
+Verify: OK in 0.27s
+  Trie: 424695 slots (403311 used, 95.0%), 78501 internal, 254868 leaves, 69942 tails (689954 bytes), 324810 keys, 5625 character codes
+  Groups: 324810 (largest 20), feature records: 327988
+  Group sizes (size:count): 1:277866 2:36475 3:4856 4:4088 5:772 6:408 7:171 8:81 9:42 10:23 11:9 12:10 13:4 14:1 15:2 17:1 20:1
