@@ -1,9 +1,9 @@
-//! v4 辞書の書き出し
+//! v5 辞書の書き出し
 //!
 //! `DictBuilder` が集めたエントリ・接続行列・文字種定義・未知語テンプレートを、
 //! 規範どおりのセクションに組み立てる。同じ入力と同じ hasami からは同じバイト列ができる
 //! （文字符号は出現回数の降順・文字の昇順、素性レコードと文字列表は最初に現れた順、
-//! 文字カテゴリは名前順）。
+//! 文法表は重複を除いた素性での頻度順・同頻度なら 3 番号の辞書順、文字カテゴリは名前順）。
 
 use super::container::{self, FLAG_PRUNED_DOMINATED, SectionId};
 use super::features::{FeatureInput, FeatureTableBuilder};
@@ -471,6 +471,10 @@ pub(crate) fn build_sections(
         nodes,
         tails,
     } = trie_parts;
+    let feature_table = features.finish()?;
+    for offset in &mut feature_offsets {
+        *offset = feature_table.offsets[*offset as usize];
+    }
     let bodies: Vec<(SectionId, Vec<u8>)> = vec![
         (SectionId::Meta, meta.to_bytes()?),
         (
@@ -512,7 +516,11 @@ pub(crate) fn build_sections(
             SectionId::FeatureOffsets,
             bytemuck::cast_slice(&feature_offsets).to_vec(),
         ),
-        (SectionId::Features, features.into_blob()),
+        (SectionId::Features, feature_table.blob),
+        (
+            SectionId::Grammar,
+            bytemuck::cast_slice(&feature_table.grammar).to_vec(),
+        ),
     ];
     let mut sections = Sections {
         flags: if opts.prune_dominated {

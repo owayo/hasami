@@ -2,6 +2,16 @@
 
 use bytemuck::{Pod, Zeroable};
 
+/// GRAMMAR の 1 要素（6 バイト）。各番号は対応する文字列表を指す。
+/// 重複を除いた素性での頻度順、同頻度なら 3 番号の辞書順で並ぶ。
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Pod, Zeroable)]
+pub struct GrammarRecord {
+    pub pos_id: u16,
+    pub conj_type_id: u16,
+    pub conj_form_id: u16,
+}
+
 /// ENTRIES の 1 要素（6 バイト）
 ///
 /// エントリは表層形のバイト順に並ぶ（同じ表層形の中は元の順）。同じ表層形のエントリの並びを
@@ -89,6 +99,7 @@ mod tests {
 
     #[test]
     fn record_sizes_match_the_format() {
+        assert_eq!(size_of::<GrammarRecord>(), 6);
         assert_eq!(size_of::<EntryRecord>(), 6);
         assert_eq!(size_of::<CharCategoryRecord>(), 16);
         assert_eq!(size_of::<CharRangeRecord>(), 16);

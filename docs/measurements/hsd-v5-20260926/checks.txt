@@ -1,0 +1,21 @@
+make ci (exit 0)
+test result: ok. 320 passed; 0 failed; 3 ignored; 0 measured; 0 filtered out; finished in 10.21s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.66s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 81 passed; 0 failed; 3 ignored; 0 measured; 0 filtered out; finished in 15.01s
+test result: ok. 3 passed; 0 failed; 3 ignored; 0 measured; 0 filtered out; finished in 0.02s
+test result: ok. 79 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.15s
+test result: ok. 151 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 8.51s
+test result: ok. 161 passed; 0 failed; 3 ignored; 0 measured; 0 filtered out; finished in 7.87s
+cargo test --locked --workspace --exclude hasami-python -- --ignored distributed (exit 0)
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 321 filtered out; finished in 0.30s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 81 filtered out; finished in 0.21s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 0.00s
+export-sentence-exceptions + diff (exit 0)
+Extracted 18762 words from 4713123 surfaces -> /tmp/hasami-hsd-adopt-20260926/builtin-exceptions.txt
+dict manifest: 3 dictionaries, format 5, success
+All 3 original-vs-rebuilt payload comparisons passed; only hasami_version metadata changed (26.9.102 -> 26.9.105).
+astro-sight impact: decode name collision at src/dict/builder.rs:1788 is encoding_rs::EUC_JP.decode, unrelated to hsd::features::decode. Checked with refs; no unresolved caller change.
+ruff check/format, git diff --check: passed

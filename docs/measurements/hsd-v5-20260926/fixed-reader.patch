@@ -1,0 +1,27 @@
+--- a/src/hsd/container.rs
++++ b/src/hsd/container.rs
+@@ -20,7 +20,7 @@
+ use std::io::{self, Write};
+ 
+ pub const MAGIC: [u8; 8] = *b"HSMDICT\0";
+-pub const VERSION: u32 = 5;
++pub const VERSION: u32 = 5005;
+ pub const HEADER_LEN: usize = 64;
+ pub const SECTION_ENTRY_LEN: usize = 24;
+ pub const MAX_SECTIONS: usize = 64;
+--- a/src/hsd/features.rs
++++ b/src/hsd/features.rs
+@@ -343,8 +343,11 @@
+     offset: usize,
+     grammar: &[GrammarRecord],
+ ) -> Result<FeatureRef<'a>, DictError> {
+-    let (id, pos) =
+-        read_varint(blob, offset).ok_or_else(|| corrupt(offset, "broken grammar ID"))?;
++    let bytes = blob
++        .get(offset..offset.saturating_add(2))
++        .ok_or_else(|| corrupt(offset, "broken grammar ID"))?;
++    let id = u16::from_le_bytes([bytes[0], bytes[1]]) as u32;
++    let pos = offset + 2;
+     let g = grammar
+         .get(id as usize)
+         .ok_or_else(|| corrupt(offset, "grammar ID out of range"))?;

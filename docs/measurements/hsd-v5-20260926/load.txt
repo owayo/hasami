@@ -1,0 +1,392 @@
+
+ipadic v4 analyzer load
+load 0 wall_us=53596.583 cpu_us=5967.000 tokens=12
+load 1 wall_us=950.208 cpu_us=378.000 tokens=12
+load 2 wall_us=849.834 cpu_us=298.000 tokens=12
+load 3 wall_us=701.917 cpu_us=348.000 tokens=12
+load 4 wall_us=1017.917 cpu_us=313.000 tokens=12
+load 5 wall_us=953.416 cpu_us=322.000 tokens=12
+load 6 wall_us=799.583 cpu_us=306.000 tokens=12
+load 7 wall_us=1117.917 cpu_us=424.000 tokens=12
+load 8 wall_us=865.125 cpu_us=351.000 tokens=12
+load 9 wall_us=858.500 cpu_us=302.000 tokens=12
+load 10 wall_us=666.541 cpu_us=271.000 tokens=12
+load 11 wall_us=894.125 cpu_us=285.000 tokens=12
+load 12 wall_us=907.375 cpu_us=441.000 tokens=12
+load 13 wall_us=1051.167 cpu_us=431.000 tokens=12
+load 14 wall_us=668.042 cpu_us=330.000 tokens=12
+load 15 wall_us=1009.750 cpu_us=410.000 tokens=12
+load 16 wall_us=777.500 cpu_us=373.000 tokens=12
+load 17 wall_us=1340.375 cpu_us=520.000 tokens=12
+load 18 wall_us=1023.750 cpu_us=423.000 tokens=12
+load 19 wall_us=1299.333 cpu_us=438.000 tokens=12
+load 20 wall_us=1053.292 cpu_us=341.000 tokens=12
+load 21 wall_us=831.209 cpu_us=351.000 tokens=12
+load 22 wall_us=1315.291 cpu_us=396.000 tokens=12
+load 23 wall_us=761.208 cpu_us=322.000 tokens=12
+load 24 wall_us=1284.458 cpu_us=312.000 tokens=12
+load 25 wall_us=819.084 cpu_us=300.000 tokens=12
+load 26 wall_us=1367.375 cpu_us=420.000 tokens=12
+load 27 wall_us=684.208 cpu_us=306.000 tokens=12
+load 28 wall_us=1175.625 cpu_us=335.000 tokens=12
+load 29 wall_us=937.334 cpu_us=398.000 tokens=12
+load 30 wall_us=914.833 cpu_us=367.000 tokens=12
+ipadic v4 fresh CLI process
+Dictionary loaded in 2.7ms
+東京	名詞,固有名詞,地域,一般,東京,トウキョウ,トーキョー
+都	名詞,接尾,地域,*,都,ト,ト
+に	助詞,格助詞,一般,*,に,ニ,ニ
+住ん	動詞,自立,*,*,住む,スン,スン
+で	助詞,接続助詞,*,*,で,デ,デ
+いる	動詞,非自立,*,*,いる,イル,イル
+人々	名詞,一般,*,*,人々,ヒトビト,ヒトビト
+が	助詞,格助詞,一般,*,が,ガ,ガ
+増え	動詞,自立,*,*,増える,フエ,フエ
+て	助詞,接続助詞,*,*,て,テ,テ
+いる	動詞,非自立,*,*,いる,イル,イル
+。	記号,句点,*,*,。,。,。
+EOS
+        0.02 real         0.00 user         0.00 sys
+             8994816  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                 655  page reclaims
+                  88  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+                 266  involuntary context switches
+            42391807  instructions retired
+            29207698  cycles elapsed
+             2310624  peak memory footprint
+
+ipadic v5 analyzer load
+load 0 wall_us=51856.042 cpu_us=4505.000 tokens=12
+load 1 wall_us=942.584 cpu_us=350.000 tokens=12
+load 2 wall_us=813.209 cpu_us=313.000 tokens=12
+load 3 wall_us=844.542 cpu_us=337.000 tokens=12
+load 4 wall_us=979.833 cpu_us=400.000 tokens=12
+load 5 wall_us=838.833 cpu_us=334.000 tokens=12
+load 6 wall_us=934.084 cpu_us=322.000 tokens=12
+load 7 wall_us=844.375 cpu_us=354.000 tokens=12
+load 8 wall_us=690.041 cpu_us=337.000 tokens=12
+load 9 wall_us=958.500 cpu_us=355.000 tokens=12
+load 10 wall_us=966.417 cpu_us=365.000 tokens=12
+load 11 wall_us=777.292 cpu_us=346.000 tokens=12
+load 12 wall_us=1013.792 cpu_us=380.000 tokens=12
+load 13 wall_us=760.625 cpu_us=313.000 tokens=12
+load 14 wall_us=808.208 cpu_us=322.000 tokens=12
+load 15 wall_us=994.125 cpu_us=387.000 tokens=12
+load 16 wall_us=1026.584 cpu_us=382.000 tokens=12
+load 17 wall_us=820.750 cpu_us=336.000 tokens=12
+load 18 wall_us=613.000 cpu_us=253.000 tokens=12
+load 19 wall_us=755.334 cpu_us=328.000 tokens=12
+load 20 wall_us=757.541 cpu_us=309.000 tokens=12
+load 21 wall_us=832.833 cpu_us=349.000 tokens=12
+load 22 wall_us=983.959 cpu_us=374.000 tokens=12
+load 23 wall_us=815.458 cpu_us=280.000 tokens=12
+load 24 wall_us=937.834 cpu_us=350.000 tokens=12
+load 25 wall_us=1080.333 cpu_us=278.000 tokens=12
+load 26 wall_us=822.750 cpu_us=328.000 tokens=12
+load 27 wall_us=883.125 cpu_us=347.000 tokens=12
+load 28 wall_us=613.042 cpu_us=289.000 tokens=12
+load 29 wall_us=998.541 cpu_us=303.000 tokens=12
+load 30 wall_us=571.625 cpu_us=235.000 tokens=12
+ipadic v5 fresh CLI process
+Dictionary loaded in 7.2ms
+東京	名詞,固有名詞,地域,一般,東京,トウキョウ,トーキョー
+都	名詞,接尾,地域,*,都,ト,ト
+に	助詞,格助詞,一般,*,に,ニ,ニ
+住ん	動詞,自立,*,*,住む,スン,スン
+で	助詞,接続助詞,*,*,で,デ,デ
+いる	動詞,非自立,*,*,いる,イル,イル
+人々	名詞,一般,*,*,人々,ヒトビト,ヒトビト
+が	助詞,格助詞,一般,*,が,ガ,ガ
+増え	動詞,自立,*,*,増える,フエ,フエ
+て	助詞,接続助詞,*,*,て,テ,テ
+いる	動詞,非自立,*,*,いる,イル,イル
+。	記号,句点,*,*,。,。,。
+EOS
+        0.05 real         0.00 user         0.01 sys
+             9142272  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                 660  page reclaims
+                  92  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   5  voluntary context switches
+                 316  involuntary context switches
+            45792958  instructions retired
+            34084731  cycles elapsed
+             2376160  peak memory footprint
+
+ipadic-neologd v4 analyzer load
+load 0 wall_us=62003.583 cpu_us=7488.000 tokens=11
+load 1 wall_us=1038.125 cpu_us=506.000 tokens=11
+load 2 wall_us=1462.750 cpu_us=552.000 tokens=11
+load 3 wall_us=1134.292 cpu_us=459.000 tokens=11
+load 4 wall_us=1077.250 cpu_us=367.000 tokens=11
+load 5 wall_us=1506.166 cpu_us=532.000 tokens=11
+load 6 wall_us=1394.083 cpu_us=561.000 tokens=11
+load 7 wall_us=1020.458 cpu_us=473.000 tokens=11
+load 8 wall_us=1075.750 cpu_us=471.000 tokens=11
+load 9 wall_us=1130.000 cpu_us=472.000 tokens=11
+load 10 wall_us=1087.333 cpu_us=365.000 tokens=11
+load 11 wall_us=961.791 cpu_us=382.000 tokens=11
+load 12 wall_us=988.250 cpu_us=364.000 tokens=11
+load 13 wall_us=743.833 cpu_us=297.000 tokens=11
+load 14 wall_us=1175.833 cpu_us=462.000 tokens=11
+load 15 wall_us=885.375 cpu_us=267.000 tokens=11
+load 16 wall_us=1109.125 cpu_us=507.000 tokens=11
+load 17 wall_us=897.584 cpu_us=334.000 tokens=11
+load 18 wall_us=746.125 cpu_us=314.000 tokens=11
+load 19 wall_us=700.292 cpu_us=320.000 tokens=11
+load 20 wall_us=1132.791 cpu_us=487.000 tokens=11
+load 21 wall_us=1515.791 cpu_us=563.000 tokens=11
+load 22 wall_us=939.625 cpu_us=368.000 tokens=11
+load 23 wall_us=1719.250 cpu_us=547.000 tokens=11
+load 24 wall_us=1129.375 cpu_us=388.000 tokens=11
+load 25 wall_us=1576.708 cpu_us=465.000 tokens=11
+load 26 wall_us=1078.291 cpu_us=356.000 tokens=11
+load 27 wall_us=1107.208 cpu_us=346.000 tokens=11
+load 28 wall_us=1114.042 cpu_us=463.000 tokens=11
+load 29 wall_us=849.792 cpu_us=405.000 tokens=11
+load 30 wall_us=750.542 cpu_us=292.000 tokens=11
+ipadic-neologd v4 fresh CLI process
+Dictionary loaded in 1.1ms
+東京都	名詞,固有名詞,地域,一般,東京都,トウキョウト,トーキョート
+に	助詞,格助詞,一般,*,に,ニ,ニ
+住ん	動詞,自立,*,*,住む,スン,スン
+で	助詞,接続助詞,*,*,で,デ,デ
+いる	動詞,非自立,*,*,いる,イル,イル
+人々	名詞,一般,*,*,人々,ヒトビト,ヒトビト
+が	助詞,格助詞,一般,*,が,ガ,ガ
+増え	動詞,自立,*,*,増える,フエ,フエ
+て	助詞,接続助詞,*,*,て,テ,テ
+いる	動詞,非自立,*,*,いる,イル,イル
+。	記号,句点,*,*,。,。,。
+EOS
+        0.02 real         0.00 user         0.00 sys
+             9125888  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                 752  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+                 232  involuntary context switches
+            36331145  instructions retired
+            22246848  cycles elapsed
+             2376280  peak memory footprint
+
+ipadic-neologd v5 analyzer load
+load 0 wall_us=89777.708 cpu_us=6298.000 tokens=11
+load 1 wall_us=1115.791 cpu_us=448.000 tokens=11
+load 2 wall_us=1305.167 cpu_us=497.000 tokens=11
+load 3 wall_us=922.791 cpu_us=427.000 tokens=11
+load 4 wall_us=1250.667 cpu_us=453.000 tokens=11
+load 5 wall_us=1132.208 cpu_us=475.000 tokens=11
+load 6 wall_us=1123.041 cpu_us=369.000 tokens=11
+load 7 wall_us=1062.250 cpu_us=335.000 tokens=11
+load 8 wall_us=715.875 cpu_us=281.000 tokens=11
+load 9 wall_us=1192.584 cpu_us=398.000 tokens=11
+load 10 wall_us=821.500 cpu_us=317.000 tokens=11
+load 11 wall_us=747.083 cpu_us=292.000 tokens=11
+load 12 wall_us=1434.708 cpu_us=438.000 tokens=11
+load 13 wall_us=1136.292 cpu_us=479.000 tokens=11
+load 14 wall_us=1001.292 cpu_us=359.000 tokens=11
+load 15 wall_us=918.291 cpu_us=462.000 tokens=11
+load 16 wall_us=1441.042 cpu_us=415.000 tokens=11
+load 17 wall_us=1408.667 cpu_us=481.000 tokens=11
+load 18 wall_us=1037.167 cpu_us=391.000 tokens=11
+load 19 wall_us=1476.750 cpu_us=432.000 tokens=11
+load 20 wall_us=813.875 cpu_us=361.000 tokens=11
+load 21 wall_us=1194.458 cpu_us=434.000 tokens=11
+load 22 wall_us=718.041 cpu_us=288.000 tokens=11
+load 23 wall_us=1018.167 cpu_us=361.000 tokens=11
+load 24 wall_us=1203.334 cpu_us=255.000 tokens=11
+load 25 wall_us=707.583 cpu_us=289.000 tokens=11
+load 26 wall_us=919.917 cpu_us=324.000 tokens=11
+load 27 wall_us=1269.625 cpu_us=271.000 tokens=11
+load 28 wall_us=707.000 cpu_us=307.000 tokens=11
+load 29 wall_us=1084.708 cpu_us=368.000 tokens=11
+load 30 wall_us=1018.375 cpu_us=410.000 tokens=11
+ipadic-neologd v5 fresh CLI process
+Dictionary loaded in 1.0ms
+東京都	名詞,固有名詞,地域,一般,東京都,トウキョウト,トーキョート
+に	助詞,格助詞,一般,*,に,ニ,ニ
+住ん	動詞,自立,*,*,住む,スン,スン
+で	助詞,接続助詞,*,*,で,デ,デ
+いる	動詞,非自立,*,*,いる,イル,イル
+人々	名詞,一般,*,*,人々,ヒトビト,ヒトビト
+が	助詞,格助詞,一般,*,が,ガ,ガ
+増え	動詞,自立,*,*,増える,フエ,フエ
+て	助詞,接続助詞,*,*,て,テ,テ
+いる	動詞,非自立,*,*,いる,イル,イル
+。	記号,句点,*,*,。,。,。
+EOS
+        0.01 real         0.00 user         0.00 sys
+             9240576  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                 758  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+                 219  involuntary context switches
+            35149982  instructions retired
+            19882421  cycles elapsed
+             2392664  peak memory footprint
+
+ipadic-neologd-sudachi v4 analyzer load
+load 0 wall_us=83368.333 cpu_us=6837.000 tokens=11
+load 1 wall_us=928.959 cpu_us=426.000 tokens=11
+load 2 wall_us=1327.416 cpu_us=456.000 tokens=11
+load 3 wall_us=961.125 cpu_us=360.000 tokens=11
+load 4 wall_us=926.667 cpu_us=355.000 tokens=11
+load 5 wall_us=1036.500 cpu_us=419.000 tokens=11
+load 6 wall_us=934.250 cpu_us=447.000 tokens=11
+load 7 wall_us=1096.208 cpu_us=450.000 tokens=11
+load 8 wall_us=869.333 cpu_us=327.000 tokens=11
+load 9 wall_us=887.333 cpu_us=332.000 tokens=11
+load 10 wall_us=853.709 cpu_us=289.000 tokens=11
+load 11 wall_us=1139.042 cpu_us=314.000 tokens=11
+load 12 wall_us=809.291 cpu_us=380.000 tokens=11
+load 13 wall_us=1024.458 cpu_us=343.000 tokens=11
+load 14 wall_us=831.000 cpu_us=341.000 tokens=11
+load 15 wall_us=777.500 cpu_us=292.000 tokens=11
+load 16 wall_us=852.209 cpu_us=348.000 tokens=11
+load 17 wall_us=847.791 cpu_us=289.000 tokens=11
+load 18 wall_us=983.333 cpu_us=482.000 tokens=11
+load 19 wall_us=781.875 cpu_us=337.000 tokens=11
+load 20 wall_us=1563.542 cpu_us=503.000 tokens=11
+load 21 wall_us=767.500 cpu_us=306.000 tokens=11
+load 22 wall_us=733.583 cpu_us=309.000 tokens=11
+load 23 wall_us=938.166 cpu_us=430.000 tokens=11
+load 24 wall_us=780.333 cpu_us=307.000 tokens=11
+load 25 wall_us=1276.041 cpu_us=427.000 tokens=11
+load 26 wall_us=769.917 cpu_us=379.000 tokens=11
+load 27 wall_us=1164.625 cpu_us=450.000 tokens=11
+load 28 wall_us=1261.833 cpu_us=437.000 tokens=11
+load 29 wall_us=1345.958 cpu_us=413.000 tokens=11
+load 30 wall_us=1138.208 cpu_us=424.000 tokens=11
+ipadic-neologd-sudachi v4 fresh CLI process
+Dictionary loaded in 0.9ms
+東京都	名詞,固有名詞,地域,一般,東京都,トウキョウト,トーキョート
+に	助詞,格助詞,一般,*,に,ニ,ニ
+住ん	動詞,自立,*,*,住む,スン,スン
+で	助詞,接続助詞,*,*,で,デ,デ
+いる	動詞,非自立,*,*,いる,イル,イル
+人々	名詞,一般,*,*,人々,ヒトビト,ヒトビト
+が	助詞,格助詞,一般,*,が,ガ,ガ
+増え	動詞,自立,*,*,増える,フエ,フエ
+て	助詞,接続助詞,*,*,て,テ,テ
+いる	動詞,非自立,*,*,いる,イル,イル
+。	記号,句点,*,*,。,。,。
+EOS
+        0.01 real         0.00 user         0.00 sys
+             9076736  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                 750  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+                 140  involuntary context switches
+            34605689  instructions retired
+            22310803  cycles elapsed
+             2376304  peak memory footprint
+
+ipadic-neologd-sudachi v5 analyzer load
+load 0 wall_us=20258.000 cpu_us=3473.000 tokens=11
+load 1 wall_us=1079.667 cpu_us=470.000 tokens=11
+load 2 wall_us=1042.250 cpu_us=319.000 tokens=11
+load 3 wall_us=1125.334 cpu_us=386.000 tokens=11
+load 4 wall_us=1129.541 cpu_us=405.000 tokens=11
+load 5 wall_us=1275.292 cpu_us=383.000 tokens=11
+load 6 wall_us=1396.042 cpu_us=351.000 tokens=11
+load 7 wall_us=796.250 cpu_us=345.000 tokens=11
+load 8 wall_us=764.333 cpu_us=358.000 tokens=11
+load 9 wall_us=779.125 cpu_us=318.000 tokens=11
+load 10 wall_us=720.375 cpu_us=298.000 tokens=11
+load 11 wall_us=1391.625 cpu_us=385.000 tokens=11
+load 12 wall_us=833.875 cpu_us=380.000 tokens=11
+load 13 wall_us=678.250 cpu_us=288.000 tokens=11
+load 14 wall_us=781.666 cpu_us=272.000 tokens=11
+load 15 wall_us=1110.917 cpu_us=386.000 tokens=11
+load 16 wall_us=969.375 cpu_us=343.000 tokens=11
+load 17 wall_us=687.333 cpu_us=274.000 tokens=11
+load 18 wall_us=753.042 cpu_us=350.000 tokens=11
+load 19 wall_us=573.375 cpu_us=294.000 tokens=11
+load 20 wall_us=1222.541 cpu_us=344.000 tokens=11
+load 21 wall_us=610.583 cpu_us=270.000 tokens=11
+load 22 wall_us=973.541 cpu_us=356.000 tokens=11
+load 23 wall_us=1053.625 cpu_us=366.000 tokens=11
+load 24 wall_us=902.542 cpu_us=392.000 tokens=11
+load 25 wall_us=956.959 cpu_us=499.000 tokens=11
+load 26 wall_us=1005.833 cpu_us=402.000 tokens=11
+load 27 wall_us=1132.166 cpu_us=445.000 tokens=11
+load 28 wall_us=1167.959 cpu_us=431.000 tokens=11
+load 29 wall_us=845.959 cpu_us=376.000 tokens=11
+load 30 wall_us=743.541 cpu_us=371.000 tokens=11
+ipadic-neologd-sudachi v5 fresh CLI process
+Dictionary loaded in 1.1ms
+東京都	名詞,固有名詞,地域,一般,東京都,トウキョウト,トーキョート
+に	助詞,格助詞,一般,*,に,ニ,ニ
+住ん	動詞,自立,*,*,住む,スン,スン
+で	助詞,接続助詞,*,*,で,デ,デ
+いる	動詞,非自立,*,*,いる,イル,イル
+人々	名詞,一般,*,*,人々,ヒトビト,ヒトビト
+が	助詞,格助詞,一般,*,が,ガ,ガ
+増え	動詞,自立,*,*,増える,フエ,フエ
+て	助詞,接続助詞,*,*,て,テ,テ
+いる	動詞,非自立,*,*,いる,イル,イル
+。	記号,句点,*,*,。,。,。
+EOS
+        0.01 real         0.00 user         0.00 sys
+             9224192  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                 757  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+                 211  involuntary context switches
+            35320229  instructions retired
+            20394309  cycles elapsed
+             2425456  peak memory footprint

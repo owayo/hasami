@@ -1,0 +1,31 @@
+{
+  "hasami_version": "26.9.105",
+  "format_version": 5,
+  "recommended": "ipadic-neologd-sudachi",
+  "dictionaries": [
+    {
+      "name": "ipadic-neologd-sudachi",
+      "summary": "IPAdic + NEologd + SudachiDict (recommended, largest vocabulary)",
+      "file": "ipadic-neologd-sudachi.hsd",
+      "size": 220974766,
+      "sha256": "4682b59f8592779d5f300a48b91d1711ec6b9267b342ccd6190e1b9140879ee0",
+      "sources": "ipadic@61b90ba6e669,neologd@abc61e33d8be,sudachi-raw@20260723/content-symbol"
+    },
+    {
+      "name": "ipadic-neologd",
+      "summary": "IPAdic + NEologd",
+      "file": "ipadic-neologd.hsd",
+      "size": 206570094,
+      "sha256": "34f2355f7138ff325bf8463c7909864f4dce17e7929a5d8ce005c6b78bfa11b2",
+      "sources": "ipadic@61b90ba6e669,neologd@abc61e33d8be"
+    },
+    {
+      "name": "ipadic",
+      "summary": "IPAdic",
+      "file": "ipadic.hsd",
+      "size": 16493282,
+      "sha256": "5caa2462bc72e60addaece3352cef8fc7ed37ac6245427fd1c351228a7ea3a4b",
+      "sources": "ipadic@61b90ba6e669"
+    }
+  ]
+}

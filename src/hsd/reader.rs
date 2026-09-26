@@ -1,8 +1,8 @@
-//! v4 辞書の読み込みと検証
+//! v5 辞書の読み込みと検証
 //!
 //! 読み込み（[`Dictionary::load`]）では、ヘッダ・セクション表・小さな表（メタデータ、品詞・活用の
-//! 文字列表、文字種定義、未知語テンプレート）と trie の根・行列の寸法だけを検査する
-//! （O(セクション数 + 小さな表)）。trie・エントリ・素性の全件は [`Dictionary::verify`]
+//! 文字列表、共有文法表、文字種定義、未知語テンプレート）と trie の根・行列の寸法だけを検査する
+//! （O(セクション数 + 小さな表 + 文法の組数)）。trie・エントリ・素性の全件は [`Dictionary::verify`]
 //! （`hasami info --verify`）で調べる。解析中に不正な参照を見つけたら [`DictError::Corrupt`] を返し、
 //! 空文字列でごまかさない。
 //!
@@ -17,7 +17,8 @@ use super::container::{self, FLAG_PRUNED_DOMINATED, Layout, SectionId};
 use super::features;
 use super::meta::{self, Meta};
 use super::records::{
-    CharCategoryRecord, CharRangeRecord, EntryRecord, LEFT_ID_LIMIT, UnkBucket, UnkTemplate,
+    CharCategoryRecord, CharRangeRecord, EntryRecord, GrammarRecord, LEFT_ID_LIMIT, UnkBucket,
+    UnkTemplate,
 };
 use super::trie::{self, Node, Trie};
 use super::{DictError, strtab};
@@ -265,6 +266,23 @@ impl Dictionary {
             "CATEGORY_NAMES",
             U16_TABLE,
         )?;
+
+        let grammar: &[GrammarRecord] = cast(section(SectionId::Grammar), SectionId::Grammar)?;
+        if grammar.is_empty() || u32::try_from(grammar.len()).is_err() {
+            return Err(DictError::corrupt(
+                "GRAMMAR is empty or has too many records",
+            ));
+        }
+        for g in grammar {
+            if g.pos_id as usize >= pos.len()
+                || g.conj_type_id as usize >= conj_types.len()
+                || g.conj_form_id as usize >= conj_forms.len()
+            {
+                return Err(DictError::corrupt(
+                    "GRAMMAR refers outside the string tables",
+                ));
+            }
+        }
 
         // trie（char map の全体と根だけ検査する）
         let trie = Trie::new(
@@ -569,16 +587,11 @@ impl Dictionary {
         let offset = *offsets
             .get(entry_id)
             .ok_or_else(|| DictError::corrupt(format!("entry {entry_id} is out of range")))?;
-        let f = features::decode(self.section(SectionId::Features), offset as usize)?;
-        if f.pos_id as usize >= self.pos.len()
-            || f.conj_type_id as usize >= self.conj_types.len()
-            || f.conj_form_id as usize >= self.conj_forms.len()
-        {
-            return Err(DictError::corrupt(format!(
-                "feature record at offset {offset} refers outside the string tables"
-            )));
-        }
-        Ok(f)
+        features::decode(
+            self.section(SectionId::Features),
+            offset as usize,
+            self.typed(SectionId::Grammar),
+        )
     }
 
     /// 品詞の文字列（番号は [`Dictionary::feature`] が確かめたもの）

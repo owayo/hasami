@@ -1,0 +1,38 @@
+Dictionary: /tmp/hasami-hsd-adopt-20260926/rebuilt-v5/ipadic-neologd-sudachi.hsd
+Load time: 0.7ms
+File size: 210.7 MB
+Entries: 5057058
+Matrix: 1316 left IDs x 1316 right IDs
+Tables: 69 parts of speech, 58 conjugation types, 28 conjugation forms
+Pruned dominated entries: false
+Metadata:
+  name=ipadic-neologd-sudachi
+  pos_scheme=ipadic
+  sources=ipadic@61b90ba6e669,neologd@abc61e33d8be,sudachi-raw@20260723/content-symbol
+  ipadic_patch=char.def SYMBOL 0 0 0, HIRAGANA 0 0 2, ALPHA 1 1 1, NUMERIC 1 1 1, U+30FB/U+00D7/U+00F7 SYMBOL, 0x000D SPACE (not 0x00D0); unk.def SYMBOL=記号,一般; 33 CP932-side variants of dashes, tildes and minus signs; 181 unit symbols as 名詞,接尾,助数詞
+  hasami_version=26.9.105
+  pruned_dominated=false
+  repairs=merge:neologd-seed,merge:sudachi.csv,drop-invalid-context-ids,pronunciation,drop-ortho-variants,drop-numeral-misreadings,remove:common-words-as-proper-nouns.csv,remove:foreign-names.csv,remove:misreading-entries.csv,drop-sentence-like-nouns,drop-quantity-nouns,demote-common-proper-nouns,merge:user
+Sections:
+  META                        753 bytes
+  CHAR_BLOCKS                8704 bytes
+  CHAR_TABLES               94720 bytes
+  TRIE_NODES             54809896 bytes
+  TRIE_TAILS             32786522 bytes
+  ENTRIES                30342348 bytes
+  FEATURE_OFFSETS        20228232 bytes
+  FEATURES               79229246 bytes
+  POS_STRINGS                1941 bytes
+  CONJ_TYPE_STRINGS          1141 bytes
+  CONJ_FORM_STRINGS           497 bytes
+  MATRIX                  3463720 bytes
+  CHAR_CATEGORIES             176 bytes
+  CHAR_RANGES                1408 bytes
+  UNK_BUCKETS                  72 bytes
+  UNK_TEMPLATES               360 bytes
+  CATEGORY_NAMES              128 bytes
+  GRAMMAR                    4014 bytes
+Verify: OK in 3.84s
+  Trie: 6851237 slots (6811097 used, 99.4%), 2097974 internal, 2279373 leaves, 2433750 tails (32786522 bytes), 4713123 keys, 10172 character codes
+  Groups: 4713123 (largest 124), feature records: 3358794
+  Group sizes (size:count): 1:4423795 2:252975 3:24282 4:8833 5:1811 6:788 7:326 8:144 9:74 10:43 11:21 12:13 13:5 14:4 15:3 16:1 17:1 18:1 20:1 74:1 124:1

@@ -1,4 +1,4 @@
-//! 辞書形式 v4 (.hsd)
+//! 辞書形式 v5 (.hsd)
 //!
 //! ファイルは 64 バイトのヘッダ、セクション表、64 バイト境界に置いたセクションからなる。
 //! 数値はすべてリトルエンディアンで、読み込み側は mmap した領域を型付きスライスとして
@@ -6,7 +6,7 @@
 //! `trie`（文字単位 double-array）、`features`（素性レコード）、`strtab`（文字列表）、
 //! `meta`（メタデータ）の各モジュールに書く。
 //!
-//! 書き出しは `writer`、読み込み・検証は `reader` が受け持つ。旧形式（v1〜v3）は読まない。
+//! 書き出しは `writer`、読み込み・検証は `reader` が受け持つ。旧形式（v1〜v4）は読まない。
 
 pub(crate) mod container;
 pub(crate) mod features;
@@ -38,7 +38,7 @@ pub enum DictError {
     Io(io::Error),
     /// hasami の辞書ファイルではない（先頭の magic が一致しない）
     NotHsd,
-    /// 読めない版の辞書（v1〜v3 は作り直しを案内する）
+    /// 読めない版の辞書（v1〜v4 は作り直しを案内する）
     UnsupportedVersion(u32),
     /// ビッグエンディアン機では読めない
     UnsupportedPlatform,
@@ -66,7 +66,7 @@ impl fmt::Display for DictError {
         match self {
             DictError::Io(e) => write!(f, "{e}"),
             DictError::NotHsd => write!(f, "not a hasami dictionary (.hsd): magic bytes mismatch"),
-            DictError::UnsupportedVersion(v @ 1..=3) => write!(
+            DictError::UnsupportedVersion(v @ 1..=4) => write!(
                 f,
                 "dictionary format v{v} is no longer supported; rebuild it with scripts/build-dict.sh \
                  (or `hasami build`) to get the v{} format",

@@ -1,6 +1,7 @@
 //! 素性レコード（最良パスのトークンを作るときだけ読む冷たい情報）
 //!
-//! レコード: `pos_id: u16`, `conj_type_id: u16`, `conj_form_id: u16`, `flags: u8`, 読み, [発音], [原形]
+//! レコード: `grammar_id: varint(u32)`, `flags: u8`, 読み, [発音], [原形]
+//! 文法番号は GRAMMAR の 6 バイト要素（品詞・活用型・活用形の u16 番号）を指す。
 //!
 //! - flags: bit0 = 原形が表層形と同じ（原形を持たない）、bit1 = 発音が読みと同じ（発音を持たない）、
 //!   bit2 = 読みがカタカナ詰め、bit3 = 発音がカタカナ詰め。bit4〜7 は 0。
@@ -10,6 +11,7 @@
 //! - レコードは重複を除いて 1 つの領域に並べ、エントリからはバイトオフセットで指す
 
 use super::DictError;
+use super::records::GrammarRecord;
 #[cfg(feature = "build")]
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -22,8 +24,6 @@ const KNOWN_FLAGS: u8 = BASE_IS_SURFACE | PRON_IS_READING | READING_KANA | PRON_
 
 const KANA_BASE: u32 = 0x30A0;
 const KANA_MAX_BYTE: u8 = 0x5F;
-/// レコード先頭の固定部（3 つの u16 と flags）
-const FIXED_LEN: usize = 7;
 const MAX_VARINT_LEN: usize = 5;
 
 #[cfg(feature = "build")]
@@ -82,9 +82,10 @@ pub struct FeatureInput<'a> {
     pub pronunciation: &'a str,
 }
 
-/// レコードを正準形（同じ値なら同じバイト列）で符号化する
+/// 重複排除用の正準キー（文法の 3 番号 + flags + 文字列）を作る。
+/// ファイルに書く前に finish で先頭 6 バイトを共有文法番号に置き換える。
 #[cfg(feature = "build")]
-pub fn encode(input: &FeatureInput<'_>, out: &mut Vec<u8>) {
+fn encode(input: &FeatureInput<'_>, out: &mut Vec<u8>) -> Result<(), DictError> {
     let mut flags = 0u8;
     let base_is_surface = input.base_form == input.surface;
     let pron_is_reading = input.pronunciation == input.reading;
@@ -111,18 +112,22 @@ pub fn encode(input: &FeatureInput<'_>, out: &mut Vec<u8>) {
     out.extend_from_slice(&input.conj_type_id.to_le_bytes());
     out.extend_from_slice(&input.conj_form_id.to_le_bytes());
     out.push(flags);
-    let mut push_str = |packed: Option<Vec<u8>>, s: &str| {
+    let mut push_str = |packed: Option<Vec<u8>>, s: &str| -> Result<(), DictError> {
         let bytes = packed.as_deref().unwrap_or(s.as_bytes());
-        push_varint(out, bytes.len() as u32);
+        let len = u32::try_from(bytes.len())
+            .map_err(|_| DictError::invalid("feature string exceeds u32 length"))?;
+        push_varint(out, len);
         out.extend_from_slice(bytes);
+        Ok(())
     };
-    push_str(reading_kana, input.reading);
+    push_str(reading_kana, input.reading)?;
     if !pron_is_reading {
-        push_str(pron_kana, input.pronunciation);
+        push_str(pron_kana, input.pronunciation)?;
     }
     if !base_is_surface {
-        push_str(None, input.base_form);
+        push_str(None, input.base_form)?;
     }
+    Ok(())
 }
 
 /// 素性レコードを重複を除いて並べる
@@ -130,40 +135,116 @@ pub fn encode(input: &FeatureInput<'_>, out: &mut Vec<u8>) {
 #[derive(Default)]
 pub struct FeatureTableBuilder {
     blob: Vec<u8>,
-    offsets: HashMap<Box<[u8]>, u32>,
+    records: HashMap<Box<[u8]>, u32>,
+    starts: Vec<usize>,
     scratch: Vec<u8>,
+}
+
+/// 共有文法表と、素性番号から最終レコードのバイトオフセットへの対応。
+#[cfg(feature = "build")]
+pub struct FeatureTable {
+    pub grammar: Vec<GrammarRecord>,
+    pub offsets: Vec<u32>,
+    pub blob: Vec<u8>,
 }
 
 #[cfg(feature = "build")]
 impl FeatureTableBuilder {
-    /// レコードを足し、そのバイトオフセットを返す。領域が 4GiB を超えるならエラー
+    /// レコードを足し、重複を除いた素性番号を返す。バイトオフセットは finish で確定する。
     pub fn intern(&mut self, input: &FeatureInput<'_>) -> Result<u32, DictError> {
         self.scratch.clear();
-        encode(input, &mut self.scratch);
-        if let Some(&offset) = self.offsets.get(self.scratch.as_slice()) {
-            return Ok(offset);
+        encode(input, &mut self.scratch)?;
+        if let Some(&id) = self.records.get(self.scratch.as_slice()) {
+            return Ok(id);
         }
-        let offset = u32::try_from(self.blob.len())
-            .ok()
-            .filter(|&o| {
-                (o as usize)
-                    .checked_add(self.scratch.len())
-                    .is_some_and(|e| e <= u32::MAX as usize)
-            })
-            .ok_or_else(|| DictError::invalid("feature records exceed 4 GiB"))?;
+        let id = u32::try_from(self.starts.len())
+            .map_err(|_| DictError::invalid("too many distinct feature records"))?;
+        self.blob
+            .len()
+            .checked_add(self.scratch.len())
+            .ok_or_else(|| DictError::invalid("canonical feature records exceed address space"))?;
+        self.starts.push(self.blob.len());
         self.blob.extend_from_slice(&self.scratch);
-        self.offsets
-            .insert(self.scratch.clone().into_boxed_slice(), offset);
-        Ok(offset)
+        self.records
+            .insert(self.scratch.clone().into_boxed_slice(), id);
+        Ok(id)
     }
 
     /// 重複を除いたレコードの数
     pub fn len(&self) -> usize {
-        self.offsets.len()
+        self.starts.len()
     }
 
-    pub fn into_blob(self) -> Vec<u8> {
-        self.blob
+    /// 正準キーの先頭 6 バイトを共有文法番号に置き換える。
+    /// 中間領域には 4GiB 制限を課さず、最終 FEATURES が u32 の範囲に収まることを検査する。
+    pub fn finish(self) -> Result<FeatureTable, DictError> {
+        let Self {
+            blob,
+            records,
+            mut starts,
+            scratch,
+        } = self;
+        drop(records);
+        drop(scratch);
+        starts.push(blob.len());
+        let grammar_at = |start: usize| GrammarRecord {
+            pos_id: u16::from_le_bytes([blob[start], blob[start + 1]]),
+            conj_type_id: u16::from_le_bytes([blob[start + 2], blob[start + 3]]),
+            conj_form_id: u16::from_le_bytes([blob[start + 4], blob[start + 5]]),
+        };
+        let mut counts: HashMap<GrammarRecord, usize> = HashMap::new();
+        for &start in &starts[..starts.len() - 1] {
+            *counts.entry(grammar_at(start)).or_default() += 1;
+        }
+        let mut ranked: Vec<_> = counts.into_iter().collect();
+        ranked.sort_unstable_by(|(a, ac), (b, bc)| bc.cmp(ac).then_with(|| a.cmp(b)));
+        u32::try_from(ranked.len())
+            .map_err(|_| DictError::invalid("too many distinct grammar records"))?;
+        // 正準キーの 6 バイトを除き、各文法番号の varint 長を足す。
+        // 最終サイズだけに上限を課し、再確保によるピークメモリも避ける。
+        let suffix_len = (starts.len() - 1)
+            .checked_mul(6)
+            .and_then(|headers| blob.len().checked_sub(headers))
+            .ok_or_else(|| DictError::invalid("feature record size overflow"))?;
+        let final_len = ranked
+            .iter()
+            .enumerate()
+            .try_fold(suffix_len, |len, (id, (_, count))| {
+                let id_len =
+                    ((u32::BITS - (id as u32).leading_zeros()).max(1) as usize).div_ceil(7);
+                count.checked_mul(id_len).and_then(|n| len.checked_add(n))
+            })
+            .filter(|&len| len <= u32::MAX as usize)
+            .ok_or_else(|| DictError::invalid("feature records exceed 4 GiB"))?;
+        let grammar: Vec<_> = ranked.into_iter().map(|(g, _)| g).collect();
+        let ids: HashMap<_, _> = grammar
+            .iter()
+            .enumerate()
+            .map(|(i, &g)| (g, i as u32))
+            .collect();
+        let mut out = Vec::with_capacity(final_len);
+        let mut offsets = Vec::with_capacity(starts.len() - 1);
+        for pair in starts.windows(2) {
+            let start = pair[0];
+            let offset = u32::try_from(out.len())
+                .map_err(|_| DictError::invalid("feature records exceed 4 GiB"))?;
+            let id = ids[&grammar_at(start)];
+            let id_len = ((u32::BITS - id.leading_zeros()).max(1) as usize).div_ceil(7);
+            let suffix = &blob[start + 6..pair[1]];
+            out.len()
+                .checked_add(id_len)
+                .and_then(|n| n.checked_add(suffix.len()))
+                .filter(|&len| len <= u32::MAX as usize)
+                .ok_or_else(|| DictError::invalid("feature records exceed 4 GiB"))?;
+            offsets.push(offset);
+            push_varint(&mut out, id);
+            out.extend_from_slice(suffix);
+        }
+        Ok(FeatureTable {
+            grammar,
+            offsets,
+            blob: out,
+        })
     }
 }
 
@@ -255,13 +336,21 @@ fn read_str<'a>(
     Ok((s, end))
 }
 
-/// レコードを復号して検証する（オフセット・長さ・カタカナ・UTF-8・flags）。文字列表の範囲は呼び出し側で確かめる
-pub fn decode(blob: &[u8], offset: usize) -> Result<FeatureRef<'_>, DictError> {
-    let fixed = blob
-        .get(offset..offset.saturating_add(FIXED_LEN))
-        .ok_or_else(|| corrupt(offset, "offset out of range"))?;
-    let u16_at = |i: usize| u16::from_le_bytes([fixed[i], fixed[i + 1]]);
-    let flags = fixed[6];
+/// レコードを復号して検証する（文法番号・オフセット・長さ・カタカナ・UTF-8・flags）。
+/// 文法表の各番号が文字列表の範囲に収まることはロード時に検証する。
+pub fn decode<'a>(
+    blob: &'a [u8],
+    offset: usize,
+    grammar: &[GrammarRecord],
+) -> Result<FeatureRef<'a>, DictError> {
+    let (id, pos) =
+        read_varint(blob, offset).ok_or_else(|| corrupt(offset, "broken grammar ID"))?;
+    let g = grammar
+        .get(id as usize)
+        .ok_or_else(|| corrupt(offset, "grammar ID out of range"))?;
+    let flags = *blob
+        .get(pos)
+        .ok_or_else(|| corrupt(offset, "missing flags"))?;
     if flags & !KNOWN_FLAGS != 0 {
         return Err(corrupt(offset, "unknown flag bits"));
     }
@@ -271,7 +360,7 @@ pub fn decode(blob: &[u8], offset: usize) -> Result<FeatureRef<'_>, DictError> {
             "PRON_KANA set although the pronunciation is omitted",
         ));
     }
-    let pos = offset + FIXED_LEN;
+    let pos = pos + 1;
     let (reading, pos) = read_str(blob, pos, flags & READING_KANA != 0, offset)?;
     let (pronunciation, pos) = if flags & PRON_IS_READING != 0 {
         (None, pos)
@@ -287,9 +376,9 @@ pub fn decode(blob: &[u8], offset: usize) -> Result<FeatureRef<'_>, DictError> {
         (Some(s), pos)
     };
     Ok(FeatureRef {
-        pos_id: u16_at(0),
-        conj_type_id: u16_at(2),
-        conj_form_id: u16_at(4),
+        pos_id: g.pos_id,
+        conj_type_id: g.conj_type_id,
+        conj_form_id: g.conj_form_id,
         reading,
         pronunciation,
         base_form,
@@ -320,9 +409,10 @@ mod tests {
     }
 
     fn roundtrip(i: &FeatureInput<'_>) -> (String, String, String) {
+        let table = single(i);
         let mut buf = vec![0xAA]; // 先頭をずらしてオフセットの扱いも確かめる
-        encode(i, &mut buf);
-        let f = decode(&buf, 1).unwrap();
+        buf.extend_from_slice(&table.blob);
+        let f = decode(&buf, 1, &table.grammar).unwrap();
         assert_eq!(f.end, buf.len());
         assert_eq!((f.pos_id, f.conj_type_id, f.conj_form_id), (3, 1, 2));
         let reading = f.reading.into_string();
@@ -333,6 +423,12 @@ mod tests {
             .base_form
             .map_or_else(|| i.surface.to_owned(), |b| b.into_string());
         (base, reading, pron)
+    }
+
+    fn single(i: &FeatureInput<'_>) -> FeatureTable {
+        let mut b = FeatureTableBuilder::default();
+        assert_eq!(b.intern(i).unwrap(), 0);
+        b.finish().unwrap()
     }
 
     #[test]
@@ -353,11 +449,13 @@ mod tests {
 
     #[test]
     fn omits_base_and_pronunciation_when_equal() {
-        let mut buf = Vec::new();
-        encode(&input("東京", "東京", "トウキョウ", "トウキョウ"), &mut buf);
-        // 固定部 7 + 長さ 1 + カタカナ 5 文字
-        assert_eq!(buf.len(), 7 + 1 + 5);
-        assert_eq!(buf[6], BASE_IS_SURFACE | PRON_IS_READING | READING_KANA);
+        let table = single(&input("東京", "東京", "トウキョウ", "トウキョウ"));
+        // 文法番号 1 + flags 1 + 長さ 1 + カタカナ 5 文字
+        assert_eq!(table.blob.len(), 2 + 1 + 5);
+        assert_eq!(
+            table.blob[1],
+            BASE_IS_SURFACE | PRON_IS_READING | READING_KANA
+        );
         assert_eq!(
             roundtrip(&input("東京", "東京", "トウキョウ", "トウキョウ")),
             ("東京".into(), "トウキョウ".into(), "トウキョウ".into())
@@ -417,8 +515,10 @@ mod tests {
 
     #[test]
     fn rejects_broken_records() {
-        let mut good = Vec::new();
-        encode(&input("方法", "方", "ホウホウ", "ホーホー"), &mut good);
+        let table = single(&input("方法", "方", "ホウホウ", "ホーホー"));
+        let good = table.blob;
+        let decode =
+            |bytes: &[u8], offset| super::decode(bytes, offset, &table.grammar).map(|_| ());
         assert!(decode(&good, 0).is_ok());
         // 範囲外のオフセット
         assert!(decode(&good, good.len()).is_err());
@@ -427,20 +527,96 @@ mod tests {
         assert!(decode(&good[..good.len() - 1], 0).is_err());
         // 未知の flags
         let mut bad = good.clone();
-        bad[6] |= 0x10;
+        bad[1] |= 0x10;
         assert!(decode(&bad, 0).is_err());
         // 発音を省略しつつ PRON_KANA
         let mut bad = good.clone();
-        bad[6] = PRON_IS_READING | PRON_KANA;
+        bad[1] = PRON_IS_READING | PRON_KANA;
         assert!(decode(&bad, 0).is_err());
         // カタカナ詰めの範囲外
         let mut bad = good.clone();
-        bad[8] = 0x60;
+        bad[3] = 0x60;
         assert!(decode(&bad, 0).is_err());
         // UTF-8 でない原形
         let mut bad = good.clone();
         let last = bad.len() - 1;
         bad[last] = 0xFF;
         assert!(decode(&bad, 0).is_err());
+        // 文法番号の範囲外、途中切れ、u32 のオーバーフロー
+        let mut bad = good.clone();
+        bad[0] = 1;
+        assert!(decode(&bad, 0).is_err());
+        assert!(decode(&[0x80], 0).is_err());
+        assert!(decode(&[0xff, 0xff, 0xff, 0xff, 0x10], 0).is_err());
+        assert!(decode(&[0], 0).is_err());
+    }
+
+    #[test]
+    fn grammar_frequency_counts_unique_features_and_breaks_ties_by_ids() {
+        let build = || {
+            let mut b = FeatureTableBuilder::default();
+            for (pos, reading) in [(5, "a"), (5, "b"), (1, "c"), (3, "d")] {
+                let mut i = input("x", "x", reading, reading);
+                i.pos_id = pos;
+                b.intern(&i).unwrap();
+                if pos == 3 {
+                    // 同じ素性を何回参照しても、共有文法の頻度は増えない。
+                    for _ in 0..10 {
+                        b.intern(&i).unwrap();
+                    }
+                }
+            }
+            b.finish().unwrap()
+        };
+        let a = build();
+        let b = build();
+        assert_eq!(
+            a.grammar.iter().map(|g| g.pos_id).collect::<Vec<_>>(),
+            [5, 1, 3]
+        );
+        assert_eq!(a.grammar, b.grammar);
+        assert_eq!(a.offsets, b.offsets);
+        assert_eq!(a.blob, b.blob);
+        for (index, expected) in [5, 5, 1, 3].into_iter().enumerate() {
+            assert_eq!(
+                decode(&a.blob, a.offsets[index] as usize, &a.grammar)
+                    .unwrap()
+                    .pos_id,
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn grammar_has_no_u16_tuple_limit_and_ids_cross_varint_boundaries() {
+        let mut b = FeatureTableBuilder::default();
+        // 個々の文字列表は u16 の範囲でも、その組は 65536 通りを超えられる。
+        for id in 0..=65_536u32 {
+            let mut i = input("x", "x", "x", "x");
+            i.pos_id = (id >> 16) as u16;
+            i.conj_type_id = id as u16;
+            i.conj_form_id = 0;
+            assert_eq!(b.intern(&i).unwrap(), id);
+        }
+        let table = b.finish().unwrap();
+        assert_eq!(table.grammar.len(), 65_537);
+        for id in [0, 127, 128, 16_383, 16_384, 65_535, 65_536] {
+            let offset = table.offsets[id] as usize;
+            let (stored, end) = read_varint(&table.blob, offset).unwrap();
+            assert_eq!(stored as usize, id);
+            let expected_len = if id < 128 {
+                1
+            } else if id < 16_384 {
+                2
+            } else {
+                3
+            };
+            assert_eq!(end - offset, expected_len);
+            let f = decode(&table.blob, offset, &table.grammar).unwrap();
+            assert_eq!(
+                (f.pos_id, f.conj_type_id, f.conj_form_id),
+                ((id >> 16) as u16, id as u16, 0)
+            );
+        }
     }
 }

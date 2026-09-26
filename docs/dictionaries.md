@@ -9,9 +9,12 @@ hasami が読む辞書（`.hsd`）の取り方・置き場所・作り方・形�
 
 | 辞書 | 内容 | 大きさ | 推奨用途 |
 |------|------|------:|---------|
-| `ipadic` | IPAdic 単体 | 18 MB | 軽量・基本用途 |
-| `ipadic-neologd` | IPAdic + NEologd | 222 MB | 新語・固有名詞対応 |
-| `ipadic-neologd-sudachi` | IPAdic + NEologd + SudachiDict | 238 MB | **推奨**（最大語彙） |
+| `ipadic` | IPAdic 単体 | 16.5 MB | 軽量・基本用途 |
+| `ipadic-neologd` | IPAdic + NEologd | 206.6 MB | 新語・固有名詞対応 |
+| `ipadic-neologd-sudachi` | IPAdic + NEologd + SudachiDict | 221.0 MB | **推奨**（最大語彙） |
+
+大きさは v5 形式のローカル再構築値（MB = 1,000,000B）。v5 を含むリリースの公開前にソースから使う場合は、
+`make dict` で辞書も作り直す。公開済みの v4 辞書は v5 のリーダーでは読めない。
 
 `hasami dict download` は、実行している hasami と同じ版のリリースから辞書を取り、置き場所に置く。
 辞書の形式や repair は版ごとに変わりうるので、既定では版をそろえる。
@@ -177,12 +180,12 @@ hasami export --dict dict.hsd --output lex.csv
 
 ## 辞書形式 (.hsd)
 
-`.hsd` は v4 形式（64 バイトのヘッダ + セクション表 + 64 バイト境界のセクション）。mmap してそのまま参照するので、
+`.hsd` は v5 形式（64 バイトのヘッダ + セクション表 + 64 バイト境界のセクション）。mmap してそのまま参照するので、
 ロードはヘッダと小さな表の検査だけで 1ms 前後、解析で触れたページだけが読み込まれる。実行ファイルに埋め込んだ辞書も、
 `Dictionary::from_static` で複製せずに同じく参照する（[rust-api.md](rust-api.md) の「実行ファイルに辞書を埋め込む」）。
 
 - 表層形は文字単位の double-array trie（単独の末尾は圧縮）に持ち、エントリは 1 件 6 バイト
-- 品詞・活用型・活用形・読み・発音・原形は重複を除いた素性レコードに持ち、最良パスの語だけ復号する
+- 品詞・活用型・活用形の組は文法表に共有する。素性レコードにはその番号と読み・発音・原形を重複排除して持ち、最良パスの語だけ復号する
 - 辞書の中身はメタデータ（`hasami info` で表示）に名前・品詞体系・上流の版・掛けた repair が残る
 - 壊れたファイルはロード時・解析時に `DictError` になる（panic しない）。全件の検査は `hasami info --verify`
 - 形式の版が違う `.hsd` は読めない（作り直しを案内するエラーになる）。`scripts/build-dict.sh`（または `hasami build`）で作り直す
@@ -191,7 +194,7 @@ hasami export --dict dict.hsd --output lex.csv
 `--prune-dominated`（build / merge / repair）は、同じ表層形・同じ文脈 ID の中でコストが最小でないエントリを除いた
 最終辞書を作る。解析結果（1-best）は変わらないが、除いた辞書は merge・repair の入力にできない。配布辞書には掛けていない。
 
-形式の設計・試したこと・計測は [hsd-format.md](hsd-format.md) にまとめてある。
+形式の設計・試したこと・計測は [hsd-format.md](hsd-format.md)、v5 の変更点は [hsd-v5.md](hsd-v5.md) にまとめてある。
 
 ## 配布辞書のライセンス
 

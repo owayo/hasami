@@ -17,7 +17,7 @@ Rust製の日本語形態素解析エンジン。外部エンジン（MeCab等�
   CI の mise がそれより古いと「rust@… is not in the lockfile」で落ちる。`mise lock --upgrade` は CI の mise が 2026.9.7 以上に
   なってから）。lock は CI の mise と同じ版の mise で作る（新しい mise も既存の書式 1 は保つ）。
   zstd（辞書の圧縮）と git・curl・xz・unzip は mise で入れられないので OS のもの
-- **辞書**: mmap-native バイナリ形式 (.hsd v4) + bytemuck Pod 構造体。ロード時はヘッダと小さな表だけ検査
+- **辞書**: mmap-native バイナリ形式 (.hsd v5) + bytemuck Pod 構造体。ロード時はヘッダと小さな表だけ検査
 - **Trie**: 文字単位 Double-Array Trie（文字を出現頻度順に符号化、単独の末尾は TAIL に圧縮、ゼロコピー mmap 参照）
 - **解析アルゴリズム**: ラティス構築 + Viterbi（コスト最小化、文分割最適化、転置した接続行列）。
   文字ごとの前計算（trie の符号・文字種・同じ文字種の長さ）のあと、構築と Viterbi を 1 回の走査で行う
@@ -37,7 +37,7 @@ hasami/
 │   │   ├── mod.rs      # DictEntry, UnkEntry, ConnectionMatrix（解析側でも使う型）
 │   │   ├── builder.rs  # DictBuilder（CSV 読み込み・repair・書き出し）。`build` feature
 │   │   └── sentence_like.rs  # repair --drop-sentence-like-nouns の判定（IPAdic の語の列が文や句になるか）
-│   ├── hsd/            # 辞書形式 v4 (.hsd)
+│   ├── hsd/            # 辞書形式 v5 (.hsd)
 │   │   ├── mod.rs      # DictError
 │   │   ├── container.rs  # 64B ヘッダとセクション表（id で引く、64B 境界）
 │   │   ├── trie.rs     # 文字単位 Double-Array Trie（構築・検索・全件検証）
@@ -158,10 +158,11 @@ hasami/
 
 ## 辞書形式
 - **ビルド**: MeCab互換CSV + matrix.def + char.def + unk.def → .hsd
-- **フォーマット**: v4。64B ヘッダ + セクション表（id で引く）+ 64B 境界のセクション 17 種。リトルエンディアン機専用
-  - 規範は `~/.claude/skills/hsd-format-redesign/references/v4-spec.md`（第 3 版の追記 A〜K が正）と `src/hsd/*.rs` の冒頭コメント
-  - v3 → v4 で測ったこと・試したこと・見送ったことと最終の計測は `docs/hsd-format.md`。形式を見直すときはここから始める
-  - v1〜v3 の .hsd は読めない（`scripts/build-dict.sh` で作り直すよう案内するエラー）
+- **フォーマット**: v5。64B ヘッダ + セクション表（id で引く）+ 64B 境界のセクション 18 種。リトルエンディアン機専用
+  - 規範は `src/hsd/*.rs` の冒頭コメント。v4 からの変更と検査条件は `docs/hsd-v5.md`
+  - 品詞・活用型・活用形の組を GRAMMAR（6B/組）に共有し、素性から u32 varint の番号で参照する
+  - v3 → v4 → v5 で測ったこと・試したこと・見送ったことと最終の計測は `docs/hsd-format.md`。形式を見直すときはここから始める
+  - v1〜v4 の .hsd は読めない（`scripts/build-dict.sh` で作り直すよう案内するエラー）
   - 接続行列は転置して持つ: `costs[left_id * num_right + right_id]`（matrix.def の 1 行目は「right_id の数 left_id の数」）
   - matrix.def なしで作った辞書は、使われている文脈 ID を覆うゼロ行列を置き、メタデータに `zero_matrix=true` を書く
   - `--prune-dominated` を付けた最終辞書は flags とメタデータに記録し、`merge`・`repair` の入力にできない
