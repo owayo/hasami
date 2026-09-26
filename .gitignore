@@ -8,8 +8,8 @@ target
 
 # 配布辞書はリポジトリに置かず、リリースに添付する (make dict で作るか make dict-download で取る)。
 # dict/user/ などの入力の CSV は追跡するので、dict/ 全体は無視しない
-/dict/*.hsd
-/dict/*.hsd.zst
+*.hsd
+*.hsd.zst
 /dict/dictionaries.json
 # hasami build / merge / repair の書き出しの一時ファイル (.<名前>.tmp-<pid>) と、
 # hasami dict download の一時ファイル (.<ファイル名>.<乱数>.part)
