@@ -788,6 +788,9 @@ impl BlockProcessor {
     fn process(&mut self, block: &str, out: &mut impl Write) -> io::Result<()> {
         let lines: Vec<&str> = block.lines().collect();
         let ranges = split_pieces(&lines, PIECE_BYTES);
+        if ranges.is_empty() {
+            return Ok(());
+        }
         if self.pieces.len() < ranges.len() {
             self.pieces.resize_with(ranges.len(), Default::default);
         }

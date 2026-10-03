@@ -177,7 +177,7 @@ hasami/
 ## CLI コマンド
 - `hasami build` - 辞書構築
 - `hasami merge` - 既存辞書にCSVを追加マージ
-- `hasami tokenize` - 形態素解析。標準入力の行は `-j`（既定は CPU の数）で並列に解析し、入力の順に出す
+- `hasami tokenize` - 形態素解析。標準入力の行は `-j`（既定は CPU の数）で並列に解析し、入力の順に出す。空入力は出力せず正常終了する
 - `hasami bench` - ベンチマーク（`--text` の繰り返し、または `--file` でファイルの全行を 1 回として測る）
 - `hasami info` - 辞書情報表示（メタデータ・セクションのサイズ。`--verify` で全件検証）
 - `hasami repair` - 誤読エントリの修復・除去（範囲外の文脈 ID、壊れた発音、表記ゆれ、漢数字の人名、削除リスト、文や句を 1 語にした名詞の削除 `--drop-sentence-like-nouns <IPAdic.hsd>`、数と単位の組の固有名詞の削除 `--drop-quantity-nouns <IPAdic.hsd>`、一般語の固有名詞の降格 `--demote-common-proper-nouns <IPAdic.hsd>`、追加マージ）

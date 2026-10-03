@@ -2646,3 +2646,22 @@ fn test_cli_tokenize_stdin_matches_line_by_line_analysis() {
     assert_eq!(String::from_utf8(out).unwrap(), expected);
     std::fs::remove_file(&tmp).unwrap();
 }
+
+#[cfg(feature = "cli")]
+#[test]
+fn test_cli_tokenize_accepts_empty_and_newline_terminated_input() {
+    let tmp = std::env::temp_dir().join(format!("hasami_cli_empty_{}.hsd", std::process::id()));
+    write_hsd(&test_builder(), &tmp);
+
+    for threads in ["1", "4"] {
+        let (ok, out, err) = run_cli_tokenize(&tmp, &["-j", threads], b"");
+        assert!(ok, "空入力、-j {threads}: {err}");
+        assert!(out.is_empty());
+
+        let (ok, out, err) = run_cli_tokenize(&tmp, &["-j", threads], "私は猫です\n".as_bytes());
+        assert!(ok, "改行で終わる入力、-j {threads}: {err}");
+        assert!(!out.is_empty());
+    }
+
+    std::fs::remove_file(&tmp).unwrap();
+}
