@@ -1,0 +1,20 @@
+{
+  "standalone_tests": "patch_rejects_invalid_ranges_flags_and_payloads: passed (Rust 1.98.1)",
+  "experimental_reader_tests": "pronunciation_patch_roundtrip_and_corruption: passed in independent worktree",
+  "all_unique_features_equal": {
+    "ipadic": 327988,
+    "ipadic-neologd": 3039329,
+    "ipadic-neologd-sudachi": 3358794
+  },
+  "all_serialized_token_fields_equal": {
+    "ipadic": 5183475,
+    "ipadic-neologd": 4859437,
+    "ipadic-neologd-sudachi": 4852226
+  },
+  "packed_str_bytes_64_bit": {
+    "v5": 24,
+    "three_part_candidate": 56
+  },
+  "restored_production_cli": "v5 dictionaries: all 3 info --verify passed",
+  "note": "shared build artifacts were regenerated for production; reproduce variants in separate target directories"
+}

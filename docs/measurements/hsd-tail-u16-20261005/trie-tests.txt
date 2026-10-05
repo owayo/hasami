@@ -1,0 +1,40 @@
+   Compiling hasami v26.9.107 (C:\GitHub\hasami\target\hsd-tail-u16\u16-source)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.28s
+     Running unittests src\lib.rs (target\hsd-tail-u16\u16-source\target\debug\deps\hasami-d7bb5ddc24df3096.exe)
+
+running 32 tests
+test hsd::trie::tests::test_build_errors ... ok
+test hsd::trie::tests::test_char_not_in_dictionary_stops_search ... ok
+test hsd::trie::tests::test_layout_invariants ... ok
+test hsd::trie::tests::test_char_codes_follow_frequency_then_char_order ... ok
+test hsd::trie::tests::test_four_byte_utf8 ... ok
+test hsd::trie::tests::test_from_validated_matches_new ... ok
+test hsd::trie::tests::test_node_with_end_and_children ... ok
+test hsd::trie::tests::test_prefix_keys_are_all_reported ... ok
+test hsd::trie::tests::test_long_tail_uses_multibyte_varint ... ok
+test hsd::trie::tests::test_start_is_absolute_and_must_be_char_boundary ... ok
+test hsd::trie::tail_u16_tests::ordinary_and_precomputed_search_report_the_same_order_and_byte_end ... ok
+test hsd::trie::tests::test_build_is_deterministic ... ok
+test hsd::trie::tests::test_verify_accepts_fixture ... ok
+test hsd::trie::tests::test_verify_detects_bad_root ... ok
+test hsd::trie::tests::test_verify_detects_bad_end_child ... ok
+test hsd::trie::tests::test_verify_detects_base_out_of_range ... ok
+test hsd::trie::tests::test_single_key ... ok
+test hsd::trie::tests::test_keys_of_prefix_heavy_set ... ok
+test hsd::trie::tests::test_verify_detects_unused_slot_with_base ... ok
+test hsd::trie::tail_u16_tests::corrupt_codes_lengths_values_and_truncation_are_rejected ... ok
+test hsd::trie::tests::test_verify_detects_internal_with_one_key ... ok
+test hsd::trie::tests::test_many_keys_with_same_prefix ... ok
+test hsd::trie::tests::test_verify_detects_value_limit ... ok
+test hsd::trie::tests::test_verify_detects_kind_01 ... ok
+test hsd::trie::tests::test_verify_detects_cycle_and_detached_nodes ... ok
+test hsd::trie::tests::test_from_validated_with_garbage_does_not_panic ... ok
+test hsd::trie::tests::test_verify_detects_char_map_errors ... ok
+test hsd::trie::tests::test_verify_detects_broken_tail ... ok
+test hsd::trie::tests::test_too_many_distinct_chars ... ok
+test hsd::trie::tests::test_progress_reports ... ok
+test hsd::trie::tests::test_random_search_matches_brute_force ... ok
+test hsd::trie::tests::test_corrupted_tries_never_panic ... ok
+
+test result: ok. 32 passed; 0 failed; 0 ignored; 0 measured; 263 filtered out; finished in 2.28s
+

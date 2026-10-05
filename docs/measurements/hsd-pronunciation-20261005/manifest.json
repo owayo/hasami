@@ -1,0 +1,119 @@
+{
+  "baseline_commit": "12b7659a3389a28fc4e0dbdd71df99a58e6bba5d",
+  "baseline_build_commit": "ec63a40",
+  "patch_base_commit": "fefb950",
+  "format": {
+    "baseline": 5,
+    "experiment": 5006
+  },
+  "release": "v26.9.107",
+  "toolchain": "Rust 1.98.1; eval: -O -C lto=fat -C codegen-units=1",
+  "platform": "macOS 27.0.1 ARM64, Apple M2, 24 GiB",
+  "started_load_average": [
+    28.5576171875,
+    17.28857421875,
+    15.92578125
+  ],
+  "dictionaries": {
+    "ipadic": {
+      "v5": {
+        "bytes": 16493282,
+        "sha256": "f4c26a641c835c196ee78e49fd846952ba3fcd107ac9811b4e0edb85e1358b8a"
+      },
+      "patch": {
+        "bytes": 16308706,
+        "sha256": "d4945b20e945226d6da7bb1ef826a3f6f00c833a9ecd53fc48c4660c9a818be5"
+      }
+    },
+    "ipadic-neologd": {
+      "v5": {
+        "bytes": 206570094,
+        "sha256": "c93cbc611ff0696696c9efef793906c4a004e2f53428ba589f563a2743aaf122"
+      },
+      "patch": {
+        "bytes": 200879278,
+        "sha256": "d95b6d7c35aa9880c143d18738da6548e594e53da76c87125fd14f0eb1e6aded"
+      }
+    },
+    "ipadic-neologd-sudachi": {
+      "v5": {
+        "bytes": 220974766,
+        "sha256": "a06e69d1c12959eca3e0e2a383acc9824c89858f9ebc1f5bbdbf4d374ba47819"
+      },
+      "patch": {
+        "bytes": 215245422,
+        "sha256": "0e20860abf0b5c3dbd86936226bae3ac4417d67e62020c177fd935834c0a007e"
+      }
+    }
+  },
+  "executables": {
+    "v5": {
+      "bytes": 1505016,
+      "sha256": "657dc4db28c4d57384dc34d7a05290ad0d0deddc9e4817b708eaac32f420e806"
+    },
+    "patch": {
+      "bytes": 1460968,
+      "sha256": "51ea912b939b21a1fee50a189921d3330f5e8e1ac31133753e091462c6b000ab"
+    }
+  },
+  "corpora": {
+    "mixed": {
+      "bytes": 25632719,
+      "sha256": "24bd9e77b0de539d8cd58ff34c49c208dd1ad702bcab13884dd10db16a18abfc",
+      "lines": 143874
+    },
+    "short": {
+      "bytes": 5500000,
+      "sha256": "1697a3e63e0bb680170b07916d9fe2d6d6307b333d291de13d51947ef7aa1d32",
+      "lines": 100000,
+      "text": "東京都に住んでいる人々が増えている。"
+    }
+  },
+  "scripts": {
+    "hsd-format-eval.rs": {
+      "bytes": 3618,
+      "sha256": "7fccf43026d86a7d939e68a6ecff9fdd31cf873641e181e6e5b51f89596d27b3"
+    },
+    "hsd-pronunciation-remeasure.py": {
+      "bytes": 7402,
+      "sha256": "8633508cc6d1e29cc4223abc71a4ac68a88e1d380eb0564f3ab6a05e0f7a1ffe"
+    },
+    "hsd-format-compare.py": {
+      "bytes": 1230,
+      "sha256": "ec037c4584d88496a058540db2e3ed340e959fc96d17dd04e6ae222c6c8db332"
+    }
+  },
+  "analysis_conditions": {
+    "rounds": 12,
+    "warmup_passes": 1,
+    "measured_passes": 1,
+    "order": "AB/BA pairs; dictionary order rotates each round",
+    "qos": "USER_INTERACTIVE; not pinned to P cores",
+    "cpu": "macOS clock(): process CPU",
+    "rss": "whole-process peak; input included",
+    "cache": "warm OS pages and analyzer; not cold",
+    "load_telemetry": "before and after each process"
+  },
+  "load_conditions": {
+    "rounds": 12,
+    "constructors_per_process": 31,
+    "order": "AB/BA pairs; dictionary order rotates each round",
+    "scope": "Analyzer::load plus fixed first sentence; destruction outside timer",
+    "aggregation": "first constructor per process separately from subsequent 30",
+    "cache": "OS pages warm; first per process is not storage cold-start"
+  },
+  "measurement_complete": true,
+  "observed_one_minute_load_average_range": [
+    11.359375,
+    20.9619140625
+  ],
+  "compressed_sizes_remeasured": false,
+  "previous_compression_record": "../hsd-pronunciation-20261004/compression.jsonl",
+  "corpus_generation": {
+    "base_document_commit": "fefb950",
+    "script": "scripts/hsd-format-corpus.py",
+    "archive": "ldcc-20140209.tar.gz",
+    "archive_sha256": "b17606ed8c670013a3809100a9e6104701baab62cc019abc262111bd2acf1063",
+    "rebuilt_components_match_previous": true
+  }
+}

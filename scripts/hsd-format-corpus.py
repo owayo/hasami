@@ -34,7 +34,7 @@ with tarfile.open(archive_path) as archive:
 tech = [
     line
     for p in [base / "README.md", *sorted((base / "docs").glob("*.md"))]
-    for line in p.read_text().splitlines()
+    for line in p.read_text(encoding="utf-8").splitlines()
     if line.strip()
 ]
 edge = [

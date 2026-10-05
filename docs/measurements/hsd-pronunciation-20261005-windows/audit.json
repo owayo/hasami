@@ -1,0 +1,155 @@
+{
+  "analysis_rows": 216,
+  "load_rows": 2232,
+  "run_order_and_tokens_valid": true,
+  "all_summary_statistics_recomputed": true,
+  "measured_source_hashes_verified": true,
+  "samples_excluded": 0,
+  "all_field_comparisons": {
+    "mixed": {
+      "ipadic": {
+        "equal_bytes": 636764486,
+        "sha256": "5b81310b41bc93e2f158914928d37d03ce5eb6fa6c290f27a96edb7710b4f284"
+      },
+      "ipadic-neologd": {
+        "equal_bytes": 606664778,
+        "sha256": "237b58c7f10cc1336282d7b25eb7491eaff7345d41fb32c6bed74f8f686a9f72"
+      },
+      "ipadic-neologd-sudachi": {
+        "equal_bytes": 605406338,
+        "sha256": "ce83f2990b502d24623e09b8f81bff5f9a08caf0edb06689dd034e803275f2b3"
+      }
+    },
+    "short": {
+      "ipadic": {
+        "equal_bytes": 149100008,
+        "sha256": "ffb27c11dfc9e602c6cba5d4e99cca8faf359641da4ceeeb75470c3c4dc2ed3c"
+      },
+      "ipadic-neologd": {
+        "equal_bytes": 139400008,
+        "sha256": "d851d7c7c5d32c055fd4180989fadf76f63395dc66919f2edd3c52afbac66f6c"
+      },
+      "ipadic-neologd-sudachi": {
+        "equal_bytes": 139400008,
+        "sha256": "d851d7c7c5d32c055fd4180989fadf76f63395dc66919f2edd3c52afbac66f6c"
+      }
+    },
+    "literature": {
+      "ipadic": {
+        "equal_bytes": 700287508,
+        "sha256": "6e3e2b526c4185d83ca21941dd42b9193a7a217d1cd27c63f3bdf8ba6fa46051"
+      },
+      "ipadic-neologd": {
+        "equal_bytes": 691413908,
+        "sha256": "7ed28a747cb1a149f1f7fbdceeccaf3f589aa22b228925e7820f15497073cbe5"
+      },
+      "ipadic-neologd-sudachi": {
+        "equal_bytes": 687100608,
+        "sha256": "89bc876f37ca854f34c5649f587fc9da3542913571d15e48c4cd5637d71beb87"
+      }
+    }
+  },
+  "system_cpu_percent_during_analysis_process": {
+    "min": 6.913609328072557,
+    "median": 15.576425149262402,
+    "max": 78.09095860566448
+  },
+  "paired_medians_by_order": {
+    "mixed": {
+      "ipadic": {
+        "wall": {
+          "AB_median": -0.009625144532085128,
+          "BA_median": 0.006925999816661754
+        },
+        "cpu": {
+          "AB_median": -0.0040322580645161255,
+          "BA_median": 0.003875968992248069
+        }
+      },
+      "ipadic-neologd": {
+        "wall": {
+          "AB_median": -0.005021089834851944,
+          "BA_median": -0.006881583350851761
+        },
+        "cpu": {
+          "AB_median": -0.00663298923786515,
+          "BA_median": -0.0042429480631728245
+        }
+      },
+      "ipadic-neologd-sudachi": {
+        "wall": {
+          "AB_median": 0.008809257454868935,
+          "BA_median": 0.028462478759966214
+        },
+        "cpu": {
+          "AB_median": 0.019157563720622273,
+          "BA_median": 0.023659673659673697
+        }
+      }
+    },
+    "short": {
+      "ipadic": {
+        "wall": {
+          "AB_median": 1.268419521099906e-05,
+          "BA_median": -0.0017170578115084933
+        },
+        "cpu": {
+          "AB_median": 0.0,
+          "BA_median": 0.0
+        }
+      },
+      "ipadic-neologd": {
+        "wall": {
+          "AB_median": 0.012958633757395588,
+          "BA_median": 0.006161674873222278
+        },
+        "cpu": {
+          "AB_median": 0.0,
+          "BA_median": 0.0
+        }
+      },
+      "ipadic-neologd-sudachi": {
+        "wall": {
+          "AB_median": 0.00507460710289831,
+          "BA_median": 0.009219038630416398
+        },
+        "cpu": {
+          "AB_median": 0.0,
+          "BA_median": 0.07692307692307687
+        }
+      }
+    },
+    "literature": {
+      "ipadic": {
+        "wall": {
+          "AB_median": 0.010974282882595943,
+          "BA_median": 0.030245970563404945
+        },
+        "cpu": {
+          "AB_median": 0.014104432821744006,
+          "BA_median": 0.025947220993660647
+        }
+      },
+      "ipadic-neologd": {
+        "wall": {
+          "AB_median": 0.0040715120058498755,
+          "BA_median": -0.0493911312818312
+        },
+        "cpu": {
+          "AB_median": 0.00781297686626381,
+          "BA_median": -0.04738247863247863
+        }
+      },
+      "ipadic-neologd-sudachi": {
+        "wall": {
+          "AB_median": 0.030425550591260175,
+          "BA_median": 0.007108641124592419
+        },
+        "cpu": {
+          "AB_median": 0.03209170936801997,
+          "BA_median": 0.0031565656565656353
+        }
+      }
+    }
+  }
+}

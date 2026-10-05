@@ -1,0 +1,347 @@
+{
+  "analysis_rows": 216,
+  "load_rows": 2232,
+  "load_once_rows": 72,
+  "run_order_and_tokens_valid": true,
+  "all_summary_statistics_recomputed": true,
+  "measured_source_hashes_verified": true,
+  "samples_excluded": 0,
+  "all_field_comparisons": {
+    "mixed": {
+      "ipadic": {
+        "equal_bytes": 636764486,
+        "sha256": "5b81310b41bc93e2f158914928d37d03ce5eb6fa6c290f27a96edb7710b4f284"
+      },
+      "ipadic-neologd": {
+        "equal_bytes": 606664778,
+        "sha256": "237b58c7f10cc1336282d7b25eb7491eaff7345d41fb32c6bed74f8f686a9f72"
+      },
+      "ipadic-neologd-sudachi": {
+        "equal_bytes": 605406338,
+        "sha256": "ce83f2990b502d24623e09b8f81bff5f9a08caf0edb06689dd034e803275f2b3"
+      }
+    },
+    "short": {
+      "ipadic": {
+        "equal_bytes": 149100008,
+        "sha256": "ffb27c11dfc9e602c6cba5d4e99cca8faf359641da4ceeeb75470c3c4dc2ed3c"
+      },
+      "ipadic-neologd": {
+        "equal_bytes": 139400008,
+        "sha256": "d851d7c7c5d32c055fd4180989fadf76f63395dc66919f2edd3c52afbac66f6c"
+      },
+      "ipadic-neologd-sudachi": {
+        "equal_bytes": 139400008,
+        "sha256": "d851d7c7c5d32c055fd4180989fadf76f63395dc66919f2edd3c52afbac66f6c"
+      }
+    },
+    "literature": {
+      "ipadic": {
+        "equal_bytes": 700287508,
+        "sha256": "6e3e2b526c4185d83ca21941dd42b9193a7a217d1cd27c63f3bdf8ba6fa46051"
+      },
+      "ipadic-neologd": {
+        "equal_bytes": 691413908,
+        "sha256": "7ed28a747cb1a149f1f7fbdceeccaf3f589aa22b228925e7820f15497073cbe5"
+      },
+      "ipadic-neologd-sudachi": {
+        "equal_bytes": 687100608,
+        "sha256": "89bc876f37ca854f34c5649f587fc9da3542913571d15e48c4cd5637d71beb87"
+      }
+    }
+  },
+  "system_cpu_percent_during_analysis_process": {
+    "n": 216,
+    "median": 14.317673378076067,
+    "min": 7.410636442894503,
+    "max": 33.48837209302326,
+    "iqr": 4.124644519159752,
+    "cv": 0.29142667246506776
+  },
+  "paired_medians_by_order": {
+    "mixed": {
+      "ipadic": {
+        "wall": {
+          "AB_median": 0.0402796156184565,
+          "BA_median": 0.038773912080601436
+        },
+        "cpu": {
+          "AB_median": 0.036366641871229066,
+          "BA_median": 0.04111759799833192
+        }
+      },
+      "ipadic-neologd": {
+        "wall": {
+          "AB_median": 0.009668784406318909,
+          "BA_median": 0.011425531264506184
+        },
+        "cpu": {
+          "AB_median": 0.00711752786220865,
+          "BA_median": 0.007042253521126751
+        }
+      },
+      "ipadic-neologd-sudachi": {
+        "wall": {
+          "AB_median": 0.06303002111425415,
+          "BA_median": 0.018976664762433426
+        },
+        "cpu": {
+          "AB_median": 0.06636345852895142,
+          "BA_median": 0.03090533627446379
+        }
+      }
+    },
+    "short": {
+      "ipadic": {
+        "wall": {
+          "AB_median": 0.020875491392368883,
+          "BA_median": 0.032242130292100435
+        },
+        "cpu": {
+          "AB_median": 0.0,
+          "BA_median": 0.038461538461538436
+        }
+      },
+      "ipadic-neologd": {
+        "wall": {
+          "AB_median": 0.035442017117568336,
+          "BA_median": 0.0315810458945579
+        },
+        "cpu": {
+          "AB_median": 0.0,
+          "BA_median": 0.08012820512820507
+        }
+      },
+      "ipadic-neologd-sudachi": {
+        "wall": {
+          "AB_median": 0.025775898375494766,
+          "BA_median": 0.028683022892153853
+        },
+        "cpu": {
+          "AB_median": 0.038461538461538436,
+          "BA_median": 0.07692307692307687
+        }
+      }
+    },
+    "literature": {
+      "ipadic": {
+        "wall": {
+          "AB_median": 0.05611731506006479,
+          "BA_median": 0.03575627760463285
+        },
+        "cpu": {
+          "AB_median": 0.05798319327731094,
+          "BA_median": 0.039025318865410275
+        }
+      },
+      "ipadic-neologd": {
+        "wall": {
+          "AB_median": 0.011139046267016561,
+          "BA_median": 0.01641970417915639
+        },
+        "cpu": {
+          "AB_median": 0.008333333333333304,
+          "BA_median": 0.02473118279569897
+        }
+      },
+      "ipadic-neologd-sudachi": {
+        "wall": {
+          "AB_median": 0.03984234791086949,
+          "BA_median": 0.01831759288333229
+        },
+        "cpu": {
+          "AB_median": 0.046467739638228256,
+          "BA_median": 0.01741176470588235
+        }
+      }
+    }
+  },
+  "load_once": {
+    "ipadic": {
+      "v5": {
+        "wall_us": {
+          "n": 12,
+          "median": 543.2,
+          "min": 507.7,
+          "max": 565.1,
+          "iqr": 12.750000000000114,
+          "cv": 0.025947047710131045
+        },
+        "cpu_us": {
+          "n": 12,
+          "median": 0.0,
+          "min": 0.0,
+          "max": 0.0,
+          "iqr": 0.0,
+          "cv": null
+        },
+        "peak_working_set_bytes": {
+          "n": 12,
+          "median": 5240832.0,
+          "min": 5234688,
+          "max": 5251072,
+          "iqr": 8192.0,
+          "cv": 0.0010499098513215978
+        }
+      },
+      "u16": {
+        "wall_us": {
+          "n": 12,
+          "median": 556.0,
+          "min": 510.0,
+          "max": 754.7,
+          "iqr": 40.52499999999998,
+          "cv": 0.10924803650911913
+        },
+        "cpu_us": {
+          "n": 12,
+          "median": 0.0,
+          "min": 0.0,
+          "max": 0.0,
+          "iqr": 0.0,
+          "cv": null
+        },
+        "peak_working_set_bytes": {
+          "n": 12,
+          "median": 5210112.0,
+          "min": 5206016,
+          "max": 5218304,
+          "iqr": 1024.0,
+          "cv": 0.0006283023088317463
+        }
+      },
+      "paired_wall_relative_change": {
+        "n": 12,
+        "median": 0.011381859645982706,
+        "min": -0.0896108532666905,
+        "max": 0.4093370681605977,
+        "iqr": 0.0754008123733945,
+        "cv": 2.4998017357347893
+      }
+    },
+    "ipadic-neologd": {
+      "v5": {
+        "wall_us": {
+          "n": 12,
+          "median": 590.5,
+          "min": 550.5,
+          "max": 626.1,
+          "iqr": 30.274999999999977,
+          "cv": 0.03652382416842984
+        },
+        "cpu_us": {
+          "n": 12,
+          "median": 0.0,
+          "min": 0.0,
+          "max": 0.0,
+          "iqr": 0.0,
+          "cv": null
+        },
+        "peak_working_set_bytes": {
+          "n": 12,
+          "median": 5328896.0,
+          "min": 5324800,
+          "max": 5341184,
+          "iqr": 5120.0,
+          "cv": 0.000912209926933543
+        }
+      },
+      "u16": {
+        "wall_us": {
+          "n": 12,
+          "median": 584.7,
+          "min": 550.4,
+          "max": 601.8,
+          "iqr": 8.674999999999955,
+          "cv": 0.02269585720630563
+        },
+        "cpu_us": {
+          "n": 12,
+          "median": 0.0,
+          "min": 0.0,
+          "max": 0.0,
+          "iqr": 0.0,
+          "cv": null
+        },
+        "peak_working_set_bytes": {
+          "n": 12,
+          "median": 5310464.0,
+          "min": 5304320,
+          "max": 5316608,
+          "iqr": 4096.0,
+          "cv": 0.0007384705806065084
+        }
+      },
+      "paired_wall_relative_change": {
+        "n": 12,
+        "median": -0.002041019484156026,
+        "min": -0.10301868711068518,
+        "max": 0.0931880108991825,
+        "iqr": 0.04085762556517289,
+        "cv": -11.413257997353837
+      }
+    },
+    "ipadic-neologd-sudachi": {
+      "v5": {
+        "wall_us": {
+          "n": 12,
+          "median": 584.85,
+          "min": 541.7,
+          "max": 615.5,
+          "iqr": 21.34999999999991,
+          "cv": 0.036036488697383594
+        },
+        "cpu_us": {
+          "n": 12,
+          "median": 0.0,
+          "min": 0.0,
+          "max": 0.0,
+          "iqr": 0.0,
+          "cv": null
+        },
+        "peak_working_set_bytes": {
+          "n": 12,
+          "median": 5328896.0,
+          "min": 5324800,
+          "max": 5341184,
+          "iqr": 4096.0,
+          "cv": 0.0007328887201293203
+        }
+      },
+      "u16": {
+        "wall_us": {
+          "n": 12,
+          "median": 595.1,
+          "min": 553.9,
+          "max": 621.8,
+          "iqr": 30.350000000000023,
+          "cv": 0.03392314905645763
+        },
+        "cpu_us": {
+          "n": 12,
+          "median": 0.0,
+          "min": 0.0,
+          "max": 0.0,
+          "iqr": 0.0,
+          "cv": null
+        },
+        "peak_working_set_bytes": {
+          "n": 12,
+          "median": 5312512.0,
+          "min": 5308416,
+          "max": 5320704,
+          "iqr": 4096.0,
+          "cv": 0.0007351482524413641
+        }
+      },
+      "paired_wall_relative_change": {
+        "n": 12,
+        "median": 0.015624216325113238,
+        "min": -0.01808190037227453,
+        "max": 0.14786782351855243,
+        "iqr": 0.03846515670688844,
+        "cv": 1.5115672570214154
+      }
+    }
+  }
+}

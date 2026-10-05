@@ -1,0 +1,138 @@
+{
+  "date_jst": "2026-10-05",
+  "baseline_commit": "4de1d02",
+  "format": {
+    "v5": 5,
+    "patch": 5007
+  },
+  "variant_labels": {
+    "v5": "v5 UTF-8 TAIL",
+    "patch": "u16-code TAIL"
+  },
+  "platform": {
+    "os": "Windows-11-10.0.26300-SP0",
+    "cpu": "AMD Ryzen 7 5700X",
+    "physical_cores": 8,
+    "logical_processors": 16,
+    "ram_gib": 32
+  },
+  "toolchain": {
+    "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)\nbinary: rustc\ncommit-hash: 48a229ceaefd4985c50990b14116b6d856af0985\ncommit-date: 2026-09-01\nhost: x86_64-pc-windows-msvc\nrelease: 1.98.1\nLLVM version: 22.1.8",
+    "python": "3.13.15",
+    "library": "cargo build --release --locked --lib; default features",
+    "eval_flags": "--edition=2024 -O -C lto=fat -C codegen-units=1"
+  },
+  "dictionaries": {
+    "ipadic": {
+      "v5": {
+        "bytes": 16493282,
+        "sha256": "f4c26a641c835c196ee78e49fd846952ba3fcd107ac9811b4e0edb85e1358b8a"
+      },
+      "patch": {
+        "bytes": 16379874,
+        "sha256": "a5a32d4928b86d4bc4ff787841513131a5ad9a9ec069bc16313ea51366a56895"
+      }
+    },
+    "ipadic-neologd": {
+      "v5": {
+        "bytes": 206570094,
+        "sha256": "c93cbc611ff0696696c9efef793906c4a004e2f53428ba589f563a2743aaf122"
+      },
+      "patch": {
+        "bytes": 201195310,
+        "sha256": "2fcc3d4d7e9e6f7e72853fc5c66650f37bdb3876d775a62d3f4b58bcae8609f7"
+      }
+    },
+    "ipadic-neologd-sudachi": {
+      "v5": {
+        "bytes": 220974766,
+        "sha256": "a06e69d1c12959eca3e0e2a383acc9824c89858f9ebc1f5bbdbf4d374ba47819"
+      },
+      "patch": {
+        "bytes": 215555950,
+        "sha256": "60997f532908fd3ee1c38b77993eb08cd849c44dcc35f02c0cb79f14b9b78605"
+      }
+    }
+  },
+  "corpora": {
+    "mixed": {
+      "bytes": 25632719,
+      "sha256": "24bd9e77b0de539d8cd58ff34c49c208dd1ad702bcab13884dd10db16a18abfc",
+      "lines": 143874
+    },
+    "short": {
+      "bytes": 5500000,
+      "sha256": "1697a3e63e0bb680170b07916d9fe2d6d6307b333d291de13d51947ef7aa1d32",
+      "lines": 100000,
+      "text": "東京都に住んでいる人々が増えている。"
+    },
+    "literature": {
+      "bytes": 26528100,
+      "sha256": "d55f37a8682791183cbdb683421a120f5a3d15be4d5a95ca59ac3b0cd759ff47",
+      "lines": 48200
+    }
+  },
+  "executables": {
+    "v5": {
+      "bytes": 1271296,
+      "sha256": "7f271f0d70c7cb5410119d4cd7e72738d3d1b9c11e4eabd0b6dc5913722840d7"
+    },
+    "u16": {
+      "bytes": 1269248,
+      "sha256": "6ea8e9fad7244d17b9c56d6fd29a9a2c29add7edecedd65652715d62268b4b6a"
+    }
+  },
+  "sources": {
+    "scripts/hsd-format-eval.rs": {
+      "bytes": 7384,
+      "sha256": "72f344c157b3cd9b26be15ba9c1a44411e9f46de865847f7b228529858d9b0a6"
+    },
+    "scripts/hsd-format-compare.py": {
+      "bytes": 1269,
+      "sha256": "0447afac37d6fc4d635a11c5134f7bce66c39cd2afb9ffa03685e99061e7b247"
+    },
+    "scripts/hsd-pronunciation-remeasure.py": {
+      "bytes": 10274,
+      "sha256": "ee154c3016128b3e09af5d5b34f02a5a7d2bb05d203befa5bf5457b3632314ce"
+    },
+    "scripts/hsd-tail-u16-probe.py": {
+      "bytes": 5532,
+      "sha256": "1f7aeb35860c0fd62eca1c832bb2227e14aa7613768341d835d60a4d267ddd42"
+    },
+    "docs/measurements/hsd-tail-u16-20261005/reader.patch": {
+      "bytes": 16148,
+      "sha256": "ee6585d41d9060097d70b77c245919e1f3d8ebb1d9130b0e48536b1e4435142a"
+    },
+    "docs/measurements/hsd-tail-u16-20261005/run.py": {
+      "bytes": 8587,
+      "sha256": "6d0402245c7adcf4084aa0aae49bb0924b41103b4c5819ea7470d96c1ec06bc4"
+    },
+    "v5-source/trie.rs": {
+      "bytes": 95539,
+      "sha256": "7f33d25a8d9d30b42a4bd94e3a816ede5231da1f7159e252aea6821bc6744b94"
+    },
+    "v5-source/container.rs": {
+      "bytes": 19244,
+      "sha256": "e53378e8ca853f61736c7c47c3009adc98e986ea7dd9892dc36afcbb42ee87f7"
+    },
+    "u16-source/trie.rs": {
+      "bytes": 97931,
+      "sha256": "f20c530e4496ee1bbc9b60aa2b23d7f2bf72836c2e0627267020f3760699dc36"
+    },
+    "u16-source/container.rs": {
+      "bytes": 18736,
+      "sha256": "49dc455fd9b53d5c33125f31326d6d775f271d51d49b61ec7bc8c0f964e533d9"
+    }
+  },
+  "conditions": {
+    "rounds": 12,
+    "affinity_mask_decimal": 4,
+    "primary_clock": "Rust Instant wall",
+    "cpu_clock": "GetProcessTimes kernel+user; coarse supplementary value",
+    "cache": "warm OS pages; one warmup pass per analysis process",
+    "memory": "Windows PeakWorkingSetSize, entire process",
+    "order": "AB/BA alternating, dictionary order rotates",
+    "single_load": "12 new processes per dictionary and variant, one load+sentence"
+  },
+  "platform_metadata_correction": "OS label inherited from the prior manifest was corrected after timings using platform.platform() and Win32_OperatingSystem. The ZIP preserves the actual run-time sources."
+}

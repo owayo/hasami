@@ -1,0 +1,371 @@
+--- a/src/hsd/container.rs
++++ b/src/hsd/container.rs
+@@ -20,7 +20,7 @@
+ use std::io::{self, Write};
+ 
+ pub const MAGIC: [u8; 8] = *b"HSMDICT\0";
+-pub const VERSION: u32 = 5;
++pub const VERSION: u32 = 5007;
+ pub const HEADER_LEN: usize = 64;
+ pub const SECTION_ENTRY_LEN: usize = 24;
+ pub const MAX_SECTIONS: usize = 64;
+--- a/src/hsd/trie.rs
++++ b/src/hsd/trie.rs
+@@ -24,7 +24,7 @@
+ //! - HAS_END なら `base + 0` に、そこで終わるキーの値を持つ LEAF（END 子）がある
+ //! - 子が END だけになる INTERNAL は作らない（LEAF にする）。root 以外で部分木のキーが 1 つだけになった
+ //!   ノードは、残りが空なら LEAF、空でなければ TAIL にする。root は END を持たない（空のキーは作らない）
+-//! - 末尾レコードは `value: u32 (LE)`、`len: varint (LEB128、最大 5 バイト)`、`len` バイトの UTF-8（`len >= 1`）
++//! - 末尾レコードは `value: u32 (LE)`、`len: varint (LEB128、最大 5 バイト)`、`len` 個の u16 LE 文字符号（`len >= 1`、1..=N）
+ //!
+ //! # 読み出しの安全性
+ //!
+@@ -591,14 +591,19 @@
+     /// 部分木のキーが 1 つだけのノードを、残りが空なら LEAF、空でなければ TAIL にする
+     fn place_last_key(&mut self, task: &Task) -> Result<(), TrieError> {
+         let value = self.values[task.lo];
+-        let rest = &self.keys[task.lo].as_bytes()[task.depth..];
++        let rest = &self.keys[task.lo][task.depth..];
+         self.nodes[task.slot].base = if rest.is_empty() {
+             leaf_base(value)
+         } else {
+             let offset = self.tails.len() as u32;
+             self.tails.extend_from_slice(&value.to_le_bytes());
+-            push_varint(&mut self.tails, rest.len() as u32);
+-            self.tails.extend_from_slice(rest);
++            let len = u32::try_from(rest.chars().count())
++                .map_err(|_| build_error("TAIL exceeds u32 characters".to_string()))?;
++            push_varint(&mut self.tails, len);
++            for c in rest.chars() {
++                let code = self.char_map.code(c) as u16;
++                self.tails.extend_from_slice(&code.to_le_bytes());
++            }
+             if self.tails.len() >= TAILS_LIMIT {
+                 return Err(build_error(format!(
+                     "trie too large: tails reach 2^30 bytes at key #{}",
+@@ -870,7 +875,7 @@
+     #[inline(always)]
+     fn search_prefixes(
+         &self,
+-        text: &str,
++        _text: &str,
+         start: usize,
+         mut chars: impl Iterator<Item = (u32, usize)>,
+         mut cb: impl FnMut(usize, usize, u32),
+@@ -889,7 +894,7 @@
+         };
+         loop {
+             if kind(node.base) != KIND_INTERNAL {
+-                return self.search_end(text, pos, depth, slot, node, cb);
++                return self.search_end(pos, depth, slot, node, chars, cb);
+             }
+             let base = (node.base & BASE_MASK) as usize;
+             if base == 0 || base >= base_end {
+@@ -924,15 +929,15 @@
+         }
+     }
+ 
+-    /// 辿り着いた LEAF・TAIL を報告する
++    /// 辿り着いた LEAF・TAIL を報告する（実験版5007のu16 TAIL）
+     #[inline(always)]
+     fn search_end(
+         &self,
+-        text: &str,
+-        pos: usize,
+-        depth: usize,
++        mut pos: usize,
++        mut depth: usize,
+         slot: usize,
+         node: Node,
++        mut chars: impl Iterator<Item = (u32, usize)>,
+         mut cb: impl FnMut(usize, usize, u32),
+     ) -> Result<(), TrieError> {
+         match kind(node.base) {
+@@ -942,27 +947,24 @@
+             }
+             KIND_TAIL => {
+                 let (value, suffix) = self.tail_record(slot, node.base & PAYLOAD_MASK)?;
+-                // 入力の残りが suffix 以上の長さのときだけ比べる。多くは先頭のバイトで外れるので、
+-                // 先に 1 バイト比べて bcmp の呼び出しを省く
+-                let end = pos + suffix.len();
+-                let matched = match text.as_bytes().get(pos..end) {
+-                    Some(rest) => rest.first() == suffix.first() && rest == suffix,
+-                    None => false,
+-                };
+-                if matched {
+-                    // suffix が正しい UTF-8 なら一致の終わりは文字境界になる
+-                    if !text.is_char_boundary(end) {
+-                        return Err(bad_tail(
++                for pair in suffix.chunks_exact(2) {
++                    let code = u16::from_le_bytes([pair[0], pair[1]]) as u32;
++                    let Some((input, len)) = chars.next() else {
++                        return Ok(());
++                    };
++                    if input != code {
++                        return Ok(());
++                    }
++                    pos = pos.checked_add(len).ok_or_else(|| {
++                        bad_tail(
+                             slot,
+                             (node.base & PAYLOAD_MASK) as usize,
+-                            "the bytes are not valid UTF-8 (a match ends inside a character)",
+-                        ));
+-                    }
+-                    // 一致したバイト列は入力の文字の並びなので、文字の先頭バイト（継続バイトでない
+-                    // もの）の数が文字数になる
+-                    let chars = suffix.iter().filter(|&&b| (b as i8) >= -0x40).count();
+-                    cb(end, depth + chars, value);
+-                }
++                            "input offset overflow",
++                        )
++                    })?;
++                    depth += 1;
++                }
++                cb(pos, depth, value);
+                 Ok(())
+             }
+             _ => Err(invalid_kind(slot, node)),
+@@ -1003,8 +1005,20 @@
+         if len == 0 {
+             return Err(bad_tail(slot, off, "the length is 0"));
+         }
++        let len = len
++            .checked_mul(2)
++            .ok_or_else(|| bad_tail(slot, off, "TAIL byte length overflow"))?;
+         match tails.get(body..).and_then(|r| r.get(..len)) {
+-            Some(suffix) => Ok((value, suffix)),
++            Some(suffix) => {
++                // Validate every code, even if the input is short or mismatches early.
++                if suffix.chunks_exact(2).any(|b| {
++                    let code = u16::from_le_bytes([b[0], b[1]]) as u32;
++                    code == 0 || code > self.max_code
++                }) {
++                    return Err(bad_tail(slot, off, "TAIL code outside 1..=N"));
++                }
++                Ok((value, suffix))
++            }
+             None => Err(bad_tail(
+                 slot,
+                 off,
+@@ -1054,10 +1068,18 @@
+                 KIND_LEAF => out.push((node.base & PAYLOAD_MASK, prefix.clone())),
+                 KIND_TAIL => {
+                     let (value, suffix) = trie.tail_record(slot, node.base & PAYLOAD_MASK)?;
+-                    let suffix = tail_str(slot, node, suffix)?;
+-                    let mut key = String::with_capacity(prefix.len() + suffix.len());
+-                    key.push_str(&prefix);
+-                    key.push_str(suffix);
++                    let mut key = prefix.clone();
++                    for pair in suffix.chunks_exact(2) {
++                        let code = u16::from_le_bytes([pair[0], pair[1]]) as usize;
++                        let c = chars.get(code).ok_or_else(|| {
++                            bad_tail(
++                                slot,
++                                (node.base & PAYLOAD_MASK) as usize,
++                                "TAIL code has no character",
++                            )
++                        })?;
++                        key.push(*c);
++                    }
+                     out.push((value, key));
+                 }
+                 _ => return Err(invalid_kind(slot, node)),
+@@ -1116,7 +1138,7 @@
+                             node.base & PAYLOAD_MASK
+                         )));
+                     }
+-                    tail_str(slot, node, suffix)?;
++                    let _ = suffix; // tail_record validates codes; inverse_char_map validates their mapping.
+                     stats.tails += 1;
+                 }
+                 _ => return Err(invalid_kind(slot, node)),
+@@ -1367,15 +1389,6 @@
+         "slot {slot} has the invalid kind 01 (base {:#010x})",
+         node.base
+     ))
+-}
+-
+-fn tail_str(slot: usize, node: Node, suffix: &[u8]) -> Result<&str, TrieError> {
+-    std::str::from_utf8(suffix).map_err(|e| {
+-        corrupt(format!(
+-            "TAIL at slot {slot} (offset {}) is not valid UTF-8: {e}",
+-            node.base & PAYLOAD_MASK
+-        ))
+-    })
+ }
+ 
+ #[cfg(test)]
+@@ -1520,23 +1533,23 @@
+ 
+     #[test]
+     fn test_long_tail_uses_multibyte_varint() {
+-        let long = format!("x{}", "あ".repeat(100));
++        let long = format!("x{}", "あ".repeat(150));
+         let keys = [long.as_str(), "y"];
+         let parts = build_indexed(&keys);
+         let trie = parts.as_trie().unwrap();
+-        // "x" の先は 300 バイトの TAIL で、長さの varint は 2 バイト (0xAC 0x02)
++        // "x" の先は150文字のu16 TAILで、文字数のvarintは2バイト (0x96 0x01)
+         let (_, node) = node_at(&parts, "x");
+         assert_eq!(kind(node.base), KIND_TAIL);
+         let off = (node.base & PAYLOAD_MASK) as usize;
+         assert_eq!(&parts.tails[off..off + 4], &0u32.to_le_bytes());
+-        assert_eq!(&parts.tails[off + 4..off + 6], &[0xAC, 0x02]);
++        assert_eq!(&parts.tails[off + 4..off + 6], &[0x96, 0x01]);
+         assert_eq!(parts.tails.len(), 4 + 2 + 300);
+ 
+         let text = format!("{long}です");
+         assert_eq!(search(&trie, &text, 0), vec![(long.len(), 0)]);
+         // 入力が suffix より短い・途中で違う
+         assert_eq!(search(&trie, &long[..long.len() - 3], 0), vec![]);
+-        let differ = format!("x{}い", "あ".repeat(99));
++        let differ = format!("x{}い", "あ".repeat(149));
+         assert_eq!(search(&trie, &differ, 0), vec![]);
+         assert_eq!(trie.get(&long).unwrap(), Some(0));
+         assert_eq!(trie.get(&differ).unwrap(), None);
+@@ -1955,18 +1968,18 @@
+         broken.tails[off + 4] = 0;
+         assert!(verify_err(&broken).contains("length is 0"));
+ 
+-        // UTF-8 として不正（検索は一致しなければ気づかない）
++        // 末尾の不正符号は短い入力や不一致の場合にも検出する
+         let mut broken = parts.clone();
+-        let last = off + 4 + 2 + (long.len() - 1) - 1;
+-        broken.tails[last] = 0xFF;
+-        assert!(verify_err(&broken).contains("UTF-8"));
+-        // 文字の途中で切れた suffix は、一致したときに検索が検出する
++        let (count, body) = read_varint(&parts.tails, off + 4).unwrap();
++        let last = body + (count as usize - 1) * 2;
++        broken.tails[last..last + 2].copy_from_slice(&0u16.to_le_bytes());
++        assert!(verify_err(&broken).contains("code"));
++        assert!(search_err(&broken, "z").contains("code"));
++        // u16本体が1バイト不足する
+         let mut broken = parts.clone();
+-        let len = long.len() - 1 - 1;
+-        broken.tails[off + 4..off + 6]
+-            .copy_from_slice(&[(len as u8 & 0x7F) | 0x80, (len >> 7) as u8]);
+-        assert!(verify_err(&broken).contains("UTF-8"));
+-        assert!(search_err(&broken, &long).contains("UTF-8"));
++        broken.tails.truncate(body + count as usize * 2 - 1);
++        assert!(verify_err(&broken).contains("past the end"));
++        assert!(search_err(&broken, &long).contains("past the end"));
+ 
+         // 値が 2^30 以上
+         let mut broken = parts.clone();
+@@ -2334,3 +2347,116 @@
+         assert_eq!(listed.len(), keys.len());
+     }
+ }
++
++#[cfg(test)]
++mod tail_u16_tests {
++    use super::*;
++
++    #[test]
++    fn ordinary_and_precomputed_search_report_the_same_order_and_byte_end() {
++        let long = format!("a{}🙂", "東".repeat(300));
++        let mut keys = vec![
++            "a".to_string(),
++            "a東京🙂".to_string(),
++            "a東亜".to_string(),
++            "z文".to_string(),
++            long.clone(),
++        ];
++        keys.sort();
++        let refs: Vec<&str> = keys.iter().map(String::as_str).collect();
++        let values: Vec<u32> = (0..keys.len() as u32).collect();
++        let parts = build(&refs, &values).unwrap();
++        let trie = parts.as_trie().unwrap();
++        let mut recovered = trie.keys().unwrap();
++        recovered.sort_by(|a, b| a.1.cmp(&b.1));
++        assert_eq!(
++            recovered,
++            values
++                .iter()
++                .copied()
++                .zip(keys.iter().cloned())
++                .collect::<Vec<_>>()
++        );
++        assert_eq!(trie.verify(values.len() as u32).unwrap().keys, keys.len());
++        for text in [
++            "a東京🙂続き",
++            "a東亜",
++            "a",
++            "aa",
++            "xa東京🙂",
++            "a東X",
++            "🙂a東京🙂",
++        ]
++        .map(String::from)
++        .into_iter()
++        .chain([long])
++        {
++            let codes: Vec<u16> = text.chars().map(|c| trie.char_code(c) as u16).collect();
++            let mut offsets: Vec<u32> = text.char_indices().map(|(i, _)| i as u32).collect();
++            offsets.push(text.len() as u32);
++            for start in 0..=codes.len() {
++                let mut normal = Vec::new();
++                let mut coded = Vec::new();
++                trie.common_prefix_search(&text, offsets[start] as usize, |end, v| {
++                    normal.push((end, v))
++                })
++                .unwrap();
++                trie.common_prefix_search_codes(&text, &codes, &offsets, start, |end, v| {
++                    coded.push((offsets[end] as usize, v))
++                })
++                .unwrap();
++                assert_eq!(normal, coded, "text={text:?} start={start}");
++            }
++        }
++    }
++
++    fn assert_rejected(parts: &TrieParts) {
++        let trie = parts.as_trie().unwrap();
++        // Both short input and an early mismatch must still reject a bad late code.
++        assert!(trie.get("a").is_err());
++        assert!(trie.get("aX").is_err());
++        let codes = [trie.char_code('a') as u16, 0];
++        let mut hits = Vec::new();
++        assert!(
++            trie.common_prefix_search_codes("aX", &codes, &[0, 1, 2], 0, |p, v| hits.push((p, v)))
++                .is_err()
++        );
++        assert!(trie.keys().is_err());
++        assert!(trie.verify(1).is_err());
++    }
++
++    #[test]
++    fn corrupt_codes_lengths_values_and_truncation_are_rejected() {
++        let fixture = build(&["a東京🙂"], &[0]).unwrap();
++        let node = fixture
++            .nodes
++            .iter()
++            .find(|n| kind(n.base) == KIND_TAIL)
++            .unwrap();
++        let off = (node.base & PAYLOAD_MASK) as usize;
++        let (count, body) = read_varint(&fixture.tails, off + 4).unwrap();
++        assert_eq!(count, 3);
++        let max = fixture.as_trie().unwrap().max_code() as u16;
++        for bad in [0u16, max + 1] {
++            let mut p = fixture.clone();
++            let last = body + (count as usize - 1) * 2;
++            p.tails[last..last + 2].copy_from_slice(&bad.to_le_bytes());
++            assert_rejected(&p);
++        }
++        let mut zero = fixture.clone();
++        zero.tails[off + 4] = 0;
++        assert_rejected(&zero);
++        let mut truncated = fixture.clone();
++        truncated.tails.pop();
++        assert_rejected(&truncated);
++        let mut overflow = fixture.clone();
++        overflow.tails[off + 4..off + 9].copy_from_slice(&[0xff, 0xff, 0xff, 0xff, 0x10]);
++        assert_rejected(&overflow);
++        let mut too_long = fixture.clone();
++        too_long.tails[off + 4..off + 9].copy_from_slice(&[0xff, 0xff, 0xff, 0xff, 0x0f]);
++        assert_rejected(&too_long);
++        let mut value = fixture.clone();
++        value.tails[off..off + 4].copy_from_slice(&VALUE_LIMIT.to_le_bytes());
++        assert_rejected(&value);
++    }
++}
