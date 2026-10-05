@@ -34,7 +34,7 @@ hasami は、MeCab などの外部の解析エンジンを使わずに Rust で�
 
 - **外部エンジンに依存しない**: MeCab や Sudachi を呼ばず、辞書の構築から解析までを hasami だけで行います
 - **ラティスと Viterbi**: 辞書の語と未知語の候補をラティスに並べ、接続コストと単語コストの和が最小になる分け方を選びます
-- **速い**: 1 スレッドでも MeCab より速く、`hasami tokenize` は標準入力の行を CPU の数だけ並列に解析します（[ベンチマーク](#ベンチマーク)）
+- **並列解析**: `hasami tokenize` は標準入力の行を CPU の数だけ並列に解析します。1 スレッドの API と Python バインディングの実測は [ベンチマーク](#ベンチマーク) にあります
 - **読みと発音**: トークンごとに読みと発音を返します。文脈で読みが変わる語（「他」「数」など）と、1〜2 文字の英字の略語（AI・PC など）は、解析の後で読みを直します
 - **MeCab 形式の辞書から作る**: MeCab 形式の CSV と matrix.def・char.def・unk.def から辞書を作ります。配布辞書は IPAdic、IPAdic + NEologd、IPAdic + NEologd + SudachiDict の 3 つで、SudachiDict は IPAdic の品詞体系に写して足します。UniDic は手元でビルドできます
 - **辞書のマージと修復**: 既存の辞書に MeCab 形式の CSV を足せます。`hasami repair` は、誤読や誤った品詞の元になるエントリを直すか取り除きます
@@ -186,12 +186,13 @@ for token in tokens:
 ## 辞書
 
 配布辞書は 3 つあり、リリースに添付しています（リポジトリには置いていません）。
+下表は v26.9.107 の非圧縮 `.hsd` の大きさです（MB は 1,000,000B）。
 
 | 辞書 | 内容 | 大きさ | 推奨用途 |
 |------|------|------:|---------|
-| `ipadic` | IPAdic 単体 | 18 MB | 軽量・基本用途 |
-| `ipadic-neologd` | IPAdic + NEologd | 222 MB | 新語・固有名詞対応 |
-| `ipadic-neologd-sudachi` | IPAdic + NEologd + SudachiDict | 238 MB | **推奨**（最大語彙） |
+| `ipadic` | IPAdic 単体 | 16.5 MB | 軽量・基本用途 |
+| `ipadic-neologd` | IPAdic + NEologd | 206.6 MB | 新語・固有名詞対応 |
+| `ipadic-neologd-sudachi` | IPAdic + NEologd + SudachiDict | 221.0 MB | **推奨**（最大語彙） |
 
 - [docs/dictionaries.md](docs/dictionaries.md): 取り方のオプション、置き場所、上流のソースからのビルド、手動での構築、辞書形式（.hsd）、配布辞書のライセンス
 - [docs/dictionary-repair.md](docs/dictionary-repair.md): `hasami repair` の修復（文や句の名詞・数と単位の組の削除、一般語の固有名詞の降格、外国人名の除去）
@@ -211,15 +212,126 @@ flowchart TD
 
 ## ベンチマーク
 
-livedoor ニュースコーパスの本文 132,876 行（24.3MB）を標準入力から読み、MeCab 形式で出力するまでの時間です（Apple M2）。
+2026-10-05、この PC で固定した正式版を再測定しました。AMD Ryzen 7 5700X・搭載 RAM 32 GiB、Windows 11 Home 10.0.26300 x64。
+入力は青空文庫の夏目漱石『坊っちゃん』482 行・265,281 B。Rust 1.99.0、Python 3.14.8、Temurin Java 27 を使いました。
 
-| | ipadic | ipadic-neologd-sudachi |
-|---|---:|---:|
-| MeCab 0.996（`mecab -b 1000000`） | 3.09s | — |
-| hasami（`-j 1`） | 1.24s | 1.62s |
-| hasami（既定。CPU の数だけ並列） | 0.43s | 0.49s |
+| 実装 | 版 | 辞書 |
+| --- | --- | --- |
+| hasami Rust / 公式 PyO3 | v26.9.107、同じ [commit 1c7564aa](https://github.com/owayo/hasami/commit/1c7564aa3ad1031d9cf429d57e42aabec781a755) | 同版の配布 v5 辞書 3 種 |
+| MeCab C / mecab-python3 | 0.996 / 1.0.12、同じ同梱 DLL | ipadic 1.0.0 のコンパイル済み UTF-8 IPAdic |
+| Sudachi Java | 0.8.2 | SudachiDict 20260723.1 core / V1、A モード |
+| sudachi.rs / SudachiPy | 0.7.0 | Java 版と同じ辞書・A モード |
 
-表の値は、未知語の品詞を unk.def のテンプレートすべてから選ぶようにする前に測ったもので、この変更で解析の時間は約 15% 増えています（ipadic・推奨辞書とも）。辞書のロードは 3 辞書とも 1ms 未満です。ライブラリだけの解析速度と計測の方法は [docs/benchmark.md](docs/benchmark.md) にあります。
+全行を 10 周ウォームアップし、10 周を計測する新しいプロセスを、順序を変えて 6 ラウンド実行しました。
+全行解析は 1 周の中央値（60 標本）、IQR は四分位範囲です。ロードとロード＋最初の 1 行は各 6 標本。
+API 区間は解析・表層・UTF-8 位置・checksum の消費を含み、入力読込と JSON 書式化は区間外です。
+解析を呼ぶスレッドは 1 本で、Java の GC/JIT の補助スレッドも通常動作のままです。
+
+### ネイティブ API
+
+| 実装・辞書 | ロード ms | ロード＋初回 ms | 全行解析 ms | IQR ms | CV |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| hasami / IPAdic | 0.190 | 0.255 | 18.530 | 1.174 | 0.04 |
+| hasami / IPAdic + NEologd | 0.204 | 0.268 | 20.068 | 0.802 | 0.04 |
+| hasami / IPAdic + NEologd + SudachiDict | 0.236 | 0.311 | 20.225 | 0.838 | 0.05 |
+| MeCab C / IPAdic | 0.433 | 0.463 | 14.871 | 0.413 | 0.03 |
+| Sudachi Java / core A | 95.613 | 103.301 | 91.183 | 5.115 | 0.13 |
+| sudachi.rs / core A | 34.729 | 34.791 | 68.435 | 1.752 | 0.02 |
+
+### Python API
+
+呼出し・トークンオブジェクトの生成と処理・UTF-8 変換・checksum の Python ループを含みます。モジュール import はロード区間の外です。
+
+| 実装・辞書 | ロード ms | ロード＋初回 ms | 全行解析 ms | IQR ms | CV |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| hasami Python / IPAdic | 0.188 | 0.263 | 213.939 | 4.679 | 0.03 |
+| hasami Python / IPAdic + NEologd | 0.204 | 0.300 | 217.167 | 13.625 | 0.04 |
+| hasami Python / IPAdic + NEologd + SudachiDict | 0.205 | 0.273 | 215.350 | 8.960 | 0.03 |
+| mecab-python3 / IPAdic | 2.146 | 2.192 | 206.619 | 10.531 | 0.05 |
+| SudachiPy / core A | 48.170 | 48.308 | 269.983 | 10.137 | 0.04 |
+
+### プロセス全体の時間と最大メモリ
+
+hyperfine は上流 CLI の比較ではなく、専用アダプタの起動・入力・ロード・全行解析・測定 JSON 出力までの中央値（warmup 2・10 回）です。
+最大 Working Set は入力・辞書・runtime・warmup・全反復を含むプロセス全体の中央値（6 プロセス）で、初回だけの値ではありません。
+macOS/Linux の RSS と区別しています。
+
+| 実装・辞書 | プロセス全体 ms | IQR ms | 最大 Working Set MiB |
+| --- | ---: | ---: | ---: |
+| hasami / IPAdic | 34.979 | 1.296 | 19.875 |
+| hasami / IPAdic + NEologd | 54.279 | 1.010 | 59.209 |
+| hasami / IPAdic + NEologd + SudachiDict | 56.034 | 1.476 | 64.680 |
+| hasami Python / IPAdic | 357.565 | 12.746 | 34.098 |
+| hasami Python / IPAdic + NEologd | 372.207 | 6.549 | 73.559 |
+| hasami Python / IPAdic + NEologd + SudachiDict | 371.301 | 7.146 | 78.891 |
+| MeCab C / IPAdic | 35.177 | 0.909 | 24.889 |
+| mecab-python3 / IPAdic | 403.431 | 3.422 | 39.799 |
+| Sudachi Java / core A | 536.960 | 5.553 | 291.406 |
+| sudachi.rs / core A | 143.043 | 2.455 | 127.148 |
+| SudachiPy / core A | 531.237 | 6.673 | 143.025 |
+
+入力と hasami 3 辞書・SudachiDict は前回と同じハッシュです。MeCab の辞書バイナリは前回の Mac と一部異なります。
+各エンジンのネイティブ/Python は、全行の表層・位置・品詞・読み・原形が一致しました。
+キャッシュは温まっており、全体 CPU 使用率は計測プロセスを含む期間平均で中央値 8.2%、範囲 6.8〜16.3%でした。
+外れ値を削除していません。Java の変動が残り、異なる OS の時間差や辞書内容の差をエンジン単独の改善率には換算しません。
+
+条件・辞書ハッシュ・全反復・fixture の回帰確認は [Windows の測定記録](docs/measurements/analyzer-comparison-20261005-windows/README.md) にあります。
+精度は自作の 6 文・25 トークンの fixture で確認しただけで、一般文章の精度は未計測です。
+
+<details>
+<summary>2026-10-04 の測定（Apple M2 / macOS）</summary>
+
+2026-10-04、測定時点の最新の正式版を比較しました。Apple M2・24 GiB、macOS 27.0.1 ARM64。
+入力は青空文庫の夏目漱石『坊っちゃん』482 行・265,281 B。Rust 1.99.0、Python 3.14.8、Temurin Java 27 を使い、解析を呼ぶスレッドは 1 本です。
+
+| 実装 | 版 | 辞書 |
+| --- | --- | --- |
+| hasami Rust / 公式 PyO3 | v26.9.107、同じ [commit 1c7564aa](https://github.com/owayo/hasami/commit/1c7564aa3ad1031d9cf429d57e42aabec781a755) | 同版の配布 v5 辞書 3 種 |
+| MeCab C | 0.996 | UTF-8 IPAdic 2.7.0-20070801 |
+| mecab-python3 | 1.0.12、同梱 MeCab 0.996 | C 版と同じ IPAdic |
+| Sudachi Java | 0.8.2 | SudachiDict 20260723.1 core / V1、A モード |
+| sudachi.rs / SudachiPy | 0.7.0 | Java 版と同じ辞書・A モード |
+
+ロード後に全行を 10 周ウォームアップし、10 周を計測するプロセスを、順序を変えて 6 ラウンド実行しました。
+解析は全行 1 周の中央値（60 標本）、IQR は四分位範囲です。ロードは解析器を作る時間、初回はロード開始から最初の 1 行の結果を消費するまで（各 6 標本）。
+API 区間は解析・表層と UTF-8 位置の取得・checksum の消費を含み、ファイル読込と JSON 書式化は含みません。
+
+### ネイティブ API
+
+| 実装・辞書 | ロード ms | ロード＋初回 ms | 全行解析 ms | IQR ms |
+| --- | ---: | ---: | ---: | ---: |
+| hasami / IPAdic | 0.724 | 0.761 | 18.415 | 1.884 |
+| hasami / IPAdic + NEologd | 0.649 | 0.684 | 19.481 | 1.536 |
+| hasami / IPAdic + NEologd + SudachiDict | 0.606 | 0.640 | 20.022 | 3.515 |
+| MeCab C / IPAdic | 3.770 | 4.193 | 18.921 | 3.192 |
+| Sudachi Java / core A | 91.775 | 100.971 | 131.200 | 28.217 |
+| sudachi.rs / core A | 28.722 | 28.766 | 59.651 | 5.340 |
+
+### Python API
+
+呼出し・トークンオブジェクトの生成と処理・UTF-8 変換・checksum の Python ループを含みます。モジュール import はロード区間の外です。
+SudachiPy は sudachi.rs のバインディングです。ネイティブとの時間差には実行器の費用も含まれます。
+
+| 実装・辞書 | ロード ms | ロード＋初回 ms | 全行解析 ms | IQR ms |
+| --- | ---: | ---: | ---: | ---: |
+| hasami Python / IPAdic | 0.967 | 1.093 | 236.672 | 21.157 |
+| hasami Python / IPAdic + NEologd | 0.674 | 0.733 | 248.431 | 39.270 |
+| hasami Python / IPAdic + NEologd + SudachiDict | 0.808 | 0.861 | 231.548 | 33.687 |
+| mecab-python3 / IPAdic | 2.953 | 3.015 | 234.143 | 65.465 |
+| SudachiPy / core A | 33.684 | 33.788 | 272.716 | 39.225 |
+
+各エンジンのネイティブ/Python は、全行の表層・位置・品詞・読み・原形が一致しました。
+キャッシュは温まっており、他のアプリと OS の負荷は残っています。特に Java/Rust Sudachi の変動が大きく、数値から安定した速度比は主張しません。
+hasami の修復済み IPAdic、MeCab の IPAdic、SudachiDict は内容と分割単位が違うため、辞書から切り離したエンジン単独の優劣には換算できません。
+
+条件・辞書ハッシュ・全反復・プロセス全体の hyperfine・RSS は [測定記録](docs/measurements/analyzer-comparison-20261004/README.md) にあります。
+精度は 6 文の自作 fixture で回帰確認しただけで、一般文章の精度は未計測です。過去の CLI 比較は [docs/benchmark.md](docs/benchmark.md) に残しています。
+
+main の [dbcbb027](https://github.com/owayo/hasami/commit/dbcbb0273f19837f8d90a280e809c816e6064e0f) も Rust/Python 共通で再測定しました。
+解析ライブラリのソースは v26.9.107 と同一で、今回は変動が大きかったため、主表は正式リリース版の結果を維持しています。
+全標本・条件・結果は [main の再測定記録](docs/measurements/analyzer-comparison-20261004-main/README.md) に残しています。
+
+</details>
 
 ## 開発
 

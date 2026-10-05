@@ -1,0 +1,83 @@
+{
+  "assets": {
+    "hasami": [
+      {
+        "name": "ipadic.hsd",
+        "url": "https://github.com/owayo/hasami/releases/download/v26.9.107/ipadic.hsd",
+        "sha256": "f4c26a641c835c196ee78e49fd846952ba3fcd107ac9811b4e0edb85e1358b8a"
+      },
+      {
+        "name": "ipadic-neologd.hsd",
+        "url": "https://github.com/owayo/hasami/releases/download/v26.9.107/ipadic-neologd.hsd",
+        "sha256": "c93cbc611ff0696696c9efef793906c4a004e2f53428ba589f563a2743aaf122"
+      },
+      {
+        "name": "ipadic-neologd-sudachi.hsd",
+        "url": "https://github.com/owayo/hasami/releases/download/v26.9.107/ipadic-neologd-sudachi.hsd",
+        "sha256": "a06e69d1c12959eca3e0e2a383acc9824c89858f9ebc1f5bbdbf4d374ba47819"
+      }
+    ],
+    "sudachi": {
+      "version": "20260723.1-core-V1",
+      "url": "https://files.pythonhosted.org/packages/85/af/ba8419f684865b8cca587e01cedb41ba83fbdc985d75ab9e6ff38fdedf1a/sudachidict_core-20260723.1-py3-none-any.whl",
+      "sha256": "2b711055dca03423869e491eca0ddbe3e17c4d7418ed738fd7c75d4e0eb9e4b1",
+      "dictionary_sha256": "b2d8c0c3ece5b5244c3db66c5be9e36dd1f7d73f6e7e6ce68c4ef2ee8640c95b"
+    },
+    "aozora": {
+      "title": "坊っちゃん",
+      "author": "夏目漱石",
+      "card": "https://www.aozora.gr.jp/cards/000148/card752.html",
+      "usage": "https://www.aozora.gr.jp/guide/kijyunn.html",
+      "rights": "著作権保護期間が終了した日本語原著。青空文庫の著作権の切れている作品の規準に従い利用する。",
+      "url": "https://www.aozora.gr.jp/cards/000148/files/752_ruby_2438.zip",
+      "sha256": "53c4d86033d0e4590c0354df5fec2709820ef21c09fa402826ff33376ec21228"
+    },
+    "windows_mecab": {
+      "header_url": "https://raw.githubusercontent.com/taku910/mecab/61b90ba6e669dc2d7d533d4a80d206f3b31d52b1/mecab/src/mecab.h",
+      "header_sha256": "2fcfaa3659bd693c17bc564610b99c07d23470b1b3a36ee04a8d4bbaf3d26857",
+      "ipadic_url": "https://files.pythonhosted.org/packages/e7/4e/c459f94d62a0bef89f866857bc51b9105aff236b83928618315b41a26b7b/ipadic-1.0.0.tar.gz",
+      "ipadic_sha256": "f5923d31eca6131acaaf18ed28d8998665b1347b640d3a6476f64650e9a71c07",
+      "ipadic_version": "2.7.0-20070801 (ipadic 1.0.0 precompiled UTF-8)"
+    }
+  },
+  "mecab": {
+    "version": "0.996",
+    "dictionary": {
+      "files": {
+        "char.bin": {
+          "size": 262496,
+          "sha256": "81bba502ae48fa005a374819f15e44452eb68086a8b323ec20a044d514400832"
+        },
+        "COPYING": {
+          "size": 3795,
+          "sha256": "fca02d9adb601d101eccdf3131119abfff2d9c825ef5c759d7a89ebbaa972099"
+        },
+        "dicrc": {
+          "size": 693,
+          "sha256": "add6bb131a75e69478961ea59712541ace3779f7c5daa4da80d281f097c9d4d1"
+        },
+        "matrix.bin": {
+          "size": 3463716,
+          "sha256": "ee44d7350cdcb680ebd699f83e121be1dc63310f8832d55bcb537a068177611a"
+        },
+        "mecabrc": {
+          "size": 47,
+          "sha256": "cf91ca4aec6bbf596eda5034aefb73ae90999678b59f20ce3deb35d91fddb009"
+        },
+        "sys.dic": {
+          "size": 49199027,
+          "sha256": "223af63996d5d9a104d8c8baaf32029fbbf6a370d7dff33fe19fda2e92ac0ac1"
+        },
+        "unk.dic": {
+          "size": 5684,
+          "sha256": "f0bf15e3e28259f4470b9c1e775d98bef53207d4b09afcd6d8545209b7b53f88"
+        },
+        "version": {
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      },
+      "sha256": "9979f4863f645e466d4579a674176e512329e7c8c8b6478d6c24208c94daa740"
+    }
+  }
+}

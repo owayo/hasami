@@ -1,0 +1,24 @@
+{
+  "target": "fixed official releases; no dependency update for this Windows remeasurement",
+  "hasami": {
+    "tag": "v26.9.107",
+    "commit": "1c7564aa3ad1031d9cf429d57e42aabec781a755",
+    "python": "official PyO3 from same commit"
+  },
+  "mecab": {
+    "version": "0.996",
+    "binding": "mecab-python3 1.0.12",
+    "native_and_python": "same Windows wheel DLL"
+  },
+  "sudachi-java": "0.8.2",
+  "sudachi-rs": {
+    "version": "0.7.0",
+    "commit": "5de0410b6edfd428fc510cc9763440772e9619d5"
+  },
+  "sudachipy": "0.7.0",
+  "sudachidict": "20260723.1 core/V1; mode A; built-in defaults",
+  "jvm_args": [
+    "-Xms256m",
+    "-Xmx1g"
+  ]
+}

@@ -1,0 +1,536 @@
+{
+  "gold": {
+    "size": 2356,
+    "sha256": "419feb0f564fea4285d8dc798b369e1d445b230f842d2c3b7455694c9d504e74"
+  },
+  "results": {
+    "hasami-ipadic": {
+      "lines": 6,
+      "span": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "correct": 25,
+        "predicted": 25,
+        "gold": 25
+      },
+      "boundary": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "correct": 19,
+        "predicted": 19,
+        "gold": 19
+      },
+      "fields": {
+        "pos": {
+          "correct": 25,
+          "gold": 25,
+          "matched_spans": 25,
+          "available": 25,
+          "end_to_end_accuracy": 1.0,
+          "coverage": 1.0,
+          "conditional_accuracy": 1.0
+        },
+        "reading": {
+          "correct": 19,
+          "gold": 19,
+          "matched_spans": 19,
+          "available": 19,
+          "end_to_end_accuracy": 1.0,
+          "coverage": 1.0,
+          "conditional_accuracy": 1.0
+        },
+        "lemma": {
+          "correct": 19,
+          "gold": 19,
+          "matched_spans": 19,
+          "available": 19,
+          "end_to_end_accuracy": 1.0,
+          "coverage": 1.0,
+          "conditional_accuracy": 1.0
+        }
+      }
+    },
+    "hasami-neologd": {
+      "lines": 6,
+      "span": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "correct": 25,
+        "predicted": 25,
+        "gold": 25
+      },
+      "boundary": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "correct": 19,
+        "predicted": 19,
+        "gold": 19
+      },
+      "fields": {
+        "pos": {
+          "correct": 25,
+          "gold": 25,
+          "matched_spans": 25,
+          "available": 25,
+          "end_to_end_accuracy": 1.0,
+          "coverage": 1.0,
+          "conditional_accuracy": 1.0
+        },
+        "reading": {
+          "correct": 19,
+          "gold": 19,
+          "matched_spans": 19,
+          "available": 19,
+          "end_to_end_accuracy": 1.0,
+          "coverage": 1.0,
+          "conditional_accuracy": 1.0
+        },
+        "lemma": {
+          "correct": 19,
+          "gold": 19,
+          "matched_spans": 19,
+          "available": 19,
+          "end_to_end_accuracy": 1.0,
+          "coverage": 1.0,
+          "conditional_accuracy": 1.0
+        }
+      }
+    },
+    "hasami-merged": {
+      "lines": 6,
+      "span": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "correct": 25,
+        "predicted": 25,
+        "gold": 25
+      },
+      "boundary": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "correct": 19,
+        "predicted": 19,
+        "gold": 19
+      },
+      "fields": {
+        "pos": {
+          "correct": 25,
+          "gold": 25,
+          "matched_spans": 25,
+          "available": 25,
+          "end_to_end_accuracy": 1.0,
+          "coverage": 1.0,
+          "conditional_accuracy": 1.0
+        },
+        "reading": {
+          "correct": 19,
+          "gold": 19,
+          "matched_spans": 19,
+          "available": 19,
+          "end_to_end_accuracy": 1.0,
+          "coverage": 1.0,
+          "conditional_accuracy": 1.0
+        },
+        "lemma": {
+          "correct": 19,
+          "gold": 19,
+          "matched_spans": 19,
+          "available": 19,
+          "end_to_end_accuracy": 1.0,
+          "coverage": 1.0,
+          "conditional_accuracy": 1.0
+        }
+      }
+    },
+    "hasami-python-ipadic": {
+      "lines": 6,
+      "span": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "correct": 25,
+        "predicted": 25,
+        "gold": 25
+      },
+      "boundary": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "correct": 19,
+        "predicted": 19,
+        "gold": 19
+      },
+      "fields": {
+        "pos": {
+          "correct": 25,
+          "gold": 25,
+          "matched_spans": 25,
+          "available": 25,
+          "end_to_end_accuracy": 1.0,
+          "coverage": 1.0,
+          "conditional_accuracy": 1.0
+        },
+        "reading": {
+          "correct": 19,
+          "gold": 19,
+          "matched_spans": 19,
+          "available": 19,
+          "end_to_end_accuracy": 1.0,
+          "coverage": 1.0,
+          "conditional_accuracy": 1.0
+        },
+        "lemma": {
+          "correct": 19,
+          "gold": 19,
+          "matched_spans": 19,
+          "available": 19,
+          "end_to_end_accuracy": 1.0,
+          "coverage": 1.0,
+          "conditional_accuracy": 1.0
+        }
+      }
+    },
+    "hasami-python-neologd": {
+      "lines": 6,
+      "span": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "correct": 25,
+        "predicted": 25,
+        "gold": 25
+      },
+      "boundary": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "correct": 19,
+        "predicted": 19,
+        "gold": 19
+      },
+      "fields": {
+        "pos": {
+          "correct": 25,
+          "gold": 25,
+          "matched_spans": 25,
+          "available": 25,
+          "end_to_end_accuracy": 1.0,
+          "coverage": 1.0,
+          "conditional_accuracy": 1.0
+        },
+        "reading": {
+          "correct": 19,
+          "gold": 19,
+          "matched_spans": 19,
+          "available": 19,
+          "end_to_end_accuracy": 1.0,
+          "coverage": 1.0,
+          "conditional_accuracy": 1.0
+        },
+        "lemma": {
+          "correct": 19,
+          "gold": 19,
+          "matched_spans": 19,
+          "available": 19,
+          "end_to_end_accuracy": 1.0,
+          "coverage": 1.0,
+          "conditional_accuracy": 1.0
+        }
+      }
+    },
+    "hasami-python-merged": {
+      "lines": 6,
+      "span": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "correct": 25,
+        "predicted": 25,
+        "gold": 25
+      },
+      "boundary": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "correct": 19,
+        "predicted": 19,
+        "gold": 19
+      },
+      "fields": {
+        "pos": {
+          "correct": 25,
+          "gold": 25,
+          "matched_spans": 25,
+          "available": 25,
+          "end_to_end_accuracy": 1.0,
+          "coverage": 1.0,
+          "conditional_accuracy": 1.0
+        },
+        "reading": {
+          "correct": 19,
+          "gold": 19,
+          "matched_spans": 19,
+          "available": 19,
+          "end_to_end_accuracy": 1.0,
+          "coverage": 1.0,
+          "conditional_accuracy": 1.0
+        },
+        "lemma": {
+          "correct": 19,
+          "gold": 19,
+          "matched_spans": 19,
+          "available": 19,
+          "end_to_end_accuracy": 1.0,
+          "coverage": 1.0,
+          "conditional_accuracy": 1.0
+        }
+      }
+    },
+    "mecab-ipadic": {
+      "lines": 6,
+      "span": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "correct": 25,
+        "predicted": 25,
+        "gold": 25
+      },
+      "boundary": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "correct": 19,
+        "predicted": 19,
+        "gold": 19
+      },
+      "fields": {
+        "pos": {
+          "correct": 25,
+          "gold": 25,
+          "matched_spans": 25,
+          "available": 25,
+          "end_to_end_accuracy": 1.0,
+          "coverage": 1.0,
+          "conditional_accuracy": 1.0
+        },
+        "reading": {
+          "correct": 19,
+          "gold": 19,
+          "matched_spans": 19,
+          "available": 19,
+          "end_to_end_accuracy": 1.0,
+          "coverage": 1.0,
+          "conditional_accuracy": 1.0
+        },
+        "lemma": {
+          "correct": 19,
+          "gold": 19,
+          "matched_spans": 19,
+          "available": 19,
+          "end_to_end_accuracy": 1.0,
+          "coverage": 1.0,
+          "conditional_accuracy": 1.0
+        }
+      }
+    },
+    "mecab-python-ipadic": {
+      "lines": 6,
+      "span": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "correct": 25,
+        "predicted": 25,
+        "gold": 25
+      },
+      "boundary": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "correct": 19,
+        "predicted": 19,
+        "gold": 19
+      },
+      "fields": {
+        "pos": {
+          "correct": 25,
+          "gold": 25,
+          "matched_spans": 25,
+          "available": 25,
+          "end_to_end_accuracy": 1.0,
+          "coverage": 1.0,
+          "conditional_accuracy": 1.0
+        },
+        "reading": {
+          "correct": 19,
+          "gold": 19,
+          "matched_spans": 19,
+          "available": 19,
+          "end_to_end_accuracy": 1.0,
+          "coverage": 1.0,
+          "conditional_accuracy": 1.0
+        },
+        "lemma": {
+          "correct": 19,
+          "gold": 19,
+          "matched_spans": 19,
+          "available": 19,
+          "end_to_end_accuracy": 1.0,
+          "coverage": 1.0,
+          "conditional_accuracy": 1.0
+        }
+      }
+    },
+    "sudachi-java-A": {
+      "lines": 6,
+      "span": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "correct": 25,
+        "predicted": 25,
+        "gold": 25
+      },
+      "boundary": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "correct": 19,
+        "predicted": 19,
+        "gold": 19
+      },
+      "fields": {
+        "pos": {
+          "correct": 25,
+          "gold": 25,
+          "matched_spans": 25,
+          "available": 25,
+          "end_to_end_accuracy": 1.0,
+          "coverage": 1.0,
+          "conditional_accuracy": 1.0
+        },
+        "reading": {
+          "correct": 17,
+          "gold": 19,
+          "matched_spans": 19,
+          "available": 19,
+          "end_to_end_accuracy": 0.8947368421052632,
+          "coverage": 1.0,
+          "conditional_accuracy": 0.8947368421052632
+        },
+        "lemma": {
+          "correct": 19,
+          "gold": 19,
+          "matched_spans": 19,
+          "available": 19,
+          "end_to_end_accuracy": 1.0,
+          "coverage": 1.0,
+          "conditional_accuracy": 1.0
+        }
+      }
+    },
+    "sudachi-rs-A": {
+      "lines": 6,
+      "span": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "correct": 25,
+        "predicted": 25,
+        "gold": 25
+      },
+      "boundary": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "correct": 19,
+        "predicted": 19,
+        "gold": 19
+      },
+      "fields": {
+        "pos": {
+          "correct": 25,
+          "gold": 25,
+          "matched_spans": 25,
+          "available": 25,
+          "end_to_end_accuracy": 1.0,
+          "coverage": 1.0,
+          "conditional_accuracy": 1.0
+        },
+        "reading": {
+          "correct": 17,
+          "gold": 19,
+          "matched_spans": 19,
+          "available": 19,
+          "end_to_end_accuracy": 0.8947368421052632,
+          "coverage": 1.0,
+          "conditional_accuracy": 0.8947368421052632
+        },
+        "lemma": {
+          "correct": 19,
+          "gold": 19,
+          "matched_spans": 19,
+          "available": 19,
+          "end_to_end_accuracy": 1.0,
+          "coverage": 1.0,
+          "conditional_accuracy": 1.0
+        }
+      }
+    },
+    "sudachi-python-A": {
+      "lines": 6,
+      "span": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "correct": 25,
+        "predicted": 25,
+        "gold": 25
+      },
+      "boundary": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "correct": 19,
+        "predicted": 19,
+        "gold": 19
+      },
+      "fields": {
+        "pos": {
+          "correct": 25,
+          "gold": 25,
+          "matched_spans": 25,
+          "available": 25,
+          "end_to_end_accuracy": 1.0,
+          "coverage": 1.0,
+          "conditional_accuracy": 1.0
+        },
+        "reading": {
+          "correct": 17,
+          "gold": 19,
+          "matched_spans": 19,
+          "available": 19,
+          "end_to_end_accuracy": 0.8947368421052632,
+          "coverage": 1.0,
+          "conditional_accuracy": 0.8947368421052632
+        },
+        "lemma": {
+          "correct": 19,
+          "gold": 19,
+          "matched_spans": 19,
+          "available": 19,
+          "end_to_end_accuracy": 1.0,
+          "coverage": 1.0,
+          "conditional_accuracy": 1.0
+        }
+      }
+    }
+  }
+}

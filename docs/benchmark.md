@@ -1,5 +1,16 @@
 # ベンチマーク
 
+## 2026-10-04：最新の正式版の API 比較
+
+hasami v26.9.107、MeCab 0.996、mecab-python3 1.0.12、Sudachi Java 0.8.2、
+sudachi.rs / SudachiPy 0.7.0 を『坊っちゃん』で比較した。
+ネイティブ/Python のロード・初回・全行解析の表は [README](../README.md#ベンチマーク)、
+辞書・入力のハッシュ、全反復、hyperfine と RSS は [測定記録](measurements/analyzer-comparison-20261004/README.md)。
+ページキャッシュは温まった条件で、各ライブラリを呼ぶ専用の実行器を測った。
+上流 CLI の標準入力から通常のトークン出力までを測る下の過去値とは、区間が異なる。
+
+## hasami bench の使い方
+
 ```bash
 # 同じ文を繰り返す
 hasami bench --dict dict/ipadic-neologd.hsd --text "東京都に住んでいる人々が増えている。" --iterations 100000
@@ -8,9 +19,10 @@ hasami bench --dict dict/ipadic-neologd.hsd --text "東京都に住んでいる�
 hasami bench --dict dict/ipadic-neologd.hsd --file corpus.txt
 ```
 
-livedoor ニュースコーパスの本文 132,876 行（24.3MB）で測った値。Apple M2（P コア 4 + E コア 4）。
+以下は livedoor ニュースコーパスの本文 132,876 行（24.3MB）で測った過去値。
+Apple M2（P コア 4 + E コア 4）。hasami の版と測定日時は当時の表に記録されておらず、最新版の比較には使わない。
 
-## 解析速度（ライブラリ、1 スレッド）
+## 過去値：解析速度（ライブラリ、1 スレッド）
 
 `Analyzer::try_tokenize` を行ごとに呼んで全行を解析する時間（`hasami bench --file` と同じ。出力の書式化なし）。
 
@@ -20,7 +32,7 @@ livedoor ニュースコーパスの本文 132,876 行（24.3MB）で測った�
 | ipadic-neologd | 1.29s | 19 MB/s |
 | ipadic-neologd-sudachi | 1.34s | 18 MB/s |
 
-## CLI（標準入力 → MeCab 形式）
+## 過去値：CLI（標準入力 → MeCab 形式）
 
 | | ipadic | ipadic-neologd-sudachi |
 |---|---:|---:|

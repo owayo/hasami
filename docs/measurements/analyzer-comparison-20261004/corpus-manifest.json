@@ -1,0 +1,15 @@
+{
+  "source": {
+    "title": "坊っちゃん",
+    "author": "夏目漱石",
+    "card": "https://www.aozora.gr.jp/cards/000148/card752.html",
+    "usage": "https://www.aozora.gr.jp/guide/kijyunn.html",
+    "rights": "著作権保護期間が終了した日本語原著。青空文庫の著作権の切れている作品の規準に従い利用する。",
+    "url": "https://www.aozora.gr.jp/cards/000148/files/752_ruby_2438.zip",
+    "sha256": "53c4d86033d0e4590c0354df5fec2709820ef21c09fa402826ff33376ec21228"
+  },
+  "extraction": "Shift_JIS to UTF-8; body after symbol guide and before attribution; remove ruby, ruby anchors and editorial markup; trim paragraph edges; one nonempty paragraph per line; retain chapter headings and author date",
+  "lines": 482,
+  "size": 265281,
+  "sha256": "710c0ab73499adc3aec9df91c0e5926fc32cb2392b9e3d36c52e21443feea4db"
+}

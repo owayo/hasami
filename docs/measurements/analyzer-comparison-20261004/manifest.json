@@ -1,0 +1,268 @@
+{
+  "schema": 1,
+  "date": "2026-10-03T16:55:50.688927+00:00",
+  "platform": "macOS-27.0.1-arm64-arm-64bit-Mach-O",
+  "cpu_model": "Apple M2",
+  "memory_bytes": 25769803776,
+  "cpu_count": 8,
+  "cache": "OS page cache uncontrolled; warmed by validation, not cold",
+  "scope": "surface+utf8-span; output formatting outside API interval",
+  "corpus": {
+    "path": "aozora-botchan-utf8-paragraphs",
+    "lines": 482,
+    "size": 265281,
+    "sha256": "710c0ab73499adc3aec9df91c0e5926fc32cb2392b9e3d36c52e21443feea4db"
+  },
+  "rounds": 6,
+  "warmup": 10,
+  "iterations": 10,
+  "tools": {
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28)",
+    "python": "Python 3.14.8",
+    "java": "openjdk version \"27\" 2026-09-15\nOpenJDK Runtime Environment Temurin-27+35 (build 27+35)\nOpenJDK 64-Bit Server VM Temurin-27+35 (build 27+35, mixed mode, sharing)",
+    "hyperfine": "hyperfine 1.20.0"
+  },
+  "analyzers": {
+    "hasami-ipadic": {
+      "dictionary": {
+        "size": 16493282,
+        "sha256": "f4c26a641c835c196ee78e49fd846952ba3fcd107ac9811b4e0edb85e1358b8a"
+      },
+      "expected": [
+        57110,
+        "1e5f5e2ab248b33f"
+      ],
+      "emitted_fields_sha256": "1ade40c1488788dd19152ea0cff369d8d72eb3c4c4a1d95042deb879b20359ef"
+    },
+    "hasami-neologd": {
+      "dictionary": {
+        "size": 206570094,
+        "sha256": "c93cbc611ff0696696c9efef793906c4a004e2f53428ba589f563a2743aaf122"
+      },
+      "expected": [
+        56214,
+        "c554a2dab5112305"
+      ],
+      "emitted_fields_sha256": "e2a6bd1a9815b76a6f00ab1e93496ea5ae7e157dc5aa4938c620a321054cea53"
+    },
+    "hasami-merged": {
+      "dictionary": {
+        "size": 220974766,
+        "sha256": "a06e69d1c12959eca3e0e2a383acc9824c89858f9ebc1f5bbdbf4d374ba47819"
+      },
+      "expected": [
+        55790,
+        "e04e334948e520dd"
+      ],
+      "emitted_fields_sha256": "2a9b9a15d6a7084a1dd23d708070aa666fe952f186168cd5c6677e8a08b50253"
+    },
+    "hasami-python-ipadic": {
+      "dictionary": {
+        "size": 16493282,
+        "sha256": "f4c26a641c835c196ee78e49fd846952ba3fcd107ac9811b4e0edb85e1358b8a"
+      },
+      "expected": [
+        57110,
+        "1e5f5e2ab248b33f"
+      ],
+      "emitted_fields_sha256": "1ade40c1488788dd19152ea0cff369d8d72eb3c4c4a1d95042deb879b20359ef"
+    },
+    "hasami-python-neologd": {
+      "dictionary": {
+        "size": 206570094,
+        "sha256": "c93cbc611ff0696696c9efef793906c4a004e2f53428ba589f563a2743aaf122"
+      },
+      "expected": [
+        56214,
+        "c554a2dab5112305"
+      ],
+      "emitted_fields_sha256": "e2a6bd1a9815b76a6f00ab1e93496ea5ae7e157dc5aa4938c620a321054cea53"
+    },
+    "hasami-python-merged": {
+      "dictionary": {
+        "size": 220974766,
+        "sha256": "a06e69d1c12959eca3e0e2a383acc9824c89858f9ebc1f5bbdbf4d374ba47819"
+      },
+      "expected": [
+        55790,
+        "e04e334948e520dd"
+      ],
+      "emitted_fields_sha256": "2a9b9a15d6a7084a1dd23d708070aa666fe952f186168cd5c6677e8a08b50253"
+    },
+    "mecab-ipadic": {
+      "dictionary": {
+        "files": {
+          "char.bin": {
+            "size": 262496,
+            "sha256": "81bba502ae48fa005a374819f15e44452eb68086a8b323ec20a044d514400832"
+          },
+          "dicrc": {
+            "size": 693,
+            "sha256": "add6bb131a75e69478961ea59712541ace3779f7c5daa4da80d281f097c9d4d1"
+          },
+          "left-id.def": {
+            "size": 55910,
+            "sha256": "6d07aea525bc9730a4a07d12cc9f50abef4700431c938840b68896e79c761fe4"
+          },
+          "matrix.bin": {
+            "size": 3463716,
+            "sha256": "ee44d7350cdcb680ebd699f83e121be1dc63310f8832d55bcb537a068177611a"
+          },
+          "pos-id.def": {
+            "size": 1477,
+            "sha256": "6a8a84243800970fd33327800d71477dbcacb3af71a7de572e1a98ce18f7fafb"
+          },
+          "rewrite.def": {
+            "size": 6241,
+            "sha256": "df412c702cfa8e061500ee9aa77c0e4d4e182eee2790b05cbe8be7adf784bc03"
+          },
+          "right-id.def": {
+            "size": 55910,
+            "sha256": "6d07aea525bc9730a4a07d12cc9f50abef4700431c938840b68896e79c761fe4"
+          },
+          "sys.dic": {
+            "size": 49198251,
+            "sha256": "db63ac77a468ec0c2f7fe01748013b72a0f80d41058d1f50b9affd958ecc7fa0"
+          },
+          "unk.dic": {
+            "size": 5690,
+            "sha256": "0fe65cbed6237cd0ef8a5eeab67015586a554484b86f1168cfa3edc041f4627a"
+          }
+        },
+        "sha256": "39c7b09cf4983eb6b33719f54fde57ecccfc1f4d26947511d7857b33062745a7"
+      },
+      "expected": [
+        57070,
+        "7c83b8a32df1dbaf"
+      ],
+      "emitted_fields_sha256": "8b2d3ef188312f86420cf99d372064b185122ed54cec992cda627041d675b92f"
+    },
+    "mecab-python-ipadic": {
+      "dictionary": {
+        "files": {
+          "char.bin": {
+            "size": 262496,
+            "sha256": "81bba502ae48fa005a374819f15e44452eb68086a8b323ec20a044d514400832"
+          },
+          "dicrc": {
+            "size": 693,
+            "sha256": "add6bb131a75e69478961ea59712541ace3779f7c5daa4da80d281f097c9d4d1"
+          },
+          "left-id.def": {
+            "size": 55910,
+            "sha256": "6d07aea525bc9730a4a07d12cc9f50abef4700431c938840b68896e79c761fe4"
+          },
+          "matrix.bin": {
+            "size": 3463716,
+            "sha256": "ee44d7350cdcb680ebd699f83e121be1dc63310f8832d55bcb537a068177611a"
+          },
+          "pos-id.def": {
+            "size": 1477,
+            "sha256": "6a8a84243800970fd33327800d71477dbcacb3af71a7de572e1a98ce18f7fafb"
+          },
+          "rewrite.def": {
+            "size": 6241,
+            "sha256": "df412c702cfa8e061500ee9aa77c0e4d4e182eee2790b05cbe8be7adf784bc03"
+          },
+          "right-id.def": {
+            "size": 55910,
+            "sha256": "6d07aea525bc9730a4a07d12cc9f50abef4700431c938840b68896e79c761fe4"
+          },
+          "sys.dic": {
+            "size": 49198251,
+            "sha256": "db63ac77a468ec0c2f7fe01748013b72a0f80d41058d1f50b9affd958ecc7fa0"
+          },
+          "unk.dic": {
+            "size": 5690,
+            "sha256": "0fe65cbed6237cd0ef8a5eeab67015586a554484b86f1168cfa3edc041f4627a"
+          }
+        },
+        "sha256": "39c7b09cf4983eb6b33719f54fde57ecccfc1f4d26947511d7857b33062745a7"
+      },
+      "expected": [
+        57070,
+        "7c83b8a32df1dbaf"
+      ],
+      "emitted_fields_sha256": "8b2d3ef188312f86420cf99d372064b185122ed54cec992cda627041d675b92f"
+    },
+    "sudachi-java-A": {
+      "dictionary": {
+        "size": 202219619,
+        "sha256": "b2d8c0c3ece5b5244c3db66c5be9e36dd1f7d73f6e7e6ce68c4ef2ee8640c95b"
+      },
+      "expected": [
+        58036,
+        "023c7894220a6337"
+      ],
+      "emitted_fields_sha256": "55798035576c99f17c7fe08b65be251f77c35e4928cc7ddb36115fe776375715"
+    },
+    "sudachi-rs-A": {
+      "dictionary": {
+        "size": 202219619,
+        "sha256": "b2d8c0c3ece5b5244c3db66c5be9e36dd1f7d73f6e7e6ce68c4ef2ee8640c95b"
+      },
+      "expected": [
+        58036,
+        "023c7894220a6337"
+      ],
+      "emitted_fields_sha256": "55798035576c99f17c7fe08b65be251f77c35e4928cc7ddb36115fe776375715"
+    },
+    "sudachi-python-A": {
+      "dictionary": {
+        "size": 202219619,
+        "sha256": "b2d8c0c3ece5b5244c3db66c5be9e36dd1f7d73f6e7e6ce68c4ef2ee8640c95b"
+      },
+      "expected": [
+        58036,
+        "023c7894220a6337"
+      ],
+      "emitted_fields_sha256": "55798035576c99f17c7fe08b65be251f77c35e4928cc7ddb36115fe776375715"
+    }
+  },
+  "binding_output_comparisons": [
+    {
+      "native": "hasami-ipadic",
+      "python": "hasami-python-ipadic",
+      "fields": "surface/start/end/pos/reading/lemma",
+      "identical": true
+    },
+    {
+      "native": "hasami-neologd",
+      "python": "hasami-python-neologd",
+      "fields": "surface/start/end/pos/reading/lemma",
+      "identical": true
+    },
+    {
+      "native": "hasami-merged",
+      "python": "hasami-python-merged",
+      "fields": "surface/start/end/pos/reading/lemma",
+      "identical": true
+    },
+    {
+      "native": "mecab-ipadic",
+      "python": "mecab-python-ipadic",
+      "fields": "surface/start/end/pos/reading/lemma",
+      "identical": true
+    },
+    {
+      "native": "sudachi-rs-A",
+      "python": "sudachi-python-A",
+      "fields": "surface/start/end/pos/reading/lemma",
+      "identical": true
+    }
+  ],
+  "implementations": {
+    "hasami": {
+      "version": "v26.9.107",
+      "commit": "1c7564aa3ad1031d9cf429d57e42aabec781a755"
+    },
+    "sudachi-rs": {
+      "version": "v0.7.0",
+      "commit": "5de0410b6edfd428fc510cc9763440772e9619d5"
+    },
+    "Sudachi Java": "0.8.2",
+    "MeCab C": "0.996",
+    "mecab-python3": "1.0.12",
+    "SudachiPy": "0.7.0"
+  }
+}

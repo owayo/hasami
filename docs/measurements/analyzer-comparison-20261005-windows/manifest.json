@@ -1,0 +1,296 @@
+{
+  "schema": 1,
+  "date": "2026-10-05T00:26:20.681201+00:00",
+  "platform": "Windows-11-10.0.26300-SP0",
+  "cpu_model": "AMD Ryzen 7 5700X 8-Core Processor",
+  "memory_bytes": 34284961792,
+  "cpu_count": 16,
+  "process_affinity_mask": 65535,
+  "system_affinity_mask": 65535,
+  "priority_class": 32,
+  "memory_metric": "PeakWorkingSetSize (K32GetProcessMemoryInfo after exit, retained process handle)",
+  "system_cpu_scope": "GetSystemTimes delta over each entire bench process; includes benchmark and other processes",
+  "cache": "OS page cache uncontrolled; warmed by validation, not cold",
+  "scope": "surface+utf8-span; output formatting outside API interval",
+  "corpus": {
+    "path": "aozora-botchan-utf8-paragraphs",
+    "lines": 482,
+    "size": 265281,
+    "sha256": "710c0ab73499adc3aec9df91c0e5926fc32cb2392b9e3d36c52e21443feea4db"
+  },
+  "rounds": 6,
+  "warmup": 10,
+  "iterations": 10,
+  "hyperfine_warmup": 2,
+  "hyperfine_runs": 10,
+  "tools": {
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28)",
+    "python": "Python 3.14.8",
+    "java": "openjdk version \"27\" 2026-09-15\nOpenJDK Runtime Environment Temurin-27+35 (build 27+35)\nOpenJDK 64-Bit Server VM Temurin-27+35 (build 27+35, mixed mode, sharing)",
+    "hyperfine": "hyperfine 1.20.0",
+    "cxx": "MSVC 19.51.36260.0 (x64, CMake Release)",
+    "cmake": "4.4.4",
+    "windows_sdk": "10.0.26100.0"
+  },
+  "analyzers": {
+    "hasami-ipadic": {
+      "dictionary": {
+        "size": 16493282,
+        "sha256": "f4c26a641c835c196ee78e49fd846952ba3fcd107ac9811b4e0edb85e1358b8a"
+      },
+      "expected": [
+        57110,
+        "1e5f5e2ab248b33f"
+      ],
+      "emitted_fields_sha256": "1ade40c1488788dd19152ea0cff369d8d72eb3c4c4a1d95042deb879b20359ef"
+    },
+    "hasami-neologd": {
+      "dictionary": {
+        "size": 206570094,
+        "sha256": "c93cbc611ff0696696c9efef793906c4a004e2f53428ba589f563a2743aaf122"
+      },
+      "expected": [
+        56214,
+        "c554a2dab5112305"
+      ],
+      "emitted_fields_sha256": "e2a6bd1a9815b76a6f00ab1e93496ea5ae7e157dc5aa4938c620a321054cea53"
+    },
+    "hasami-merged": {
+      "dictionary": {
+        "size": 220974766,
+        "sha256": "a06e69d1c12959eca3e0e2a383acc9824c89858f9ebc1f5bbdbf4d374ba47819"
+      },
+      "expected": [
+        55790,
+        "e04e334948e520dd"
+      ],
+      "emitted_fields_sha256": "2a9b9a15d6a7084a1dd23d708070aa666fe952f186168cd5c6677e8a08b50253"
+    },
+    "hasami-python-ipadic": {
+      "dictionary": {
+        "size": 16493282,
+        "sha256": "f4c26a641c835c196ee78e49fd846952ba3fcd107ac9811b4e0edb85e1358b8a"
+      },
+      "expected": [
+        57110,
+        "1e5f5e2ab248b33f"
+      ],
+      "emitted_fields_sha256": "1ade40c1488788dd19152ea0cff369d8d72eb3c4c4a1d95042deb879b20359ef"
+    },
+    "hasami-python-neologd": {
+      "dictionary": {
+        "size": 206570094,
+        "sha256": "c93cbc611ff0696696c9efef793906c4a004e2f53428ba589f563a2743aaf122"
+      },
+      "expected": [
+        56214,
+        "c554a2dab5112305"
+      ],
+      "emitted_fields_sha256": "e2a6bd1a9815b76a6f00ab1e93496ea5ae7e157dc5aa4938c620a321054cea53"
+    },
+    "hasami-python-merged": {
+      "dictionary": {
+        "size": 220974766,
+        "sha256": "a06e69d1c12959eca3e0e2a383acc9824c89858f9ebc1f5bbdbf4d374ba47819"
+      },
+      "expected": [
+        55790,
+        "e04e334948e520dd"
+      ],
+      "emitted_fields_sha256": "2a9b9a15d6a7084a1dd23d708070aa666fe952f186168cd5c6677e8a08b50253"
+    },
+    "mecab-ipadic": {
+      "dictionary": {
+        "files": {
+          "char.bin": {
+            "size": 262496,
+            "sha256": "81bba502ae48fa005a374819f15e44452eb68086a8b323ec20a044d514400832"
+          },
+          "COPYING": {
+            "size": 3795,
+            "sha256": "fca02d9adb601d101eccdf3131119abfff2d9c825ef5c759d7a89ebbaa972099"
+          },
+          "dicrc": {
+            "size": 693,
+            "sha256": "add6bb131a75e69478961ea59712541ace3779f7c5daa4da80d281f097c9d4d1"
+          },
+          "matrix.bin": {
+            "size": 3463716,
+            "sha256": "ee44d7350cdcb680ebd699f83e121be1dc63310f8832d55bcb537a068177611a"
+          },
+          "mecabrc": {
+            "size": 47,
+            "sha256": "cf91ca4aec6bbf596eda5034aefb73ae90999678b59f20ce3deb35d91fddb009"
+          },
+          "sys.dic": {
+            "size": 49199027,
+            "sha256": "223af63996d5d9a104d8c8baaf32029fbbf6a370d7dff33fe19fda2e92ac0ac1"
+          },
+          "unk.dic": {
+            "size": 5684,
+            "sha256": "f0bf15e3e28259f4470b9c1e775d98bef53207d4b09afcd6d8545209b7b53f88"
+          },
+          "version": {
+            "size": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        "sha256": "9979f4863f645e466d4579a674176e512329e7c8c8b6478d6c24208c94daa740"
+      },
+      "expected": [
+        57072,
+        "d115309df4cb690f"
+      ],
+      "emitted_fields_sha256": "76e5b529a542645ed006bc0d7e76877bc0634e63d58e28e2e53da10df2d4f39a"
+    },
+    "mecab-python-ipadic": {
+      "dictionary": {
+        "files": {
+          "char.bin": {
+            "size": 262496,
+            "sha256": "81bba502ae48fa005a374819f15e44452eb68086a8b323ec20a044d514400832"
+          },
+          "COPYING": {
+            "size": 3795,
+            "sha256": "fca02d9adb601d101eccdf3131119abfff2d9c825ef5c759d7a89ebbaa972099"
+          },
+          "dicrc": {
+            "size": 693,
+            "sha256": "add6bb131a75e69478961ea59712541ace3779f7c5daa4da80d281f097c9d4d1"
+          },
+          "matrix.bin": {
+            "size": 3463716,
+            "sha256": "ee44d7350cdcb680ebd699f83e121be1dc63310f8832d55bcb537a068177611a"
+          },
+          "mecabrc": {
+            "size": 47,
+            "sha256": "cf91ca4aec6bbf596eda5034aefb73ae90999678b59f20ce3deb35d91fddb009"
+          },
+          "sys.dic": {
+            "size": 49199027,
+            "sha256": "223af63996d5d9a104d8c8baaf32029fbbf6a370d7dff33fe19fda2e92ac0ac1"
+          },
+          "unk.dic": {
+            "size": 5684,
+            "sha256": "f0bf15e3e28259f4470b9c1e775d98bef53207d4b09afcd6d8545209b7b53f88"
+          },
+          "version": {
+            "size": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        "sha256": "9979f4863f645e466d4579a674176e512329e7c8c8b6478d6c24208c94daa740"
+      },
+      "expected": [
+        57072,
+        "d115309df4cb690f"
+      ],
+      "emitted_fields_sha256": "76e5b529a542645ed006bc0d7e76877bc0634e63d58e28e2e53da10df2d4f39a"
+    },
+    "sudachi-java-A": {
+      "dictionary": {
+        "size": 202219619,
+        "sha256": "b2d8c0c3ece5b5244c3db66c5be9e36dd1f7d73f6e7e6ce68c4ef2ee8640c95b"
+      },
+      "expected": [
+        58036,
+        "023c7894220a6337"
+      ],
+      "emitted_fields_sha256": "55798035576c99f17c7fe08b65be251f77c35e4928cc7ddb36115fe776375715"
+    },
+    "sudachi-rs-A": {
+      "dictionary": {
+        "size": 202219619,
+        "sha256": "b2d8c0c3ece5b5244c3db66c5be9e36dd1f7d73f6e7e6ce68c4ef2ee8640c95b"
+      },
+      "expected": [
+        58036,
+        "023c7894220a6337"
+      ],
+      "emitted_fields_sha256": "55798035576c99f17c7fe08b65be251f77c35e4928cc7ddb36115fe776375715"
+    },
+    "sudachi-python-A": {
+      "dictionary": {
+        "size": 202219619,
+        "sha256": "b2d8c0c3ece5b5244c3db66c5be9e36dd1f7d73f6e7e6ce68c4ef2ee8640c95b"
+      },
+      "expected": [
+        58036,
+        "023c7894220a6337"
+      ],
+      "emitted_fields_sha256": "55798035576c99f17c7fe08b65be251f77c35e4928cc7ddb36115fe776375715"
+    }
+  },
+  "binding_output_comparisons": [
+    {
+      "native": "hasami-ipadic",
+      "python": "hasami-python-ipadic",
+      "fields": "surface/start/end/pos/reading/lemma",
+      "identical": true
+    },
+    {
+      "native": "hasami-neologd",
+      "python": "hasami-python-neologd",
+      "fields": "surface/start/end/pos/reading/lemma",
+      "identical": true
+    },
+    {
+      "native": "hasami-merged",
+      "python": "hasami-python-merged",
+      "fields": "surface/start/end/pos/reading/lemma",
+      "identical": true
+    },
+    {
+      "native": "mecab-ipadic",
+      "python": "mecab-python-ipadic",
+      "fields": "surface/start/end/pos/reading/lemma",
+      "identical": true
+    },
+    {
+      "native": "sudachi-rs-A",
+      "python": "sudachi-python-A",
+      "fields": "surface/start/end/pos/reading/lemma",
+      "identical": true
+    }
+  ],
+  "raw_gold_line_endings": "CRLF checkout; parsed rows unchanged from previous fixture",
+  "windows_mecab": {
+    "assets": {
+      "header_url": "https://raw.githubusercontent.com/taku910/mecab/61b90ba6e669dc2d7d533d4a80d206f3b31d52b1/mecab/src/mecab.h",
+      "header_sha256": "2fcfaa3659bd693c17bc564610b99c07d23470b1b3a36ee04a8d4bbaf3d26857",
+      "ipadic_url": "https://files.pythonhosted.org/packages/e7/4e/c459f94d62a0bef89f866857bc51b9105aff236b83928618315b41a26b7b/ipadic-1.0.0.tar.gz",
+      "ipadic_sha256": "f5923d31eca6131acaaf18ed28d8998665b1347b640d3a6476f64650e9a71c07",
+      "ipadic_version": "2.7.0-20070801 (ipadic 1.0.0 precompiled UTF-8)"
+    },
+    "library": {
+      "package": "mecab-python3 1.0.12 Windows wheel (shared with native C API)",
+      "sha256": "d8ddc0791437ce8c4a187ae7c69a2f683ce423683b7a5ecfda1c4cef436c1cab"
+    }
+  },
+  "implementations": {
+    "target": "fixed official releases; no dependency update for this Windows remeasurement",
+    "hasami": {
+      "tag": "v26.9.107",
+      "commit": "1c7564aa3ad1031d9cf429d57e42aabec781a755",
+      "python": "official PyO3 from same commit"
+    },
+    "mecab": {
+      "version": "0.996",
+      "binding": "mecab-python3 1.0.12",
+      "native_and_python": "same Windows wheel DLL"
+    },
+    "sudachi-java": "0.8.2",
+    "sudachi-rs": {
+      "version": "0.7.0",
+      "commit": "5de0410b6edfd428fc510cc9763440772e9619d5"
+    },
+    "sudachipy": "0.7.0",
+    "sudachidict": "20260723.1 core/V1; mode A; built-in defaults",
+    "jvm_args": [
+      "-Xms256m",
+      "-Xmx1g"
+    ]
+  },
+  "installed_memory_bytes": 34359738368,
+  "memory_bytes_scope": "GlobalMemoryStatusEx visible physical RAM; installed DIMM capacity separately from Win32_PhysicalMemory"
+}
