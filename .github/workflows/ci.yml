@@ -23,6 +23,18 @@ env:
   MISE_LOCKED: "1"
 
 jobs:
+  dictionary-source-tests:
+    name: Dictionary source resolver tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-mise
+        with:
+          tools: python
+      - run: python3 -m unittest discover -s scripts -p 'test_dictionary_sources.py'
+
   quality:
     name: Quality (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

@@ -16,6 +16,14 @@ on:
         description: 辞書を作るコミット (リリースのタグ)
         type: string
         required: true
+      sources_artifact:
+        description: 最新版の取得版・SHA-256 を記録した artifact（更新ワークフロー用）
+        type: string
+        default: ""
+      update_exceptions:
+        description: 最新の辞書から例外表を生成し、通常の CI も実行する
+        type: boolean
+        default: false
   workflow_dispatch:
 
 permissions:
@@ -46,6 +54,13 @@ jobs:
         with:
           tools: rust python
 
+      - name: Download updated dictionary sources
+        if: ${{ inputs.sources_artifact != '' }}
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ inputs.sources_artifact }}
+          path: scripts
+
       # zstd は mise で入れられない（GitHub のリリースに Linux のバイナリが無い）ので apt で入れる
       - name: Install zstd
         run: |
@@ -71,6 +86,14 @@ jobs:
             ./target/release/hasami info --dict "dict/$name.hsd" --verify
             echo ""
           done
+
+      # 更新時は例外表も同じ辞書から作り、取得版と一緒にコミットする。
+      # リリースのタグビルドでは作り直さず、後段でタグに記録した表と照合する。
+      - name: Regenerate sentence exceptions
+        if: ${{ inputs.update_exceptions }}
+        run: |
+          ./target/release/hasami export-sentence-exceptions --dict dict/ipadic-neologd-sudachi.hsd \
+            --output src/sentence/builtin_exceptions.txt
 
       # hasami dict download は圧縮した方を取り、展開後の SHA-256 で確かめる。生のファイルも添付するので残す
       - name: Compress dictionaries
@@ -105,6 +128,7 @@ jobs:
             dict/*.hsd
             dict/*.hsd.zst
             dict/dictionaries.json
+            scripts/dictionary-sources.json
             THIRD_PARTY_LICENSES.md
           compression-level: 0
           retention-days: 7
@@ -128,3 +152,24 @@ jobs:
             echo "::error file=src/sentence/builtin_exceptions.txt::The built-in sentence exceptions differ from the recommended dictionary. Regenerate them from the dictionaries artifact with hasami export-sentence-exceptions --dict <dir>/dict/ipadic-neologd-sudachi.hsd --output src/sentence/builtin_exceptions.txt and commit the result"
             exit 1
           fi
+
+      # GITHUB_TOKEN で push しても通常の CI は起動しないため、コミット前にここで回す。
+      - name: Check updated sources and sentence exceptions
+        if: ${{ inputs.update_exceptions }}
+        env:
+          MISE_DISABLE_TOOLS: aqua:astral-sh/uv,github:PyO3/maturin
+        run: |
+          python3 -m unittest discover -s scripts -p 'test_dictionary_sources.py'
+          make ci
+
+      - name: Upload validated source update
+        if: ${{ inputs.update_exceptions }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: dictionary-source-update
+          path: |
+            scripts/dictionary-sources.json
+            src/sentence/builtin_exceptions.txt
+          if-no-files-found: error
+          retention-days: 7
+          overwrite: true

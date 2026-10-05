@@ -128,7 +128,7 @@ dict-download: release ## この版のリリースから配布辞書 3 つを di
 ## 辞書のビルド
 
 # 配布辞書 (ipadic / ipadic-neologd / ipadic-neologd-sudachi) は scripts/build-dict.sh が
-# 上流の固定版から作る。上流の版・取得・repair の手順はスクリプトにまとめてある。
+# dictionary-sources.json に記録した版から作る。上流の版は Actions が取得・検証して自動更新する。
 # スクリプトが呼ぶ python3 も mise.toml の版にするため、$(RUN) で包む
 BUILD_DICT := $(RUN) scripts/build-dict.sh --hasami $(HASAMI) --src $(DICT_SRC) --out $(DICT_OUT)
 
