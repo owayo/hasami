@@ -302,7 +302,11 @@ for (sentence, tokens) in analyzer.tokenize_sentences(text, &SplitOptions::defau
 
 `Token::is_negation` は否定の形態素か（助動詞「ない」「ぬ」「ん」「ず」、形容詞「ない」）を原形で判定する。
 `Token::mora_count` は発音（仮名が無ければ読み）からモーラ数を数える。拗音の小書き文字は直前の仮名と合わせて
-1 モーラ、促音・撥音・長音は 1 モーラ。
+1 モーラ、促音・撥音・長音は 1 モーラ。半角カナも同じ基準で数え、結合濁点・半濁点は独立した
+モーラにしない（`ｳﾞｨｰﾅｽ` は 4 モーラ）。
+
+`analyzer::format_mecab` / `push_mecab` は、品詞 4 項目・活用型・活用形・原形・読み・発音の
+9 項目を固定位置で出す。空の素性は `*`。以前の活用を省いた 7 項目形式から読みの列位置が変わった。
 
 ```rust
 use hasami::CoarsePos;

@@ -35,6 +35,7 @@
 //!   UniDic では `Noun`。
 //! - 表層形が記号だけの既知語（SudachiDict の絵文字の 名詞,一般 など）は辞書の品詞に従う。
 
+use crate::kana::{is_voicing_mark, to_katakana};
 use crate::lattice::Token;
 
 /// 辞書の品詞体系によらない粗い品詞
@@ -403,15 +404,6 @@ fn punctuation_kind(c: char) -> CoarsePos {
     }
 }
 
-/// ひらがなをカタカナに寄せる（ほかの字はそのまま）
-fn to_katakana(c: char) -> char {
-    match c {
-        // ぁ〜ゖ と ゝゞ はカタカナと 0x60 ずれて並ぶ
-        'ぁ'..='ゖ' | 'ゝ' | 'ゞ' => char::from_u32(c as u32 + 0x60).unwrap_or(c),
-        _ => c,
-    }
-}
-
 /// 直前の仮名と合わせて 1 モーラになる小書き文字（拗音・外来音）
 fn is_combining_small_kana(c: char) -> bool {
     matches!(
@@ -426,7 +418,10 @@ fn count_morae(s: &str) -> usize {
     // 直前の字が、小書き文字と合わせて 1 モーラになる仮名か
     let mut after_onset = false;
     for c in s.chars().map(to_katakana) {
-        if is_combining_small_kana(c) {
+        if is_voicing_mark(c) {
+            // 「キ + 濁点 + ャ」の濁点は独立したモーラでなく、拗音の付き先も切らない。
+            continue;
+        } else if is_combining_small_kana(c) {
             // 先頭・促音・長音・小書き文字の直後など、合わせる相手がなければ単独で 1 モーラ
             if !after_onset {
                 count += 1;
@@ -537,6 +532,22 @@ mod tests {
             reading: reading.into(),
             pronunciation: pronunciation.into(),
             ..token("語", "名詞,一般,*,*", "語")
+        }
+    }
+
+    #[test]
+    fn test_morae_are_independent_of_kana_width_and_combining_voicing() {
+        for (reading, count) in [
+            ("ｶﾞｯｺｳ", 4),
+            ("ｳﾞｨｰﾅｽ", 4),
+            ("キ\u{3099}ャップ", 3),
+            ("き\u{3099}ゃっぷ", 3),
+            ("ﾃｨｰｼｬﾂ", 4),
+            ("ﾊﾟﾋﾟﾌﾟﾍﾟﾎﾟ", 5),
+            ("ﾟﾞ", 0),
+            ("Ａﾞャ", 1),
+        ] {
+            assert_eq!(spoken(reading, reading).mora_count(), count, "{reading}");
         }
     }
 
@@ -1031,12 +1042,14 @@ mod tests {
     }
 
     /// 配布辞書のパス。`dict/` の配布辞書はリポジトリに置かない（`make dict` で作るか
-    /// `make dict-download` で取る）
+    /// `make dict-download` で取る）。`HASAMI_TEST_DICT_DIR` でビルド候補を検査できる。
     fn distributed_dicts() -> Vec<(&'static str, crate::Analyzer)> {
+        let dir = std::env::var("HASAMI_TEST_DICT_DIR")
+            .unwrap_or_else(|_| format!("{}/dict", env!("CARGO_MANIFEST_DIR")));
         ["ipadic", "ipadic-neologd", "ipadic-neologd-sudachi"]
             .into_iter()
             .map(|name| {
-                let path = format!("{}/dict/{name}.hsd", env!("CARGO_MANIFEST_DIR"));
+                let path = format!("{dir}/{name}.hsd");
                 let analyzer = crate::Analyzer::load(&path).unwrap_or_else(|e| {
                     panic!(
                         "{path}: {e}（`make dict` で作るか、`make dict-download` で取ったか確認）"

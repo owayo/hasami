@@ -7,6 +7,7 @@ Usage:
 """
 
 import argparse
+import csv
 import os
 import subprocess
 import sys
@@ -138,11 +139,10 @@ def extract_tokens(output, is_sudachi_rs=False):
             # sudachi.rs -a: surface\tpos\tnorm\tsurf\treading
             reading = parts[4] if len(parts) >= 5 else ""
         elif len(parts) >= 2:
-            # hasami format: surface \t pos,reading,pronunciation
-            fields = parts[1].split(",")
-            # hasami output: POS1,POS2,POS3,POS4,base_form,reading,pronunciation
-            if len(fields) >= 6:
-                reading = fields[5]
+            # IPAdic: 品詞4項目,活用型,活用形,原形,読み,発音
+            fields = next(csv.reader([parts[1]]))
+            if len(fields) >= 8:
+                reading = fields[7] if fields[7] != "*" else ""
         tokens.append((surface, reading))
     return tokens
 

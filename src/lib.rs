@@ -20,6 +20,8 @@ pub mod ffi;
 #[cfg(feature = "analyzer")]
 pub mod hsd;
 #[cfg(feature = "analyzer")]
+mod kana;
+#[cfg(feature = "analyzer")]
 pub mod lattice;
 #[cfg(feature = "analyzer")]
 pub mod pos;

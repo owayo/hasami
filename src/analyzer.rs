@@ -285,7 +285,9 @@ pub fn preferred_dict_in(dir: &Path) -> Option<PathBuf> {
     others.into_iter().next()
 }
 
-/// MeCab互換の出力フォーマット
+/// MeCab の IPAdic 形式（品詞 4 項目・活用型・活用形・原形・読み・発音の 9 項目）
+///
+/// 空の素性は `*` として出す。未知語も同じ列位置なので、読みの有無で列がずれない。
 pub fn format_mecab(tokens: &[Token]) -> String {
     let mut output = String::with_capacity(tokens.len() * 48 + 4);
     push_mecab(&mut output, tokens);
@@ -298,17 +300,31 @@ pub fn push_mecab(output: &mut String, tokens: &[Token]) {
         output.push_str(&token.surface);
         output.push('\t');
         output.push_str(&token.pos);
-        if !token.base_form.is_empty() {
+        for field in [
+            &token.conj_type,
+            &token.conj_form,
+            &token.base_form,
+            &token.reading,
+            &token.pronunciation,
+        ] {
             output.push(',');
-            output.push_str(&token.base_form);
-        }
-        if !token.reading.is_empty() {
-            output.push(',');
-            output.push_str(&token.reading);
-        }
-        if !token.pronunciation.is_empty() {
-            output.push(',');
-            output.push_str(&token.pronunciation);
+            if field.is_empty() {
+                output.push('*');
+            } else if field
+                .bytes()
+                .any(|b| matches!(b, b',' | b'"' | b'\r' | b'\n'))
+            {
+                output.push('"');
+                for c in field.chars() {
+                    if c == '"' {
+                        output.push('"');
+                    }
+                    output.push(c);
+                }
+                output.push('"');
+            } else {
+                output.push_str(field);
+            }
         }
         output.push('\n');
     }
@@ -574,6 +590,48 @@ mod tests {
     fn test_format_mecab_empty() {
         let output = format_mecab(&[]);
         assert_eq!(output, "EOS\n");
+    }
+
+    #[test]
+    fn test_format_mecab_keeps_conjugation_and_empty_field_positions() {
+        let mut token = make_analyzer().tokenize("猫").remove(0);
+        token.surface = "食べ".into();
+        token.pos = "動詞,自立,*,*".into();
+        token.conj_type = "一段".into();
+        token.conj_form = "連用形".into();
+        token.base_form = "食べる".into();
+        token.reading = "タベ".into();
+        token.pronunciation = "".into();
+        assert_eq!(
+            format_mecab(&[token.clone()]),
+            "食べ\t動詞,自立,*,*,一段,連用形,食べる,タベ,*\nEOS\n"
+        );
+        token.conj_type = "".into();
+        token.conj_form = "".into();
+        token.base_form = "".into();
+        token.reading = "".into();
+        assert_eq!(
+            format_mecab(&[token]),
+            "食べ\t動詞,自立,*,*,*,*,*,*,*\nEOS\n"
+        );
+    }
+
+    #[test]
+    fn test_format_mecab_quotes_features_containing_commas_and_quotes() {
+        let mut token = make_analyzer().tokenize("猫").remove(0);
+        token.base_form = "a,\"b\"".into();
+        token.reading = "".into();
+        token.pronunciation = "".into();
+        let output = format_mecab(&[token]);
+        let features = output.lines().next().unwrap().split_once('\t').unwrap().1;
+        let mut reader = csv::ReaderBuilder::new()
+            .has_headers(false)
+            .from_reader(features.as_bytes());
+        let fields = reader.records().next().unwrap().unwrap();
+        assert_eq!(fields.len(), 9);
+        assert_eq!(&fields[6], "a,\"b\"");
+        assert_eq!(&fields[7], "*");
+        assert_eq!(&fields[8], "*");
     }
 
     #[test]

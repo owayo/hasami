@@ -274,6 +274,16 @@ const FALLBACK_RANGES: &[(u32, u32, CharType)] = &[
     (0x3400, 0x4DBF, CharType::Kanji),
     (0xF900, 0xFAFF, CharType::Kanji),
     (0x20000, 0x2A6DF, CharType::Kanji),
+    // Unicode 17.0 の拡張 C〜J と互換漢字補助（ブロック間の隙間は含めない）
+    (0x2A700, 0x2B73F, CharType::Kanji),
+    (0x2B740, 0x2B81F, CharType::Kanji),
+    (0x2B820, 0x2CEAF, CharType::Kanji),
+    (0x2CEB0, 0x2EBEF, CharType::Kanji),
+    (0x2EBF0, 0x2EE5F, CharType::Kanji),
+    (0x2F800, 0x2FA1F, CharType::Kanji),
+    (0x30000, 0x3134F, CharType::Kanji),
+    (0x31350, 0x323AF, CharType::Kanji),
+    (0x323B0, 0x3347F, CharType::Kanji),
     // 漢数字の「〇」
     (0x3007, 0x3007, CharType::Kanji),
     // ASCII記号
@@ -327,6 +337,38 @@ mod tests {
         let cc = CharClassifier::default_japanese();
         assert_eq!(cc.classify_char('Ａ'), CharType::Alpha);
         assert_eq!(cc.classify_char('ｚ'), CharType::Alpha);
+    }
+
+    #[test]
+    fn test_supplementary_kanji_blocks_and_gaps() {
+        let cc = CharClassifier::default_japanese();
+        for (start, end) in [
+            (0x2A700, 0x2B73F),
+            (0x2B740, 0x2B81F),
+            (0x2B820, 0x2CEAF),
+            (0x2CEB0, 0x2EBEF),
+            (0x2EBF0, 0x2EE5F),
+            (0x2F800, 0x2FA1F),
+            (0x30000, 0x3134F),
+            (0x31350, 0x323AF),
+            (0x323B0, 0x3347F),
+        ] {
+            for cp in [start, end] {
+                assert_eq!(
+                    cc.classify_char(char::from_u32(cp).unwrap()),
+                    CharType::Kanji
+                );
+            }
+        }
+        for cp in [0x2A6E0, 0x2EE60, 0x2F7FF, 0x2FA20, 0x2FFFF, 0x33480] {
+            assert_eq!(
+                cc.classify_char(char::from_u32(cp).unwrap()),
+                CharType::Default
+            );
+        }
+        let cc =
+            CharClassifier::from_definitions(cc.classes, vec![(0x30000, 0x30000, "SYMBOL".into())]);
+        assert_eq!(cc.classify_char('\u{30000}'), CharType::Symbol);
     }
 
     #[test]

@@ -31,6 +31,8 @@ use crate::char_class::{CharType, type_index};
 use crate::hsd::reader::DictView;
 use crate::hsd::trie::Trie;
 use crate::hsd::{DictError, Dictionary};
+use crate::kana::{to_katakana, unvoice, voice};
+use std::borrow::Cow;
 use std::sync::Arc;
 
 /// トークン（形態素解析結果の1単位）
@@ -159,6 +161,8 @@ fn unit_reading_multi(s: &str) -> Option<&'static str> {
 
 /// 数字の後に来るアルファベットの単位読みを返す
 fn unit_reading(surface: &str) -> Option<&'static str> {
+    let folded = fold_alphabet_width(surface);
+    let surface = folded.as_ref();
     let mut chars = surface.chars();
     if let Some(c) = chars.next()
         && chars.next().is_none()
@@ -166,6 +170,37 @@ fn unit_reading(surface: &str) -> Option<&'static str> {
         return unit_reading_char(c);
     }
     unit_reading_multi(surface)
+}
+
+/// 全角英字だけを ASCII に畳む。通常の ASCII 入力では確保しない。
+fn fold_alphabet_width(surface: &str) -> Cow<'_, str> {
+    if surface.is_ascii() {
+        Cow::Borrowed(surface)
+    } else {
+        Cow::Owned(
+            surface
+                .chars()
+                .map(|c| ascii_alpha(c).unwrap_or(c))
+                .collect(),
+        )
+    }
+}
+
+/// ASCII・全角の英字。単位読みでは大文字小文字を区別する。
+fn ascii_alpha(c: char) -> Option<char> {
+    match c {
+        c if c.is_ascii_alphabetic() => Some(c),
+        'Ａ'..='Ｚ' | 'ａ'..='ｚ' => char::from_u32(c as u32 - 0xFEE0),
+        _ => None,
+    }
+}
+
+fn is_alphabet(surface: &str) -> bool {
+    if surface.is_ascii() {
+        surface.bytes().all(|b| b.is_ascii_alphabetic())
+    } else {
+        surface.chars().all(|c| ascii_alpha(c).is_some())
+    }
 }
 
 /// トークンが数字的かどうかを判定する。
@@ -324,6 +359,19 @@ fn apply_contextual_readings(tokens: &mut [Token]) {
                 continue;
             }
         }
+        // TTS の「10分」→「十ぷん」では末尾の十を促音化する。
+        // 「十分(ジュウブン)」や、十年・十番など別の助数詞には適用しない。
+        if &*tokens[i].surface == "十"
+            && tokens[i].pos.starts_with("名詞,数")
+            && tokens
+                .get(i + 1)
+                .is_some_and(|t| &*t.surface == "ぷん" && t.pos.starts_with("名詞,接尾,助数詞"))
+        {
+            let reading: Arc<str> = Arc::from("ジュッ");
+            tokens[i].reading = Arc::clone(&reading);
+            tokens[i].pronunciation = reading;
+            continue;
+        }
         if DECIMAL_COUNTER_OVERRIDES
             .iter()
             .any(|&(surface, _)| &*tokens[i].surface == surface)
@@ -333,8 +381,7 @@ fn apply_contextual_readings(tokens: &mut [Token]) {
                 continue;
             }
         }
-        // 非 ASCII の文字は ASCII の英字のバイトを含まないので、バイトで調べても文字で調べるのと同じ
-        if !tokens[i].surface.bytes().all(|b| b.is_ascii_alphabetic()) {
+        if !is_alphabet(&tokens[i].surface) {
             // 「々」は記号として辞書に入っていて読みを持たない。「日々」「人々」のように
             // 辞書にある語なら 1 トークンになるが、「前々項」のような語は
             // 「前」「々」「項」に割れ、「々」がそこだけ無音になる。
@@ -366,12 +413,7 @@ fn apply_contextual_readings(tokens: &mut [Token]) {
         }
 
         // アルファベット読み（スペルアウト）
-        let kana = if tokens[i].surface.len() == 1 {
-            let c = tokens[i].surface.chars().next().unwrap();
-            alpha_to_kana(c).map(Arc::from)
-        } else {
-            alphabet_reading(&tokens[i].surface)
-        };
+        let kana = alphabet_reading(&tokens[i].surface);
         if let Some(kana) = kana {
             tokens[i].reading = Arc::clone(&kana);
             tokens[i].pronunciation = kana;
@@ -380,19 +422,32 @@ fn apply_contextual_readings(tokens: &mut [Token]) {
 }
 
 /// 仮名のみからなる表層形をカタカナの読みに変換する。
-/// ひらがなはカタカナへ写像し、カタカナと長音記号はそのまま使う。
+/// ひらがな・半角カナはカタカナへ写像し、結合濁点・半濁点は直前の仮名と合成する。
+/// 踊り字は直前の仮名を繰り返す。入力の表層形・位置は変えない。
 /// 仮名以外の文字が含まれる場合は None を返す。
 fn kana_reading(surface: &str) -> Option<Arc<str>> {
     if surface.is_empty() {
         return None;
     }
     let mut reading = String::with_capacity(surface.len());
-    for c in surface.chars() {
+    for c in surface.chars().map(to_katakana) {
         let kana = match c {
-            // ひらがな (U+3041〜U+3096) → カタカナ (U+30A1〜U+30F6)
-            'ぁ'..='ゖ' => char::from_u32(c as u32 + 0x60)?,
-            // カタカナ (U+30A1〜U+30F6) と長音記号はそのまま
-            'ァ'..='ヶ' | 'ー' => c,
+            'ァ'..='ヺ' | 'ー' => c,
+            '\u{3099}' | '\u{309A}' => {
+                let prev = reading.pop()?;
+                voice(prev, c == '\u{309A}')?
+            }
+            'ヽ' | 'ヾ' => {
+                let prev = unvoice(reading.chars().next_back()?);
+                if !matches!(prev, 'ア'..='ヲ') || matches!(prev, 'ッ') {
+                    return None;
+                }
+                if c == 'ヾ' {
+                    voice(prev, false)?
+                } else {
+                    prev
+                }
+            }
             _ => return None,
         };
         reading.push(kana);
@@ -420,12 +475,15 @@ fn fill_kana_reading(token: &mut Token) {
 }
 
 fn alphabet_reading(surface: &str) -> Option<Arc<str>> {
-    if surface.is_empty() || !surface.chars().all(|c| c.is_ascii_alphabetic()) {
+    if surface.is_empty() {
         return None;
+    }
+    if surface.len() == 1 {
+        return alpha_to_kana(surface.chars().next()?).map(Arc::from);
     }
     let mut reading = String::new();
     for c in surface.chars() {
-        reading.push_str(alpha_to_kana(c)?);
+        reading.push_str(alpha_to_kana(ascii_alpha(c)?)?);
     }
     Some(Arc::from(reading.as_str()))
 }
@@ -1784,6 +1842,92 @@ mod tests {
         assert_eq!(segments(&dict, id), [format!("{id}*")]);
         let katakana = "カ".repeat(40);
         assert_eq!(segments(&dict, &katakana), [format!("{katakana}*")]);
+    }
+
+    #[test]
+    fn test_kana_reading_handles_width_voicing_and_iteration() {
+        for (surface, expected) in [
+            ("ｶﾞｯｺｳ", "ガッコウ"),
+            ("ｳﾞｨｰﾅｽ", "ヴィーナス"),
+            ("ﾊﾟﾋﾟﾌﾟﾍﾟﾎﾟ", "パピプペポ"),
+            ("か\u{3099}っこう", "ガッコウ"),
+            ("キ\u{3099}ャップ", "ギャップ"),
+            ("すゝめ", "ススメ"),
+            ("いすゞ", "イスズ"),
+            ("ヷヸヹヺ", "ヷヸヹヺ"),
+        ] {
+            assert_eq!(
+                kana_reading(surface).as_deref(),
+                Some(expected),
+                "{surface}"
+            );
+        }
+        for surface in ["ﾞ", "\u{3099}カ", "アﾟ", "ーゞ", "ゝ", "ｶ･ﾅ", "カ漢"] {
+            assert!(kana_reading(surface).is_none(), "{surface}");
+        }
+    }
+
+    #[test]
+    fn test_unknown_halfwidth_kana_keeps_original_surface_and_spans() {
+        let dict = cost_dict(&[("ダミー", 3000, NOUN)]);
+        let text = " ｶﾞｯｺｳ ｳﾞｨｰﾅｽ ";
+        let mut workspace = LatticeWorkspace::new();
+        let tokens = workspace.tokenize(text, &dict).unwrap();
+        assert_eq!(tokens.len(), 2);
+        for (token, reading) in tokens.iter().zip(["ガッコウ", "ヴィーナス"]) {
+            assert_eq!(&text[token.start..token.end], &*token.surface);
+            assert_eq!(&*token.reading, reading);
+            assert_eq!(&*token.pronunciation, reading);
+            assert!(!token.is_known);
+        }
+        assert_eq!(
+            describe(&tokens),
+            describe(&workspace.tokenize(text, &dict).unwrap())
+        );
+    }
+
+    #[test]
+    fn test_fullwidth_alphabet_uses_context_and_case_sensitive_units() {
+        for (surface, expected) in [("Ａ", "エー"), ("ＰＣ", "ピーシー"), ("ＡＩ", "エーアイ")]
+        {
+            let mut tokens = vec![reading_token(surface, NOUN, "アンペア")];
+            apply_contextual_readings(&mut tokens);
+            assert_eq!(&*tokens[0].reading, expected);
+            assert_eq!(&*tokens[0].surface, surface);
+        }
+        for (surface, expected) in [
+            ("Ａ", "アンペア"),
+            ("ｍ", "メートル"),
+            ("Ｍ", "エム"),
+            ("ｋｇ", "キログラム"),
+        ] {
+            let mut tokens = vec![
+                reading_token("３", "名詞,数,*,*", "サン"),
+                reading_token(surface, NOUN, ""),
+            ];
+            apply_contextual_readings(&mut tokens);
+            assert_eq!(&*tokens[1].reading, expected);
+        }
+        let mut tokens = vec![reading_token("ＮＡＳＡ", NOUN, "ナサ")];
+        apply_contextual_readings(&mut tokens);
+        assert_eq!(&*tokens[0].reading, "ナサ");
+    }
+
+    #[test]
+    fn test_ten_minutes_euphony_requires_numeric_ten_and_minute_suffix() {
+        for (ten_pos, counter, counter_pos, expected) in [
+            ("名詞,数,*,*", "ぷん", "名詞,接尾,助数詞,*", "ジュッ"),
+            ("名詞,数,*,*", "ねん", "名詞,接尾,助数詞,*", "ジュウ"),
+            ("名詞,一般,*,*", "ぷん", "名詞,接尾,助数詞,*", "ジュウ"),
+            ("名詞,数,*,*", "ぷん", "名詞,固有名詞,人名,一般", "ジュウ"),
+        ] {
+            let mut tokens = vec![
+                reading_token("十", ten_pos, "ジュウ"),
+                reading_token(counter, counter_pos, "プン"),
+            ];
+            apply_contextual_readings(&mut tokens);
+            assert_eq!(&*tokens[0].reading, expected);
+        }
     }
 
     fn reading_token(surface: &str, pos: &str, reading: &str) -> Token {
