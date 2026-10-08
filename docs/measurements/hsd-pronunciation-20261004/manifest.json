@@ -1,0 +1,82 @@
+{
+  "baseline_commit": "fefb950",
+  "release": "v26.9.107",
+  "format": {
+    "baseline": 5,
+    "experiment": 5006
+  },
+  "toolchain": "Rust 1.98.1; eval: -O -C lto=fat -C codegen-units=1",
+  "platform": "macOS 27.0.1 ARM64, Apple M2, 24 GiB",
+  "compression": "zstd 1.5.7 -19 -T1 (one compression worker; threaded framing)",
+  "dictionaries": {
+    "ipadic": {
+      "v5": {
+        "bytes": 16493282,
+        "sha256": "f4c26a641c835c196ee78e49fd846952ba3fcd107ac9811b4e0edb85e1358b8a"
+      },
+      "patch": {
+        "bytes": 16308706,
+        "sha256": "d4945b20e945226d6da7bb1ef826a3f6f00c833a9ecd53fc48c4660c9a818be5"
+      }
+    },
+    "ipadic-neologd": {
+      "v5": {
+        "bytes": 206570094,
+        "sha256": "c93cbc611ff0696696c9efef793906c4a004e2f53428ba589f563a2743aaf122"
+      },
+      "patch": {
+        "bytes": 200879278,
+        "sha256": "d95b6d7c35aa9880c143d18738da6548e594e53da76c87125fd14f0eb1e6aded"
+      }
+    },
+    "ipadic-neologd-sudachi": {
+      "v5": {
+        "bytes": 220974766,
+        "sha256": "a06e69d1c12959eca3e0e2a383acc9824c89858f9ebc1f5bbdbf4d374ba47819"
+      },
+      "patch": {
+        "bytes": 215245422,
+        "sha256": "0e20860abf0b5c3dbd86936226bae3ac4417d67e62020c177fd935834c0a007e"
+      }
+    }
+  },
+  "corpora": {
+    "mixed": {
+      "bytes": 25632719,
+      "sha256": "24bd9e77b0de539d8cd58ff34c49c208dd1ad702bcab13884dd10db16a18abfc",
+      "lines": 143874
+    },
+    "news": {
+      "bytes": 24502603,
+      "sha256": "d0b5a7e4d9f210dd196520104c21154c0375fea9f9c72803341f83a5c541dda9",
+      "lines": 132880
+    },
+    "tech": {
+      "bytes": 166917,
+      "sha256": "0a996ac511510b88fb17f35602da41ce1ff1a11e06f0a9bc92d889297560d4ef",
+      "lines": 1705
+    },
+    "edge": {
+      "bytes": 963199,
+      "sha256": "2a62c872c071fbb2266eb3ef94e44362f08189d67d14e88b5e0b93e763a3c638",
+      "lines": 9289
+    }
+  },
+  "analysis_conditions": {
+    "rounds": 6,
+    "warmup_passes": 1,
+    "measured_passes": 1,
+    "order": "alternate v5/patch per dictionary",
+    "qos": "macOS USER_INTERACTIVE; not pinned to P cores",
+    "cache": "warm OS pages and analyzer; not cold",
+    "cpu": "macOS clock(): process CPU",
+    "rss": "time -l whole-process peak; input included",
+    "timing_quality": "large variation; no stable speed conclusion"
+  },
+  "load_conditions": {
+    "constructors_per_variant_dictionary": 31,
+    "scope": "Analyzer::load + fixed first sentence; destruction outside timer",
+    "cache": "same process reconstruction; OS/allocator warm",
+    "order": "v5 then patch; not interleaved"
+  }
+}

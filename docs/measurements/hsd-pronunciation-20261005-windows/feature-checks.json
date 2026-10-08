@@ -1,0 +1,32 @@
+[
+  {
+    "dictionary": "ipadic",
+    "v5_bytes": 16493282,
+    "patch_bytes": 16308706,
+    "features": 327988,
+    "patched": 53712,
+    "feature_bytes": 4966165,
+    "patch_feature_bytes": 4781619,
+    "all_features_equal": true
+  },
+  {
+    "dictionary": "ipadic-neologd",
+    "v5_bytes": 206570094,
+    "patch_bytes": 200879278,
+    "features": 3039329,
+    "patched": 751093,
+    "feature_bytes": 73758831,
+    "patch_feature_bytes": 68068019,
+    "all_features_equal": true
+  },
+  {
+    "dictionary": "ipadic-neologd-sudachi",
+    "v5_bytes": 220974766,
+    "patch_bytes": 215245422,
+    "features": 3358794,
+    "patched": 760161,
+    "feature_bytes": 79229246,
+    "patch_feature_bytes": 73499862,
+    "all_features_equal": true
+  }
+]

@@ -1,0 +1,153 @@
+{
+  "date_jst": "2026-10-05",
+  "baseline_commit": "df6432bd29ec7475e646a0404fdc3ffd8f392a7e",
+  "baseline_build_commit": "fefb950",
+  "patch_base_commit": "fefb950",
+  "reader_patch": {
+    "bytes": 6118,
+    "sha256": "955bb7f6747d98a748be269eec3c572992d0b435163b761b2c1b351110aff161"
+  },
+  "format": {
+    "baseline": 5,
+    "experiment": 5006
+  },
+  "release": "v26.9.107",
+  "platform": {
+    "os": "Windows-11-10.0.26200-SP0",
+    "cpu": "AMD Ryzen 7 5700X",
+    "physical_cores": 8,
+    "logical_processors": 16,
+    "ram_gib": 32
+  },
+  "toolchain": {
+    "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)\nbinary: rustc\ncommit-hash: 48a229ceaefd4985c50990b14116b6d856af0985\ncommit-date: 2026-09-01\nhost: x86_64-pc-windows-msvc\nrelease: 1.98.1\nLLVM version: 22.1.8",
+    "python": "3.13.15",
+    "library": "cargo build --release --locked --lib; default features",
+    "eval_flags": "--edition=2024 -O -C lto=fat -C codegen-units=1"
+  },
+  "dictionaries": {
+    "ipadic": {
+      "v5": {
+        "bytes": 16493282,
+        "sha256": "f4c26a641c835c196ee78e49fd846952ba3fcd107ac9811b4e0edb85e1358b8a"
+      },
+      "patch": {
+        "bytes": 16308706,
+        "sha256": "d4945b20e945226d6da7bb1ef826a3f6f00c833a9ecd53fc48c4660c9a818be5"
+      }
+    },
+    "ipadic-neologd": {
+      "v5": {
+        "bytes": 206570094,
+        "sha256": "c93cbc611ff0696696c9efef793906c4a004e2f53428ba589f563a2743aaf122"
+      },
+      "patch": {
+        "bytes": 200879278,
+        "sha256": "d95b6d7c35aa9880c143d18738da6548e594e53da76c87125fd14f0eb1e6aded"
+      }
+    },
+    "ipadic-neologd-sudachi": {
+      "v5": {
+        "bytes": 220974766,
+        "sha256": "a06e69d1c12959eca3e0e2a383acc9824c89858f9ebc1f5bbdbf4d374ba47819"
+      },
+      "patch": {
+        "bytes": 215245422,
+        "sha256": "0e20860abf0b5c3dbd86936226bae3ac4417d67e62020c177fd935834c0a007e"
+      }
+    }
+  },
+  "executables": {
+    "v5": {
+      "bytes": 1223680,
+      "sha256": "be4e7813f026d3b901f96dead409f327bb91adb7f4e6ebf94cea30a691254d4f"
+    },
+    "patch": {
+      "bytes": 1225216,
+      "sha256": "742028deabf99b7e171c1cea0448166f8025356291fdd0de5226987ab36c2de6"
+    }
+  },
+  "scripts": {
+    "hsd-format-eval.rs": {
+      "bytes": 6652,
+      "sha256": "67f0ce7ccaa1e09f6bcff5e781ae252972ad0b9d04a65c94ebe81dcd2915b66f"
+    },
+    "hsd-pronunciation-remeasure.py": {
+      "bytes": 10261,
+      "sha256": "964f339498ce41b84cbe374950dd6554a8dc12e5c8b1f80ac046c904f8e8eec1"
+    },
+    "hsd-format-compare.py": {
+      "bytes": 1269,
+      "sha256": "0447afac37d6fc4d635a11c5134f7bce66c39cd2afb9ffa03685e99061e7b247"
+    },
+    "hsd-format-corpus.py": {
+      "bytes": 3058,
+      "sha256": "5c2c13bd62d2f4bfe114d4ea5096d6a016becab358ced692f87a3b1f4bc24e0a"
+    },
+    "hsd-pronunciation-probe.rs": {
+      "bytes": 12626,
+      "sha256": "c02c770c003bb1793caf314f92b5ced229907ff473609bcc95ba723b50901fcf"
+    }
+  },
+  "corpora": {
+    "mixed": {
+      "bytes": 25632719,
+      "sha256": "24bd9e77b0de539d8cd58ff34c49c208dd1ad702bcab13884dd10db16a18abfc",
+      "lines": 143874
+    },
+    "literature": {
+      "bytes": 26528100,
+      "sha256": "d55f37a8682791183cbdb683421a120f5a3d15be4d5a95ca59ac3b0cd759ff47",
+      "lines": 48200
+    },
+    "short": {
+      "bytes": 5500000,
+      "sha256": "1697a3e63e0bb680170b07916d9fe2d6d6307b333d291de13d51947ef7aa1d32",
+      "lines": 100000,
+      "text": "東京都に住んでいる人々が増えている。"
+    }
+  },
+  "literature_source": {
+    "title": "坊っちゃん",
+    "author": "夏目漱石",
+    "source_card": "https://www.aozora.gr.jp/cards/000148/card752.html",
+    "normalized_utf8_lf_bytes": 265281,
+    "lines": 482,
+    "sha256": "710c0ab73499adc3aec9df91c0e5926fc32cb2392b9e3d36c52e21443feea4db",
+    "repetitions": 100,
+    "annotated_gold": false
+  },
+  "news_archive": {
+    "bytes": 8855190,
+    "sha256": "b17606ed8c670013a3809100a9e6104701baab62cc019abc262111bd2acf1063"
+  },
+  "analysis_conditions": {
+    "rounds": 12,
+    "warmup_passes": 1,
+    "measured_passes": 1,
+    "order": "AB/BA pairs; dictionary order rotates each round",
+    "affinity_mask_decimal": 4,
+    "logical_cpu": 2,
+    "priority": "normal",
+    "cpu": "GetProcessTimes: kernel + user, observed granularity 15.625 ms; supplementary for analysis, unusable for sub-ms load",
+    "wall": "Rust Instant (QueryPerformanceCounter); primary comparison metric",
+    "memory": "K32GetProcessMemoryInfo PeakWorkingSetSize; input and warmup included, same-OS comparison only",
+    "cache": "warm pages and analyzer; not cold",
+    "load_telemetry": "system utilization from GetSystemTimes over the whole process including warmup, measurement and I/O"
+  },
+  "load_conditions": {
+    "rounds": 12,
+    "constructors_per_process": 31,
+    "scope": "Analyzer::load plus fixed first sentence; destruction excluded",
+    "aggregation": "first constructor per process separately from following 30",
+    "cpu_interpretation": "not used: interval much shorter than GetProcessTimes granularity"
+  },
+  "compressed_sizes_remeasured": false,
+  "measurement_complete": true,
+  "measured_sources_archive": {
+    "file": "measured-sources.zip",
+    "bytes": 11668,
+    "sha256": "c586833683f6e327549d0e6ad0312ae539a1f25771a3bb5d229ecf299a86731a",
+    "reason": "preserve the measured bytes across Git LF/CRLF checkout conversion"
+  }
+}
