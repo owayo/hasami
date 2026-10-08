@@ -6,6 +6,9 @@ target
 # Dictionary source files (downloaded by `make dict`)
 .dict-src/
 
+# Python スクリプト・テストの実行で作るキャッシュ
+__pycache__/
+
 # 配布辞書はリポジトリに置かず、リリースに添付する (make dict で作るか make dict-download で取る)。
 # dict/user/ などの入力の CSV は追跡するので、dict/ 全体は無視しない
 *.hsd

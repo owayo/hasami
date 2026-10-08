@@ -140,12 +140,37 @@ IPAdic・NEologd・`dict/user` に表層形がある語は落とす。品詞は 
 採用した範囲で読みが変わった箇所を無作為に 60 件見ると、改善 48・悪化 5・同等 7 だった（改善は英単語の読み
 「cafe→カフェ」、複合語「加齢→カレイ」、半角記号が名詞でなく記号になる、など）。
 
-上流はすべて版を固定している（IPAdic・NEologd は git の commit、SudachiDict はダウンロードの SHA-256）。
+上流の取得版は `scripts/dictionary-sources.json` に記録する（IPAdic・NEologd は git の commit、SudachiDict は
+raw の版と ZIP の SHA-256）。ビルドはこの記録を読み、同じ取得版で作る。
 取得物は `.dict-src/` に置き、2 回目以降は再取得しない。中間成果物（repair を掛ける前の辞書、SudachiDict の
 変換結果など）は実行ごとの作業ディレクトリに作って終了時に消すので、`dict/` の配布辞書のほかには残らない。
 repair を手で試し直すために repair 前の辞書が要るときは、`scripts/build-dict.sh --keep-intermediate` で
 `.dict-src/build/*.base.hsd` に残す。
 3 辞書の作り直しは取得済みなら 5 分ほどで終わる（うち SudachiDict の変換が 3 分、最大 RSS は約 3GB）。
+
+### 上流の最新版への自動更新
+
+GitHub Actions の **Update Dictionary Sources**（`.github/workflows/dict-update.yml`）は毎日 JST 11:23 と
+リリースの開始時に、IPAdic・NEologd の最新 HEAD と、Sudachi の公式 raw 配布先の最新の版を取得する。
+Sudachi は small/core の ZIP が両方公開されている版を選ぶので、Python パッケージだけの `20260723.1` の
+ような更新と raw 辞書の版を混同しない。毎回 ZIP の実体から SHA-256 を計算し、同じ版の差し替えも検出する。
+
+commit・版・SHA-256 のどれかが変わったら、3 辞書の構築・全件検証・受け入れテストを実行し、推奨辞書から
+文分割の例外表を生成する。通常の CI も通った後、取得版の JSON と例外表だけを既定ブランチへ自動コミットする。
+差分がなければコミットせず、検証に失敗した場合や push が競合した場合も更新しない。`.hsd` は artifact に保存し、
+コミットしない。自動コミットの push では通常の CI が起動しないため、コミット前のワークフロー内で検査を回す。
+
+Release はこの更新の完了後、そのコミットから版を上げてタグを作る。バイナリと配布辞書は、同じタグに記録した
+取得版と例外表で作る。毎日の辞書更新だけでリリースを公開することはない。
+
+```bash
+gh workflow run dict-update.yml              # 最新を検証し、差分があれば自動コミット
+gh workflow run dict-update.yml -f dry_run=true  # 検証・artifact の保存まで。push はしない
+
+# 手元で最新版の記録を更新する（コミットは行わない）
+mise exec -- python3 scripts/dictionary_sources.py update
+make dict
+```
 
 辞書を変える PR では、GitHub Actions の Build Dictionaries（`.github/workflows/dict-build.yml`）をブランチで動かすと、
 リリースと同じ手順（作る → 全件の検証 → 受け入れテスト → 例外表との照合 → 圧縮 → 目録）で作った辞書を artifact で

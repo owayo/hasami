@@ -1,5 +1,6 @@
 # Run workflow 1 回で、版の更新からコミットとタグ、5 ターゲットのバイナリ、配布辞書、Release の作成までを行う。
 #
+# - update-dictionary-sources: 上流の最新版と SHA-256 を解決し、変更があれば辞書・例外表を検証して自動コミット
 # - prepare-release: 版を JST の yy.m.counter で決め、Cargo.toml と Cargo.lock をコミットしてタグを切る
 # - build: ci.yml の build と同じ組（os / target）でバイナリを作る。dry_run では走らないので、
 #   配布物を作れることは ci.yml の build で確かめる
@@ -34,8 +35,18 @@ env:
   MISE_LOCKED: "1"
 
 jobs:
+  update-dictionary-sources:
+    name: Update dictionary sources before tagging
+    if: ${{ !inputs.dry_run && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+    permissions:
+      contents: write
+    uses: ./.github/workflows/dict-update.yml
+
   prepare-release:
     name: Prepare release
+    needs: update-dictionary-sources
+    # dry_run と不正なブランチでは更新ジョブを省く。不正なブランチは下の検査で説明を出して止める。
+    if: ${{ !cancelled() && (inputs.dry_run || needs.update-dictionary-sources.result == 'success' || needs.update-dictionary-sources.result == 'skipped') }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -60,6 +71,8 @@ jobs:
           fi
 
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.update-dictionary-sources.outputs.source_ref || github.sha }}
 
       # 版を Cargo.lock に写す cargo update も mise.toml の版の Rust で行う（無いとランナーに最初から入っている Rust で動く）
       - uses: ./.github/actions/setup-mise
@@ -365,7 +378,7 @@ jobs:
   # 途中のジョブが落ちても、飛ばされても（dry_run を含む）結果を書く
   release-summary:
     name: Release summary
-    needs: [prepare-release, build, dictionaries, release]
+    needs: [update-dictionary-sources, prepare-release, build, dictionaries, release]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
@@ -373,6 +386,7 @@ jobs:
         env:
           DRY_RUN: ${{ inputs.dry_run }}
           TAG: ${{ needs.prepare-release.outputs.tag }}
+          SOURCES_RESULT: ${{ needs.update-dictionary-sources.result }}
           PREPARE_RESULT: ${{ needs.prepare-release.result }}
           BUILD_RESULT: ${{ needs.build.result }}
           DICTIONARIES_RESULT: ${{ needs.dictionaries.result }}
@@ -391,6 +405,7 @@ jobs:
             echo
             echo "| Job | Result |"
             echo "|---|---|"
+            echo "| update-dictionary-sources | ${SOURCES_RESULT} |"
             echo "| prepare-release | ${PREPARE_RESULT} |"
             echo "| build | ${BUILD_RESULT} |"
             echo "| dictionaries | ${DICTIONARIES_RESULT} |"

@@ -70,7 +70,9 @@ hasami/
 │       ※ 配布辞書（ipadic / ipadic-neologd / ipadic-neologd-sudachi.hsd）はリリースの添付ファイルで配る。
 │         make dict で作るか make dict-download で取る。unidic-cwj.hsd / unidic-csj.hsd は make dict-unidic-cwj/csj
 ├── scripts/
-│   ├── build-dict.sh          # 配布辞書 3 つを上流の固定版から作る（Makefile の dict 系と CI が呼ぶ）
+│   ├── build-dict.sh          # 配布辞書 3 つを dictionary-sources.json の取得版から作る（Makefile の dict 系と CI が呼ぶ）
+│   ├── dictionary_sources.py # 上流の最新 HEAD・Sudachi raw の公開版と ZIP の SHA-256 を解決する
+│   ├── dictionary-sources.json # 検証済みの取得版。Actions が変更を自動コミットする
 │   ├── convert_sudachi_raw.py # SudachiDict の raw CSV → IPAdic 体系の MeCab CSV
 │   ├── convert-unidic-csv.py  # UniDic CSV → IPAdic互換フォーマット変換
 │   └── find_foreign_names.py  # 外国人名の削除リストを生成（Unihan の字音と照合）
@@ -85,6 +87,7 @@ hasami/
 │   │                   # （Linux ARM64 は ubuntu-24.04-arm でそのまま作る。Windows は make を使わず、Build ジョブで cargo test も回す）
 │   ├── dict-build.yml  # 配布辞書を作り、検証・受け入れテスト・例外表との照合・圧縮・目録を経て artifact に上げる
 │   │                   # （release.yml がタグで呼ぶ。辞書を変える PR ではブランチで手で動かす）
+│   ├── dict-update.yml # 最新の取得版と SHA-256 を解決し、辞書・例外表・通常の CI を検証して自動コミット
 │   └── release.yml     # 版を上げてタグを切り、バイナリと配布辞書（.hsd・.hsd.zst・dictionaries.json）を添付する
 ├── build.rs            # 例外表の索引と版の識別子を作る（src/sentence/index.rs・chars.rs を #[path] で共有）
 ├── Cargo.toml          # ワークスペース + メインクレート
@@ -210,6 +213,10 @@ target/release/hasami bench --dict dict/ipadic.hsd --file corpus.txt  # 1 行 1 
 ```
 
 配布辞書はリポジトリに置かない（`/dict/*.hsd` は `.gitignore`。50MB を超えるファイルは `.githooks/pre-commit` が止める）。
+上流の取得版は `scripts/dictionary-sources.json` に記録する。`dict-update.yml` は毎日 JST 11:23 とリリース開始時に
+最新の git HEAD・Sudachi raw の公開版・ZIP の SHA-256 を解決し、変更があれば 3 辞書を作って検証し、
+文分割の例外表と通常の CI も確かめてから JSON と例外表を既定ブランチへ自動コミットする。
+Release はそのコミットからタグを作る。タグの辞書ビルドでは最新版を再解決せず、記録した版を使う。
 リリースは GitHub Actions の Release を手で動かす。タグを切った後、`dict-build.yml` がタグのソースから辞書を作り、
 全件の検証・`cargo test -- --ignored distributed`・例外表との照合（`hasami export-sentence-exceptions` と
 `src/sentence/builtin_exceptions.txt` の diff）・zstd -19 の圧縮・`hasami dict manifest` を通してから、バイナリと一緒に

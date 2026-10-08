@@ -5,7 +5,8 @@
 #   ipadic-neologd.hsd           IPAdic + NEologd + dict/user。repair 一式を適用
 #   ipadic-neologd-sudachi.hsd   上の IPAdic + NEologd に SudachiDict を足したもの。repair 一式を適用
 #
-# 上流はすべて版を固定し、git は commit、ダウンロードは SHA-256 で検証する。
+# 上流の版は scripts/dictionary-sources.json から読み、git は commit、ダウンロードは SHA-256 で検証する。
+# Actions の Update Dictionary Sources が最新版を取得・検証し、変更した版と SHA-256 を自動コミットする。
 # 取得物は --src の下に置き、2 回目以降は再取得しない。中間成果物 (整えた IPAdic のソース・展開した
 # NEologd の seed・SudachiDict の変換結果・repair 前の辞書) は実行ごとの作業ディレクトリに作り、終了時に消す。
 # 前回の中間辞書を使い回すと、hasami や scripts/*.py を直した後も古い土台から作ってしまうため。
@@ -27,11 +28,9 @@ cd "$(dirname "$0")/.."
 
 # ---------------------------------------------------------------- 上流の版
 
-IPADIC_REPO=https://github.com/taku910/mecab.git
-IPADIC_COMMIT=61b90ba6e669dc2d7d533d4a80d206f3b31d52b1 # 2025-02-22
-
-NEOLOGD_REPO=https://github.com/neologd/mecab-ipadic-neologd.git
-NEOLOGD_COMMIT=abc61e33d8be3d0ead202e6b1df064c72d5ccf11 # 2023-12-27
+# Python 側で値を検査・引用する。JSON の文字列をシェルのコードとして実行しない。
+SOURCE_SETTINGS=$(python3 scripts/dictionary_sources.py shell)
+eval "$SOURCE_SETTINGS"
 # 形容詞の表現・日付・数量の網羅的な生成エントリは誤分割を増やすので入れない
 NEOLOGD_EXCLUDE=(
   neologd-adjective-exp-dict-seed.20151126.csv
@@ -39,12 +38,6 @@ NEOLOGD_EXCLUDE=(
   neologd-quantity-infreq-dict-seed.20190415.csv
 )
 
-SUDACHI_VERSION=20260723
-SUDACHI_URL=https://sudachi.s3.ap-northeast-1.amazonaws.com/sudachidict-raw/v1/$SUDACHI_VERSION
-SUDACHI_FILES=(
-  "small_lex.zip e49936daef64043657752eb9f4ada912cf0316e26dd158a6200c770e2f93e706"
-  "core_lex.zip d8ed376d8ff368226314a43151ab02591378dd344bff017d8a93ae9839212edf"
-)
 # SudachiDict から取り込む範囲 (scripts/convert_sudachi_raw.py の --scope)。内容語 (名詞・固有名詞・形状詞・
 # 連体詞・副詞・接続詞・感動詞・動詞・形容詞) と記号。助詞・助動詞・数詞・接頭辞・接尾辞・代名詞は、IPAdic の語を
 # 押しのけて誤分割・誤読を増やすので入れない (取り込み範囲ごとの比較は docs/dictionaries.md の「辞書のローカルビルド」)
