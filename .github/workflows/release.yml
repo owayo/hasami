@@ -41,6 +41,8 @@ jobs:
     permissions:
       contents: write
     uses: ./.github/workflows/dict-update.yml
+    secrets:
+      HASAMI_DICTIONARIES_READ_KEY: ${{ secrets.HASAMI_DICTIONARIES_READ_KEY }}
 
   prepare-release:
     name: Prepare release
@@ -223,6 +225,8 @@ jobs:
     permissions:
       contents: read
     uses: ./.github/workflows/dict-build.yml
+    secrets:
+      HASAMI_DICTIONARIES_READ_KEY: ${{ secrets.HASAMI_DICTIONARIES_READ_KEY }}
     with:
       ref: ${{ needs.prepare-release.outputs.tag }}
 

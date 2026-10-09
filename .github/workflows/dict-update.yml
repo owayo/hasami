@@ -11,6 +11,10 @@ on:
         type: boolean
         default: false
   workflow_call:
+    secrets:
+      HASAMI_DICTIONARIES_READ_KEY:
+        description: 独自辞書リポジトリを読む deploy key
+        required: true
     inputs:
       dry_run:
         description: 検証と artifact の保存まで実行し、コミット・push はしない
@@ -63,7 +67,7 @@ jobs:
       - name: Resolve upstream versions and SHA-256
         id: resolve
         run: |
-          python3 -m unittest discover -s scripts -p 'test_dictionary_sources.py'
+          python3 -m unittest discover -s scripts -p 'test_dictionary_*.py'
           python3 scripts/dictionary_sources.py update
           echo "source_ref=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
           if git diff --quiet -- scripts/dictionary-sources.json; then
@@ -89,6 +93,8 @@ jobs:
     # dry_run では差分がなくても全手順を検証し、辞書と取得版を artifact に残す。
     if: ${{ needs.resolve.outputs.changed == 'true' || inputs.dry_run }}
     uses: ./.github/workflows/dict-build.yml
+    secrets:
+      HASAMI_DICTIONARIES_READ_KEY: ${{ secrets.HASAMI_DICTIONARIES_READ_KEY }}
     with:
       ref: ${{ needs.resolve.outputs.source_ref }}
       sources_artifact: dictionary-sources

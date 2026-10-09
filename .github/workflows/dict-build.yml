@@ -11,6 +11,10 @@ name: Build Dictionaries
 # 受け入れテストや例外表の検査で失敗しても、辞書を作れていれば artifact は上がる (手元で調べ直せる)
 on:
   workflow_call:
+    secrets:
+      HASAMI_DICTIONARIES_READ_KEY:
+        description: 独自辞書リポジトリを読む deploy key
+        required: true
     inputs:
       ref:
         description: 辞書を作るコミット (リリースのタグ)
@@ -49,10 +53,32 @@ jobs:
           lfs: false
           persist-credentials: false
 
-      # Rust と、辞書を作るスクリプト（scripts/*.py）の Python は mise.toml の版を使う
+      # Rust と、辞書を作るスクリプトの Python は mise.toml の版を使う。
       - uses: ./.github/actions/setup-mise
         with:
           tools: rust python
+
+      - name: Read the pinned dictionary revision
+        id: dictionary
+        run: |
+          set -euo pipefail
+          repository=$(python3 scripts/dictionary_inputs.py repository)
+          revision=$(python3 scripts/dictionary_inputs.py revision)
+          echo "repository=$repository" >> "$GITHUB_OUTPUT"
+          echo "revision=$revision" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout private dictionary inputs
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ steps.dictionary.outputs.repository }}
+          ref: ${{ steps.dictionary.outputs.revision }}
+          path: dict
+          ssh-key: ${{ secrets.HASAMI_DICTIONARIES_READ_KEY }}
+          persist-credentials: false
+          lfs: false
+
+      - name: Verify dictionary inputs
+        run: python3 scripts/dictionary_inputs.py verify --clean
 
       - name: Download updated dictionary sources
         if: ${{ inputs.sources_artifact != '' }}
@@ -159,7 +185,7 @@ jobs:
         env:
           MISE_DISABLE_TOOLS: aqua:astral-sh/uv,github:PyO3/maturin
         run: |
-          python3 -m unittest discover -s scripts -p 'test_dictionary_sources.py'
+          python3 -m unittest discover -s scripts -p 'test_dictionary_*.py'
           make ci
 
       - name: Upload validated source update
