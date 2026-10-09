@@ -8,7 +8,7 @@ README の「開発」（`make setup` / `make ci` と標準のターゲット）
 
 ```bash
 make setup         # mise.toml のツールを入れ、Cargo.lock どおりに依存を取る
-make setup-hooks   # clone したら一度入れる（50MB を超えるファイルをコミットしようとすると pre-commit が止める）
+make setup-hooks   # 50MB 超のファイルと、非公開辞書入力の公開側へのコミットを止める
 ```
 
 mise を使わずに PATH にあるツールで動かすなら `SYSTEM_TOOLS=1` を付ける（例: `make install SYSTEM_TOOLS=1`。版はそろわない）。
@@ -45,6 +45,9 @@ mise exec -- cargo test --locked --workspace --exclude hasami-python -- --ignore
 
 配布辞書はリポジトリに置かず、リリースの添付ファイルで配る。開発で `dict/` に辞書が要るときは、この版のリリースから
 取るか、上流のソースから作る（`dict/*.hsd` は `.gitignore` 済み）。
+独自 CSV は非公開リポジトリで管理し、公開側では `dict/` 全体を追跡しない。
+辞書を構築する場合だけ、[dictionaries.md](dictionaries.md) の手順で固定した版を取得する。
+通常のビルドと CI は非公開 CSV なしで実行できる。
 
 ```bash
 make dict-download        # この版（Cargo.toml の version）のリリースの 3 辞書を dict/ に取る

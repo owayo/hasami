@@ -63,7 +63,7 @@ hasami/
 │   │   ├── mod.rs      # 目録（Catalog・DistributedDict）、download・verify・install、zstd の展開、HTTP（ureq）
 │   │   └── tests.rs    # 127.0.0.1 の小さな HTTP サーバーを相手にした取得のテスト
 │   └── ffi.rs          # C ABI インターフェース
-├── dict/               # 辞書の入力（下の CSV）と、作った・取った配布辞書の置き場所（*.hsd は追跡しない）
+├── dict/               # 非公開入力の別 checkout と、作った・取った配布辞書（公開側では全体を追跡しない）
 │   ├── user/           # ユーザー辞書CSV（make dict-neologd でマージ）
 │   ├── user-remove/    # repair --remove に渡す削除リスト（make dict-repair で全件適用）
 │   └── foreign-names/  # 外国人名の許可・拒否リストと、任意で適用するフルネームの削除リスト
@@ -73,6 +73,8 @@ hasami/
 │   ├── build-dict.sh          # 配布辞書 3 つを dictionary-sources.json の取得版から作る（Makefile の dict 系と CI が呼ぶ）
 │   ├── dictionary_sources.py # 上流の最新 HEAD・Sudachi raw の公開版と ZIP の SHA-256 を解決する
 │   ├── dictionary-sources.json # 検証済みの取得版。Actions が変更を自動コミットする
+│   ├── dictionary-inputs.json # 非公開の独自辞書リポジトリと固定コミット
+│   ├── dictionary_inputs.py # 独自入力の版・存在・未コミット変更を検証
 │   ├── convert_sudachi_raw.py # SudachiDict の raw CSV → IPAdic 体系の MeCab CSV
 │   ├── convert-unidic-csv.py  # UniDic CSV → IPAdic互換フォーマット変換
 │   └── find_foreign_names.py  # 外国人名の削除リストを生成（Unihan の字音と照合）
@@ -212,7 +214,13 @@ make dict-clean           # ダウンロードした辞書ソースを削除（b
 target/release/hasami bench --dict dict/ipadic.hsd --file corpus.txt  # 1 行 1 文のファイルの全行を解析する時間
 ```
 
-配布辞書はリポジトリに置かない（`/dict/*.hsd` は `.gitignore`。50MB を超えるファイルは `.githooks/pre-commit` が止める）。
+独自 CSV は非公開の `owayo/hasami-dictionaries` で管理し、公開側では `dict/` 全体を追跡しない。
+辞書ビルドは `scripts/dictionary-inputs.json` の固定コミットを `dict/` に取得して行う。取得が無い・版が違う場合は止める。
+CSV の変更は非公開側でコミット・push し、公開側は検証したコミットを JSON に記録する。
+通常の CI と本体ビルドは非公開入力を取得しない。辞書用 CI だけが読み取り専用 deploy key
+`HASAMI_DICTIONARIES_READ_KEY` を使い、Release と Update Dictionary Sources はその鍵を明示的に渡す。
+ビルド済み `.hsd` の公開配布は継続する。CSV・秘密鍵・`.git` を artifact・Cargo パッケージへ含めない。
+配布辞書はリポジトリに置かない（`dict/` は `.gitignore`。50MB 超と辞書入力のコミットは `.githooks/pre-commit` が止める）。
 上流の取得版は `scripts/dictionary-sources.json` に記録する。`dict-update.yml` は毎日 JST 11:23 とリリース開始時に
 最新の git HEAD・Sudachi raw の公開版・ZIP の SHA-256 を解決し、変更があれば 3 辞書を作って検証し、
 文分割の例外表と通常の CI も確かめてから JSON と例外表を既定ブランチへ自動コミットする。

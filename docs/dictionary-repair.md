@@ -35,7 +35,9 @@ hasami repair --dict dict/ipadic-neologd-sudachi.hsd \
 範囲外 ID のエントリを発音の借用元に使わないよう、最初に落とす。削除リストは上流の辞書の品詞で書くので降格より先に、
 `--merge` で足す語は削除・降格の対象にしないので最後に適用する。
 
-`dict/user-remove/` に削除リスト、`dict/user/` に追加エントリを置いてある。
+非公開リポジトリから取得した `dict/user-remove/` に削除リスト、`dict/user/` に追加エントリを置く。
+取得版は `scripts/dictionary-inputs.json` で固定する。取得手順は
+[dictionaries.md](dictionaries.md) の「辞書のローカルビルド」を参照。
 `make dict-neologd` / `make dict-sudachi` は最後にこの修復を実行する。配布辞書をその場で直すなら
 `make dict-repair DICT=...`（`dict/user` は配布辞書に追加済みなので足し直さない。文や句・数と単位の組の名詞の削除と
 降格の参照には `dict/ipadic.hsd` を使う）。
