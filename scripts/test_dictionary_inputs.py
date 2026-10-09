@@ -1,4 +1,4 @@
-"""公開 checkout と非公開辞書の版が一致するかを実際の Git で確かめる。"""
+"""非公開辞書のブランチ指定と入力の検証を実際の Git で確かめる。"""
 
 import json
 import subprocess
@@ -33,7 +33,7 @@ class DictionaryInputsTests(unittest.TestCase):
             json.dumps(
                 {
                     "repository": "example/hasami-dictionaries",
-                    "commit": self.expected,
+                    "branch": "main",
                 }
             )
         )
@@ -58,11 +58,14 @@ class DictionaryInputsTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "未取得"):
             dictionary_inputs.verify()
 
-    def test_different_commit_is_rejected(self):
+    def test_advanced_head_is_used_without_updating_settings(self):
+        original_settings = self.settings.read_bytes()
         (self.dictionary / "user" / "synthetic.csv").write_text("changed\n")
         self.commit_dictionary()
-        with self.assertRaisesRegex(ValueError, "参照コミットと異な"):
-            dictionary_inputs.verify()
+        current = self.run_git(self.dictionary, "rev-parse", "HEAD")
+        self.assertNotEqual(current, self.expected)
+        self.assertEqual(dictionary_inputs.verify(clean=True), current)
+        self.assertEqual(self.settings.read_bytes(), original_settings)
 
     def test_missing_input_group_is_rejected(self):
         (self.dictionary / "foreign-names" / "synthetic.csv").unlink()
@@ -75,24 +78,41 @@ class DictionaryInputsTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "未コミット"):
             dictionary_inputs.verify(clean=True)
 
-    def test_unpinned_inputs_are_rejected(self):
+    def test_branch_ref(self):
+        self.assertEqual(dictionary_inputs.ref(), "refs/heads/main")
+
+    def test_invalid_branch_is_rejected(self):
+        for branch in [None, "", "-main", "../main", "main..other", "main/"]:
+            with self.subTest(branch=branch):
+                self.settings.write_text(
+                    json.dumps(
+                        {
+                            "repository": "example/hasami-dictionaries",
+                            "branch": branch,
+                        }
+                    )
+                )
+                with self.assertRaisesRegex(ValueError, "取得ブランチが不正"):
+                    dictionary_inputs.ref()
+
+    def test_legacy_commit_only_settings_are_rejected(self):
         self.settings.write_text(
             json.dumps(
                 {
                     "repository": "example/hasami-dictionaries",
-                    "commit": "main",
+                    "commit": self.expected,
                 }
             )
         )
-        with self.assertRaisesRegex(ValueError, "参照コミットが不正"):
-            dictionary_inputs.revision()
+        with self.assertRaisesRegex(ValueError, "取得ブランチが不正"):
+            dictionary_inputs.settings()
 
     def test_repository_name_is_validated(self):
         self.settings.write_text(
             json.dumps(
                 {
                     "repository": "https://example.invalid/other",
-                    "commit": self.expected,
+                    "branch": "main",
                 }
             )
         )

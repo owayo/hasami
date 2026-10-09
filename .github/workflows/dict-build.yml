@@ -58,20 +58,20 @@ jobs:
         with:
           tools: rust python
 
-      - name: Read the pinned dictionary revision
+      - name: Read the dictionary source branch
         id: dictionary
         run: |
           set -euo pipefail
           repository=$(python3 scripts/dictionary_inputs.py repository)
-          revision=$(python3 scripts/dictionary_inputs.py revision)
+          ref=$(python3 scripts/dictionary_inputs.py ref)
           echo "repository=$repository" >> "$GITHUB_OUTPUT"
-          echo "revision=$revision" >> "$GITHUB_OUTPUT"
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
 
       - name: Checkout private dictionary inputs
         uses: actions/checkout@v7
         with:
           repository: ${{ steps.dictionary.outputs.repository }}
-          ref: ${{ steps.dictionary.outputs.revision }}
+          ref: ${{ steps.dictionary.outputs.ref }}
           path: dict
           ssh-key: ${{ secrets.HASAMI_DICTIONARIES_READ_KEY }}
           persist-credentials: false

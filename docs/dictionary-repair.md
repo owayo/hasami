@@ -36,7 +36,7 @@ hasami repair --dict dict/ipadic-neologd-sudachi.hsd \
 `--merge` で足す語は削除・降格の対象にしないので最後に適用する。
 
 非公開リポジトリから取得した `dict/user-remove/` に削除リスト、`dict/user/` に追加エントリを置く。
-取得版は `scripts/dictionary-inputs.json` で固定する。取得手順は
+取得ブランチは `scripts/dictionary-inputs.json` に記録し、辞書用 CI は main の HEAD を使う。取得手順は
 [dictionaries.md](dictionaries.md) の「辞書のローカルビルド」を参照。
 `make dict-neologd` / `make dict-sudachi` は最後にこの修復を実行する。配布辞書をその場で直すなら
 `make dict-repair DICT=...`（`dict/user` は配布辞書に追加済みなので足し直さない。文や句・数と単位の組の名詞の削除と

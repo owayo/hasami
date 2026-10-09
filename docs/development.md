@@ -46,7 +46,7 @@ mise exec -- cargo test --locked --workspace --exclude hasami-python -- --ignore
 配布辞書はリポジトリに置かず、リリースの添付ファイルで配る。開発で `dict/` に辞書が要るときは、この版のリリースから
 取るか、上流のソースから作る（`dict/*.hsd` は `.gitignore` 済み）。
 独自 CSV は非公開リポジトリで管理し、公開側では `dict/` 全体を追跡しない。
-辞書を構築する場合だけ、[dictionaries.md](dictionaries.md) の手順で固定した版を取得する。
+辞書を構築する場合だけ、[dictionaries.md](dictionaries.md) の手順で非公開側の main の HEAD を取得する。
 通常のビルドと CI は非公開 CSV なしで実行できる。
 
 ```bash

@@ -83,18 +83,19 @@ grep ' ipadic-neologd-sudachi.hsd$' SHA256SUMS | sha256sum --check --strict -   
 Python（`mise install`）が要る。
 
 独自の追加・削除 CSV は非公開の `owayo/hasami-dictionaries` で管理する。
-ビルドする場合はアクセス権のあるアカウントで、`scripts/dictionary-inputs.json` のコミットを
+ビルドする場合はアクセス権のあるアカウントで、`scripts/dictionary-inputs.json` の取得ブランチ（main）の HEAD を
 追跡対象外の `dict/` に取得する。通常の hasami 本体のビルドではこの取得は行わない。
 
 ```bash
 git clone https://github.com/owayo/hasami-dictionaries.git dict
-git -C dict checkout --detach "$(mise exec -- python3 scripts/dictionary_inputs.py revision)"
+git -C dict switch main
+git -C dict pull --ff-only origin main
 mise exec -- python3 scripts/dictionary_inputs.py verify --clean
 ```
 
 既に `dict/` に配布辞書がある場合は、CSV を上書きする前に既存の入力や未コミットの変更を確認する。
 独自辞書へのアクセス権がなければ、公開リリースの `.hsd` を `make dict-download` で取得して使える。
-入力が未取得・別の版なら辞書ビルドは失敗させる。入力を省いた辞書を配布辞書として作らない。
+入力が未取得・欠けている場合は辞書ビルドを止める。ローカルの候補検証では checkout の編集を使え、CI では未コミット変更を拒否する。
 
 ```bash
 # 配布辞書 3 つをすべて作る（dict/ に書き出す）
@@ -156,9 +157,9 @@ IPAdic・NEologd・`dict/user` に表層形がある語は落とす。品詞は 
 
 上流の取得版は `scripts/dictionary-sources.json` に記録する（IPAdic・NEologd は git の commit、SudachiDict は
 raw の版と ZIP の SHA-256）。ビルドはこの記録を読み、同じ取得版で作る。
-独自 CSV の版は `scripts/dictionary-inputs.json` に固定し、生成した `.hsd` のメタデータ
-`user_dictionary` にコミットを記録する。CSV の変更は非公開側でコミット・push した後、
-検証したコミットをこの JSON に写して hasami 側でコミットする。
+独自 CSV は `scripts/dictionary-inputs.json` の取得ブランチ（main）を使い、辞書用 CI は毎回その HEAD を取得する。
+CSV の変更は非公開側の main にコミット・push するだけで、公開側の SHA 指定の更新は不要。
+生成した `.hsd` のメタデータ `user_dictionary` には、実際に使った checkout のコミットを記録する。
 取得物は `.dict-src/` に置き、2 回目以降は再取得しない。中間成果物（repair を掛ける前の辞書、SudachiDict の
 変換結果など）は実行ごとの作業ディレクトリに作って終了時に消すので、`dict/` の配布辞書のほかには残らない。
 repair を手で試し直すために repair 前の辞書が要るときは、`scripts/build-dict.sh --keep-intermediate` で

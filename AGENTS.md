@@ -73,7 +73,7 @@ hasami/
 │   ├── build-dict.sh          # 配布辞書 3 つを dictionary-sources.json の取得版から作る（Makefile の dict 系と CI が呼ぶ）
 │   ├── dictionary_sources.py # 上流の最新 HEAD・Sudachi raw の公開版と ZIP の SHA-256 を解決する
 │   ├── dictionary-sources.json # 検証済みの取得版。Actions が変更を自動コミットする
-│   ├── dictionary-inputs.json # 非公開の独自辞書リポジトリと固定コミット
+│   ├── dictionary-inputs.json # 非公開の独自辞書リポジトリと取得ブランチ（main）
 │   ├── dictionary_inputs.py # 独自入力の版・存在・未コミット変更を検証
 │   ├── convert_sudachi_raw.py # SudachiDict の raw CSV → IPAdic 体系の MeCab CSV
 │   ├── convert-unidic-csv.py  # UniDic CSV → IPAdic互換フォーマット変換
@@ -215,8 +215,10 @@ target/release/hasami bench --dict dict/ipadic.hsd --file corpus.txt  # 1 行 1 
 ```
 
 独自 CSV は非公開の `owayo/hasami-dictionaries` で管理し、公開側では `dict/` 全体を追跡しない。
-辞書ビルドは `scripts/dictionary-inputs.json` の固定コミットを `dict/` に取得して行う。取得が無い・版が違う場合は止める。
-CSV の変更は非公開側でコミット・push し、公開側は検証したコミットを JSON に記録する。
+辞書用 CI は `scripts/dictionary-inputs.json` の取得ブランチ（main）の HEAD を毎回 `dict/` に取得する。
+取得が無い・入力が欠けている場合は止める。CI は未コミット変更も拒否する。
+CSV の変更は非公開側の main でコミット・push し、公開側で SHA を指定し直す必要はない。
+実際に使った独自辞書のコミットは、生成した `.hsd` のメタデータ `user_dictionary` に記録する。
 通常の CI と本体ビルドは非公開入力を取得しない。辞書用 CI だけが読み取り専用 deploy key
 `HASAMI_DICTIONARIES_READ_KEY` を使い、Release と Update Dictionary Sources はその鍵を明示的に渡す。
 ビルド済み `.hsd` の公開配布は継続する。CSV・秘密鍵・`.git` を artifact・Cargo パッケージへ含めない。
