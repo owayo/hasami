@@ -1353,6 +1353,35 @@ fn test_remove_csv_pos_prefix_limits_removal() {
 }
 
 #[test]
+fn test_remove_csv_reason_does_not_affect_matching() {
+    // 理由のカンマ・引用符を CSV として読み、品詞限定と別読みの保持を変えない。
+    for (name, content, dropped) in [
+        (
+            "remove_reason.csv",
+            "林,リン,\"名詞,固有名詞,人名\",\"除外方針, 別読みの\"\"ハヤシ\"\"は残す\"\n",
+            1,
+        ),
+        (
+            "remove_reason_no_pos.csv",
+            "林,リン,,品詞を問わずこの読みを除く\n",
+            2,
+        ),
+    ] {
+        let mut builder = builder_with_name_collisions();
+        let csv = write_temp(name, content);
+        let stats = builder.drop_entries_from_csv(&csv).unwrap();
+        assert_eq!(stats.rows, 1);
+        assert_eq!(stats.dropped, dropped);
+        assert_eq!(stats.unmatched_rows, 0);
+        assert!(
+            readings_with_pos(&builder)
+                .contains(&("ハヤシ".to_string(), "名詞,固有名詞,人名,姓".to_string()))
+        );
+        let _ = std::fs::remove_file(&csv);
+    }
+}
+
+#[test]
 fn test_remove_csv_pos_prefix_is_element_wise() {
     let mut builder = builder_with_name_collisions();
     // 「人」は「人名」の途中までなので、要素単位の前方一致では一致しない
@@ -3342,6 +3371,128 @@ fn test_distributed_dicts_md_corpus_readings_and_grammar() {
             assert_eq!(tokens.len(), 1, "{name}: {text}: {tokens:?}");
             assert!(!tokens[0].is_known, "{name}: {text}: {tokens:?}");
         }
+    }
+}
+
+#[test]
+#[ignore = "配布辞書（dict/*.hsd）を使う。cargo test -- --ignored distributed で実行"]
+fn test_distributed_dicts_modern_terms_and_width_variants() {
+    for name in ["ipadic-neologd", "ipadic-neologd-sudachi"] {
+        let mut analyzer = load_distributed_dict(name);
+        for (surface, reading, pos) in [
+            ("GPT", "ジーピーティー", "名詞,一般"),
+            ("KPI", "ケーピーアイ", "名詞,一般"),
+            ("PDCA", "ピーディーシーエー", "名詞,一般"),
+            ("BCP", "ビーシーピー", "名詞,一般"),
+            ("NICT", "エヌアイシーティー", "名詞,固有名詞,組織"),
+            ("TSMC", "ティーエスエムシー", "名詞,固有名詞,組織"),
+            ("DX", "ディーエックス", "名詞,一般"),
+            ("GX", "ジーエックス", "名詞,一般"),
+            ("ZEB", "ゼブ", "名詞,一般"),
+            ("FOIP", "フォイップ", "名詞,固有名詞,一般"),
+            ("SOBO", "ソーボー", "名詞,固有名詞,一般"),
+            ("CPTPP", "シーピーティーピーピー", "名詞,固有名詞,一般"),
+        ] {
+            let fullwidth: String = surface
+                .chars()
+                .map(|c| char::from_u32(c as u32 + 0xfee0).unwrap())
+                .collect();
+            for spelling in [surface, &fullwidth] {
+                let text = format!("{spelling}を調べる。");
+                let tokens = analyzer.tokenize(&text);
+                assert!(
+                    tokens.iter().any(|t| &*t.surface == spelling
+                        && &*t.reading == reading
+                        && &*t.base_form == surface
+                        && t.pos.starts_with(pos)
+                        && t.is_known),
+                    "{name}: {text}: {tokens:?}"
+                );
+                for t in tokens {
+                    assert_eq!(&text[t.start..t.end], &*t.surface);
+                }
+            }
+        }
+        for (text, surface, reading, pos) in [
+            ("避難所を設ける。", "避難所", "ヒナンジョ", "名詞,一般"),
+            ("減災に取り組む。", "減災", "ゲンサイ", "名詞,サ変接続"),
+            (
+                "利活用を検討する。",
+                "利活用",
+                "リカツヨウ",
+                "名詞,サ変接続",
+            ),
+            (
+                "特別会計に計上する。",
+                "特別会計",
+                "トクベツカイケイ",
+                "名詞,一般",
+            ),
+            (
+                "高付加価値のサービス。",
+                "付加価値",
+                "フカカチ",
+                "名詞,一般",
+            ),
+            ("委員会議了。", "委員会", "イインカイ", "名詞,一般"),
+            ("所謂専門家の意見。", "所謂", "イワユル", "連体詞"),
+            ("うしろへ動く。", "うしろ", "ウシロ", "名詞,一般"),
+        ] {
+            let tokens = analyzer.tokenize(text);
+            assert!(
+                tokens.iter().any(|t| &*t.surface == surface
+                    && &*t.reading == reading
+                    && t.pos.starts_with(pos)
+                    && t.is_known),
+                "{name}: {text}: {tokens:?}"
+            );
+        }
+        // 略語の品詞・読みの修正で、別の語や同形の別読みを消さない。
+        for (text, surface, reading) in [
+            ("参加者一人一人の意見。", "一人一人", "ヒトリヒトリ"),
+            ("一年も待った。", "一年", "イチネン"),
+            ("一週間の予定。", "一週間", "イッシュウカン"),
+        ] {
+            let tokens = analyzer.tokenize(text);
+            assert!(
+                tokens
+                    .iter()
+                    .any(|t| &*t.surface == surface && &*t.reading == reading),
+                "{name}: {text}: {tokens:?}"
+            );
+        }
+        for (surface, reading) in [("IT", "イット"), ("一人", "カズト")] {
+            assert!(
+                analyzer
+                    .dictionary()
+                    .lookup(surface)
+                    .unwrap()
+                    .iter()
+                    .any(|(end, entries)| *end == surface.len()
+                        && entries.iter().any(|e| &*e.reading == reading)),
+                "{name}: {surface}: {reading}"
+            );
+        }
+        for text in ["GPTs", "GPTHelper", "CPTPPHelper"] {
+            let tokens = analyzer.tokenize(text);
+            assert_eq!(tokens.len(), 1, "{name}: {text}: {tokens:?}");
+            assert!(!tokens[0].is_known, "{name}: {text}: {tokens:?}");
+        }
+        for text in ["COP29", "ＣＯＰ29"] {
+            let tokens = analyzer.tokenize(text);
+            assert!(
+                tokens.iter().any(|t| t.pos.starts_with("名詞,数")),
+                "{name}: {text}: {tokens:?}"
+            );
+        }
+        let tokens = analyzer.tokenize("座が何度も和んだ。");
+        assert!(tokens.iter().any(|t| &*t.surface == "座"));
+        assert!(
+            tokens
+                .iter()
+                .any(|t| &*t.surface == "が" && t.pos.starts_with("助詞"))
+        );
+        assert!(!tokens.iter().any(|t| &*t.surface == "座が"));
     }
 }
 

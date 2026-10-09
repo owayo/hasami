@@ -829,8 +829,25 @@ def write_list(path, entries_rules, title, inputs):
             f"# 件数: {len(entries_rules)} ({', '.join(f'{k} {v}' for k, v in sorted(counts.items()))})\n"
         )
         w = csv.writer(f, lineterminator="\n")
+        reasons = {
+            "kata-foreign": "日本人名の読みと対応しないカタカナの姓・名",
+            "cn-surname-on": "漢字1文字の姓・人名を外国の姓の字音で読む登録",
+            "cn-compound-surname": "中国の複姓を字音で読む登録",
+            "foreign-reading:korean": "日本語の字音では説明できない朝鮮語読み",
+            "foreign-reading:mandarin": "日本語の字音では説明できない普通話読み",
+            "deny-list": "拒否リストで指定された外国人名",
+        }
         for e in sorted(entries_rules, key=_sort_key):
-            w.writerow([e.surface, e.reading, e.pos])
+            rule = entries_rules[e]
+            reason = reasons.get(rule, "外国人の姓・名の組合せ")
+            w.writerow(
+                [
+                    e.surface,
+                    e.reading,
+                    e.pos,
+                    f"外国人名の除外方針: {reason}（判定規則: {rule}）",
+                ]
+            )
 
 
 def main(argv=None):
