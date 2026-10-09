@@ -12,7 +12,7 @@
 #   mecab-ipadic は NAIST-2003、mecab-ipadic-NEologd と SudachiDict は Apache-2.0、SudachiDict が
 #   含む UniDic は BSD-3-Clause。この表を含むものを配布するときは、同じディレクトリの
 #   builtin_exceptions.NOTICE（著作権表示と条文。THIRD_PARTY_LICENSES.md も参照）を添える
-# 件数: 18762 語（辞書の 4713123 表層形から抽出）
+# 件数: 18762 語（辞書の 4713215 表層形から抽出）
 '80年未来をこの手に!
 ( '∇')y-｡ο ○ ｱﾊﾊﾊﾊ
 ( )y-( ´)y-( ´-)y-(´ー`)yー∑( ﾟДﾟ)yーｽｹﾞー!!

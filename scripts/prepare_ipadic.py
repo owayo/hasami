@@ -1,7 +1,7 @@
 """配布辞書用に IPAdic のソースを整える.
 
 上流の mecab-ipadic は書き換えず、`hasami build` に渡すディレクトリを別に作る。
-辞書 CSV と matrix.def はリンクを張り、次の 5 点だけを変える。
+辞書 CSV と matrix.def はリンクを張る（Windows ではコピーする）。次の 5 点だけを変える。
 
 1. 記号の未知語 (char.def・unk.def)
    IPAdic の char.def は U+2000..206F (— 等)・U+3000..303F (全角スペース・。、「」 等)・
@@ -42,6 +42,8 @@ usage: python3 scripts/prepare_ipadic.py <mecab-ipadic のディレクトリ> <�
        変えた内容を 1 行で標準出力に書く (辞書のメタデータ `ipadic_patch` に入れる)
 """
 
+import os
+import shutil
 import sys
 import unicodedata
 from pathlib import Path
@@ -294,6 +296,14 @@ def unit_entries(src: Path) -> list[str]:
     ]
 
 
+def link_source(src: Path, dest: Path) -> None:
+    """Windows の symlink 作成権限を必要とせず、上流のファイルを別の場所で使う。"""
+    if os.name == "nt":
+        shutil.copyfile(src, dest)
+    else:
+        dest.symlink_to(src)
+
+
 def main() -> None:
     if len(sys.argv) != 3:
         sys.exit(__doc__)
@@ -305,8 +315,8 @@ def main() -> None:
             old.unlink()
 
     for path in sorted(src.glob("*.csv")):
-        (out / path.name).symlink_to(path)
-    (out / "matrix.def").symlink_to(src / "matrix.def")
+        link_source(path, out / path.name)
+    link_source(src / "matrix.def", out / "matrix.def")
     (out / "char.def").write_text(
         patch_char_def(read_text(src / "char.def")), encoding="utf-8"
     )

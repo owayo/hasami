@@ -2558,6 +2558,838 @@ fn test_distributed_dicts_split_sentence_like_nouns_like_ipadic() {
 // CLI（hasami tokenize の標準入力）
 // ==========================================================================
 
+/// サンプル監査で見つけた衝突を、本文を転載しない短い文で再現する。
+#[test]
+#[ignore = "配布辞書（dict/*.hsd）を使う。cargo test -- --ignored distributed で実行"]
+fn test_distributed_dicts_sample_corpus_grammar_and_readings() {
+    for name in ["ipadic-neologd", "ipadic-neologd-sudachi"] {
+        let mut analyzer = load_distributed_dict(name);
+        for (text, surface, pos, reading) in [
+            ("二わり減った。", "わり", "名詞,接尾,助数詞", "ワリ"),
+            ("一ねん待つ。", "ねん", "名詞,接尾,助数詞", "ネン"),
+            ("三けん確認する。", "けん", "名詞,接尾,助数詞", "ケン"),
+            ("十ぷん待つ。", "ぷん", "名詞,接尾,助数詞", "プン"),
+            ("ふつか休む。", "ふつか", "名詞,副詞可能", "フツカ"),
+            (
+                "典型的ないちにちだ。",
+                "いちにち",
+                "名詞,副詞可能",
+                "イチニチ",
+            ),
+            ("とはいえ変更する。", "とはいえ", "接続詞", "トハイエ"),
+            ("おもしろそうだ。", "おもしろ", "形容詞", "オモシロ"),
+            ("R&Dを進める。", "R&D", "名詞,一般", "アールアンドディー"),
+            (
+                "オンコールの当番だ。",
+                "オンコール",
+                "名詞,一般",
+                "オンコール",
+            ),
+            (
+                "キーゴールインジケーターを定める。",
+                "キーゴールインジケーター",
+                "名詞,一般",
+                "キーゴールインジケーター",
+            ),
+            (
+                "キーパフォーマンスインジケーターを測る。",
+                "キーパフォーマンスインジケーター",
+                "名詞,一般",
+                "キーパフォーマンスインジケーター",
+            ),
+            (
+                "意思決定する。",
+                "意思決定",
+                "名詞,サ変接続",
+                "イシケッテイ",
+            ),
+            (
+                "ピアレビューする。",
+                "ピアレビュー",
+                "名詞,サ変接続",
+                "ピアレビュー",
+            ),
+            (
+                "コントラクティングする。",
+                "コントラクティング",
+                "名詞,サ変接続",
+                "コントラクティング",
+            ),
+            (
+                "オンボーディングする。",
+                "オンボーディング",
+                "名詞,サ変接続",
+                "オンボーディング",
+            ),
+            (
+                "発達の最近接領域を学ぶ。",
+                "発達の最近接領域",
+                "名詞,一般",
+                "ハッタツノサイキンセツリョウイキ",
+            ),
+        ] {
+            let tokens = analyzer.tokenize(text);
+            assert!(
+                tokens.iter().any(|t| &*t.surface == surface
+                    && t.pos.starts_with(pos)
+                    && &*t.reading == reading
+                    && t.is_known),
+                "{name}: {text}: {tokens:?}"
+            );
+            for token in &tokens {
+                assert_eq!(&text[token.start..token.end], &*token.surface);
+            }
+        }
+        let tokens = analyzer.tokenize("この変更はしません。");
+        assert!(tokens.iter().any(|t| t.is_negation()), "{name}: {tokens:?}");
+        assert!(!tokens.iter().any(|t| t.base_form.contains("羽島線")));
+        let tokens = analyzer.tokenize("安定した仕事をやろう。");
+        assert!(
+            tokens
+                .iter()
+                .any(|t| &*t.base_form == "やる" && &*t.conj_form == "未然ウ接続"),
+            "{name}: {tokens:?}"
+        );
+        assert!(
+            tokens
+                .iter()
+                .any(|t| &*t.surface == "た" && t.pos.starts_with("助動詞"))
+        );
+        for text in [
+            "私たちが考える。",
+            "若い人が集まる。",
+            "悪いことをしない。",
+            "優しさを伝える。",
+            "規則のもとで動く。",
+            "今すぐ考える。",
+        ] {
+            let tokens = analyzer.tokenize(text);
+            assert!(
+                !tokens.iter().any(|t| t.pos.starts_with("名詞,固有名詞")),
+                "{name}: {text}: {tokens:?}"
+            );
+        }
+        let tokens = analyzer.tokenize("十ぷん待つ。");
+        let reading: String = tokens
+            .iter()
+            .take_while(|t| t.end <= "十ぷん".len())
+            .map(|t| &*t.reading)
+            .collect();
+        assert_eq!(reading, "ジュップン", "{name}: {tokens:?}");
+        // 正規化で同音になった件/軒・台/代の元の漢字は推測しない。
+        for (text, surface) in [
+            ("二けんの家", "けん"),
+            ("三けんの案件", "けん"),
+            ("十だいの人", "だい"),
+            ("十だいの車", "だい"),
+        ] {
+            let tokens = analyzer.tokenize(text);
+            assert!(
+                tokens.iter().any(|t| &*t.surface == surface
+                    && &*t.base_form == surface
+                    && t.pos.starts_with("名詞,接尾,助数詞")),
+                "{name}: {text}: {tokens:?}"
+            );
+        }
+        // 実在の人名・組織・作品名は、一般語の削除とは別に保つ。
+        for (text, surface) in [
+            ("夏目漱石の本", "夏目漱石"),
+            ("リクルートの採用", "リクルート"),
+            ("エデンの東を読む", "エデンの東"),
+            ("モーニング娘。が好き", "モーニング娘。"),
+        ] {
+            let tokens = analyzer.tokenize(text);
+            assert!(
+                tokens
+                    .iter()
+                    .any(|t| &*t.surface == surface && t.pos.starts_with("名詞,固有名詞")),
+                "{name}: {text}: {tokens:?}"
+            );
+        }
+    }
+}
+
+#[test]
+#[ignore = "配布辞書（dict/*.hsd）を使う。cargo test -- --ignored distributed で実行"]
+fn test_distributed_dicts_alphabet_and_followup_vocabulary() {
+    for name in ["ipadic-neologd", "ipadic-neologd-sudachi"] {
+        let mut analyzer = load_distributed_dict(name);
+        for letter in ('A'..='Z').chain('a'..='z') {
+            let text = format!("{letter}を選ぶ。");
+            let tokens = analyzer.tokenize(&text);
+            let token = &tokens[0];
+            assert_eq!(&*token.surface, letter.to_string(), "{name}: {tokens:?}");
+            assert_eq!(&*token.base_form, &*token.surface);
+            assert_eq!(&*token.pos, "記号,アルファベット,*,*");
+            assert!(token.is_known, "{name}: {tokens:?}");
+            assert!(!token.reading.is_empty());
+        }
+        for (text, surface, pos, reading) in [
+            ("PDDSを回す。", "PDDS", "名詞,一般", "ピーディーディーエス"),
+            ("QAする。", "QA", "名詞,サ変接続", "キューエー"),
+            ("DRIを決める。", "DRI", "名詞,一般", "ディーアールアイ"),
+            (
+                "TTPSする。",
+                "TTPS",
+                "名詞,サ変接続",
+                "ティーティーピーエス",
+            ),
+            ("マルマルを選ぶ。", "マルマル", "名詞,一般", "マルマル"),
+            ("マネする。", "マネ", "名詞,サ変接続", "マネ"),
+            ("ブレが少ない。", "ブレ", "名詞,一般", "ブレ"),
+            ("Systems", "Systems", "名詞,一般", "システムズ"),
+            ("Plans", "Plans", "名詞,一般", "プランズ"),
+            ("Problems", "Problems", "名詞,一般", "プロブレムズ"),
+            ("Mode", "Mode", "名詞,一般", "モード"),
+            ("INSIDER", "INSIDER", "名詞,一般", "インサイダー"),
+            ("パクル", "パクル", "動詞,自立", "パクル"),
+        ] {
+            let tokens = analyzer.tokenize(text);
+            assert!(
+                tokens.iter().any(|t| &*t.surface == surface
+                    && t.pos.starts_with(pos)
+                    && &*t.reading == reading
+                    && t.is_known),
+                "{name}: {text}: {tokens:?}"
+            );
+        }
+        for (text, form) in [("ブレない。", "未然形"), ("ブレます。", "連用形")] {
+            let tokens = analyzer.tokenize(text);
+            let token = &tokens[0];
+            assert!(token.is_known && token.pos.starts_with("動詞,自立"));
+            assert_eq!(&*token.base_form, "ブレる", "{name}: {tokens:?}");
+            assert_eq!(&*token.conj_form, form, "{name}: {tokens:?}");
+            assert!(tokens[1].pos.starts_with("助動詞"), "{name}: {tokens:?}");
+        }
+        for (text, surfaces) in [
+            ("アウトプットタス時間", vec!["アウトプット", "タス", "時間"]),
+            ("タスオフィス", vec!["タス", "オフィス"]),
+            ("マルマルステップ", vec!["マルマル", "ステップ"]),
+            ("マインドフルアプローチ", vec!["マインドフル", "アプローチ"]),
+            ("コーヒードリッパ", vec!["コーヒー", "ドリッパ"]),
+        ] {
+            let tokens = analyzer.tokenize(text);
+            assert_eq!(
+                tokens.iter().map(|t| &*t.surface).collect::<Vec<_>>(),
+                surfaces
+            );
+            assert!(tokens.iter().all(|t| t.is_known), "{name}: {tokens:?}");
+            for token in &tokens {
+                assert_eq!(&text[token.start..token.end], &*token.surface);
+            }
+        }
+        // 英字の追加で既存の略語や、未登録の英単語を一文字ずつに割らない。
+        for text in [
+            "KPI", "zxqv", "abcxyz", "Zorvexly", "in", "Do", "HIGH", "ax",
+        ] {
+            let tokens = analyzer.tokenize(text);
+            assert_eq!(tokens.len(), 1, "{name}: {text}: {tokens:?}");
+            assert_eq!(&*tokens[0].surface, text);
+            assert_eq!(tokens[0].is_known, text == "KPI");
+        }
+        // 数詞と未達成が隣接する文脈では、安い英字 I が KP / I の経路を作る。
+        let tokens = analyzer.tokenize("二KPI未達成、三KPI達成。");
+        assert_eq!(
+            tokens.iter().filter(|t| &*t.surface == "KPI").count(),
+            2,
+            "{name}: {tokens:?}"
+        );
+        assert!(!tokens.iter().any(|t| matches!(&*t.surface, "KP" | "I")));
+        // 数詞の後の英字は、登録後も単位として読む。
+        for (text, surface, reading) in [("10A", "A", "アンペア"), ("10L", "L", "リットル")]
+        {
+            let tokens = analyzer.tokenize(text);
+            assert!(
+                tokens
+                    .iter()
+                    .any(|t| &*t.surface == surface && &*t.reading == reading)
+            );
+        }
+    }
+}
+
+#[test]
+#[ignore = "配布辞書（dict/*.hsd）を使う。cargo test -- --ignored distributed で実行"]
+fn test_distributed_dicts_software_corpus() {
+    for name in ["ipadic-neologd", "ipadic-neologd-sudachi"] {
+        let mut analyzer = load_distributed_dict(name);
+        // 一般語の固有名詞登録を外しても、語とその読みを保つ。
+        for (text, surface, pos, reading) in [
+            ("戻り値を返す。", "戻り値", "名詞,一般", "モドリチ"),
+            (
+                "プロンプトを書く。",
+                "プロンプト",
+                "名詞,一般",
+                "プロンプト",
+            ),
+            (
+                "ピアコードレビューを行う。",
+                "ピアコードレビュー",
+                "名詞,一般",
+                "ピアコードレビュー",
+            ),
+            (
+                "コードレビューする。",
+                "コードレビュー",
+                "名詞,一般",
+                "コードレビュー",
+            ),
+            ("モックを使う。", "モック", "名詞,一般", "モック"),
+            ("AIのAPIを使う。", "AI", "名詞,一般", "エーアイ"),
+            ("AIのAPIを使う。", "API", "名詞,一般", "エーピーアイ"),
+            ("デプロイする。", "デプロイ", "名詞,サ変接続", "デプロイ"),
+            (
+                "リンティングする。",
+                "リンティング",
+                "名詞,サ変接続",
+                "リンティング",
+            ),
+            (
+                "ヌルオブジェクトを返す。",
+                "ヌルオブジェクト",
+                "名詞,一般",
+                "ヌルオブジェクト",
+            ),
+            (
+                "フレーキーなテスト。",
+                "フレーキー",
+                "名詞,形容動詞語幹",
+                "フレーキー",
+            ),
+            (
+                "NotebookLMを使う。",
+                "NotebookLM",
+                "名詞,固有名詞",
+                "ノートブックエルエム",
+            ),
+            ("Canvaを使う。", "Canva", "名詞,固有名詞", "キャンバ"),
+            ("Coworkを使う。", "Cowork", "名詞,固有名詞", "コワーク"),
+            ("髙橋さん。", "髙橋", "名詞,固有名詞,人名,姓", "タカハシ"),
+            ("効率を爆上げする。", "爆上げ", "名詞,サ変接続", "バクアゲ"),
+        ] {
+            let tokens = analyzer.tokenize(text);
+            assert!(
+                tokens.iter().any(|t| &*t.surface == surface
+                    && t.pos.starts_with(pos)
+                    && &*t.reading == reading
+                    && t.is_known),
+                "{name}: {text}: {tokens:?}"
+            );
+            for token in &tokens {
+                assert_eq!(&text[token.start..token.end], &*token.surface);
+            }
+        }
+        // 壊れた発音「ソフトーェア」が、複合語でも単語に分かれても残らない。
+        let tokens = analyzer.tokenize("ソフトウェア開発");
+        assert_eq!(
+            tokens.iter().map(|t| &*t.pronunciation).collect::<String>(),
+            "ソフトウェアカイハツ",
+            "{name}: {tokens:?}"
+        );
+        assert!(tokens.iter().all(|t| !t.pos.starts_with("名詞,固有名詞")));
+        // 「第十」の姓に引きずられて「章」をアキラと読まない。
+        let tokens = analyzer.tokenize("第十章");
+        assert_eq!(
+            tokens.iter().map(|t| &*t.surface).collect::<Vec<_>>(),
+            ["第", "十", "章"],
+            "{name}: {tokens:?}"
+        );
+        assert_eq!(&*tokens[2].reading, "ショウ");
+        assert!(tokens[2].pos.starts_with("名詞,接尾,助数詞"));
+        let tokens = analyzer.tokenize("二まいのピザ");
+        assert_eq!(
+            tokens.iter().map(|t| &*t.surface).collect::<Vec<_>>(),
+            ["二", "まい", "の", "ピザ"],
+            "{name}: {tokens:?}"
+        );
+        assert!(tokens[1].pos.starts_with("名詞,接尾,助数詞"));
+        assert_eq!(&*tokens[1].base_form, "枚");
+        assert!(tokens[2].pos.starts_with("助詞"));
+        let tokens = analyzer.tokenize("きれいな図");
+        assert_eq!(
+            tokens.iter().map(|t| &*t.surface).collect::<Vec<_>>(),
+            ["きれい", "な", "図"],
+            "{name}: {tokens:?}"
+        );
+        assert!(tokens[1].pos.starts_with("助動詞"));
+        // 例示用の識別子を辞書に入れたり、一文字ずつに割ったりしない。
+        for text in ["TextOptions", "getSquareRoot", "Zorvexly"] {
+            let tokens = analyzer.tokenize(text);
+            assert_eq!(tokens.len(), 1, "{name}: {text}: {tokens:?}");
+            assert_eq!(&*tokens[0].surface, text);
+            assert!(!tokens[0].is_known);
+        }
+    }
+}
+
+#[test]
+#[ignore = "配布辞書（dict/*.hsd）を使う。cargo test -- --ignored distributed で実行"]
+fn test_distributed_dicts_remaining_unknowns() {
+    for name in ["ipadic-neologd", "ipadic-neologd-sudachi"] {
+        let mut analyzer = load_distributed_dict(name);
+        for (text, surface, base, reading, pos) in [
+            (
+                "フィゥーチャー型を返す。",
+                "フィゥーチャー",
+                "フューチャー",
+                "フューチャー",
+                "名詞,一般",
+            ),
+            (
+                "ストゥリームを処理する。",
+                "ストゥリーム",
+                "ストリーム",
+                "ストリーム",
+                "名詞,一般",
+            ),
+            ("ノゥトを書く。", "ノゥト", "ノート", "ノート", "名詞,一般"),
+            (
+                "デュレイションを指定する。",
+                "デュレイション",
+                "デュレーション",
+                "デュレーション",
+                "名詞,一般",
+            ),
+            ("イント型を使う。", "イント", "int", "イント", "名詞,一般"),
+            (
+                "リクウェストする。",
+                "リクウェスト",
+                "リクエスト",
+                "リクエスト",
+                "名詞,サ変接続",
+            ),
+            (
+                "イマックスを使う。",
+                "イマックス",
+                "イーマックス",
+                "イーマックス",
+                "名詞,固有名詞",
+            ),
+            (
+                "ジェミニリブを使う。",
+                "ジェミニリブ",
+                "ジェミニライブ",
+                "ジェミニライブ",
+                "名詞,固有名詞",
+            ),
+            (
+                "キンドゥルを使う。",
+                "キンドゥル",
+                "キンドル",
+                "キンドル",
+                "名詞,固有名詞",
+            ),
+            (
+                "マイクロソフトアジャー",
+                "アジャー",
+                "アジュール",
+                "アジュール",
+                "名詞,固有名詞",
+            ),
+            (
+                "Anthropicのモデル。",
+                "Anthropic",
+                "Anthropic",
+                "アンソロピック",
+                "名詞,固有名詞,組織",
+            ),
+            (
+                "OpenAIのモデル。",
+                "OpenAI",
+                "OpenAI",
+                "オープンエーアイ",
+                "名詞,固有名詞,組織",
+            ),
+            (
+                "オープンAIのモデル。",
+                "オープンAI",
+                "OpenAI",
+                "オープンエーアイ",
+                "名詞,固有名詞,組織",
+            ),
+            (
+                "オープンエーアイ社。",
+                "オープンエーアイ",
+                "OpenAI",
+                "オープンエーアイ",
+                "名詞,固有名詞,組織",
+            ),
+            (
+                "ChatGPTを使う。",
+                "ChatGPT",
+                "ChatGPT",
+                "チャットジーピーティー",
+                "名詞,固有名詞,一般",
+            ),
+            (
+                "DeepSeekを使う。",
+                "DeepSeek",
+                "DeepSeek",
+                "ディープシーク",
+                "名詞,固有名詞,一般",
+            ),
+            (
+                "Copilotを使う。",
+                "Copilot",
+                "Copilot",
+                "コパイロット",
+                "名詞,固有名詞,一般",
+            ),
+            (
+                "Grokを使う。",
+                "Grok",
+                "Grok",
+                "グロック",
+                "名詞,固有名詞,一般",
+            ),
+            (
+                "Perplexityを使う。",
+                "Perplexity",
+                "Perplexity",
+                "パープレキシティ",
+                "名詞,固有名詞,一般",
+            ),
+            (
+                "パープレクシティーを使う。",
+                "パープレクシティー",
+                "パープレキシティ",
+                "パープレキシティ",
+                "名詞,固有名詞,一般",
+            ),
+            (
+                "Hugging Faceのモデル。",
+                "Hugging Face",
+                "Hugging Face",
+                "ハギングフェイス",
+                "名詞,固有名詞,組織",
+            ),
+            (
+                "コヒアーのモデル。",
+                "コヒアー",
+                "Cohere",
+                "コヒア",
+                "名詞,固有名詞,組織",
+            ),
+            (
+                "Notionを使う。",
+                "Notion",
+                "Notion",
+                "ノーション",
+                "名詞,固有名詞",
+            ),
+            (
+                "ミュータブルな状態。",
+                "ミュータブル",
+                "ミュータブル",
+                "ミュータブル",
+                "名詞,形容動詞語幹",
+            ),
+            (
+                "ブランチをリベースする。",
+                "リベース",
+                "リベース",
+                "リベース",
+                "名詞,サ変接続",
+            ),
+            (
+                "ABテストを行う。",
+                "ABテスト",
+                "ABテスト",
+                "エービーテスト",
+                "名詞,サ変接続",
+            ),
+            ("オンになっている。", "オン", "オン", "オン", "名詞,一般"),
+            ("クイックWins", "Wins", "Wins", "ウィンズ", "名詞,一般"),
+            (
+                "Meta Platformsの製品。",
+                "Platforms",
+                "Platforms",
+                "プラットフォームズ",
+                "名詞,一般",
+            ),
+        ] {
+            let tokens = analyzer.tokenize(text);
+            assert!(
+                tokens.iter().any(|t| &*t.surface == surface
+                    && &*t.base_form == base
+                    && &*t.reading == reading
+                    && t.pos.starts_with(pos)
+                    && t.is_known),
+                "{name}: {text}: {tokens:?}"
+            );
+            for token in &tokens {
+                assert_eq!(&text[token.start..token.end], &*token.surface);
+            }
+        }
+        // 文脈を確認できない OCR 候補、例示用識別子、意図的に除いた人名は復活させない。
+        for text in [
+            "AAI",
+            "サプレッション",
+            "TextOptions",
+            "getSquareRoot",
+            "Zorvexly",
+            "OpenAIHelper",
+            "パウロ",
+        ] {
+            let tokens = analyzer.tokenize(text);
+            assert_eq!(tokens.len(), 1, "{name}: {text}: {tokens:?}");
+            assert_eq!(&*tokens[0].surface, text);
+            assert!(!tokens[0].is_known, "{name}: {text}: {tokens:?}");
+        }
+    }
+}
+
+#[test]
+#[ignore = "配布辞書（dict/*.hsd）を使う。cargo test -- --ignored distributed で実行"]
+fn test_distributed_dicts_reviewed_entries_preserve_grammar() {
+    for name in ["ipadic-neologd", "ipadic-neologd-sudachi"] {
+        let mut analyzer = load_distributed_dict(name);
+        for (text, verb, base) in [
+            ("思い込まない。", "思い込ま", "思い込む"),
+            ("見せつけない。", "見せつけ", "見せつける"),
+        ] {
+            let tokens = analyzer.tokenize(text);
+            let token = tokens.iter().find(|t| &*t.surface == verb).unwrap();
+            assert_eq!(&*token.base_form, base);
+            assert!(!token.conj_type.is_empty());
+            assert_eq!(&*token.conj_form, "未然形");
+            assert!(tokens.iter().any(|t| t.is_negation()), "{name}: {tokens:?}");
+        }
+        let tokens = analyzer.tokenize("その場合は不足する。");
+        assert!(tokens.iter().any(|t| &*t.surface == "場合"));
+        assert!(!tokens.iter().any(|t| &*t.surface == "その場"));
+        let token = tokens.iter().find(|t| &*t.surface == "不足").unwrap();
+        assert_eq!(&*token.reading, "フソク");
+        assert!(token.pos.starts_with("名詞,サ変接続"));
+        for text in ["Git19", "STEP2", "STEP5", "STEP6"] {
+            let tokens = analyzer.tokenize(text);
+            let expected = if text.starts_with("Git") {
+                "Git"
+            } else {
+                "STEP"
+            };
+            assert_eq!(&*tokens[0].surface, expected, "{name}: {tokens:?}");
+            assert!(
+                tokens
+                    .iter()
+                    .skip(1)
+                    .all(|t| t.pos.starts_with("名詞,数") && t.is_known && !t.reading.is_empty()),
+                "{name}: {tokens:?}"
+            );
+        }
+        for (text, unit, reading) in [
+            ("970mAh", "mAh", "ミリアンペアアワー"),
+            ("2GB", "GB", "ギガバイト"),
+            ("15mL", "mL", "ミリリットル"),
+        ] {
+            let tokens = analyzer.tokenize(text);
+            let token = tokens.last().unwrap();
+            assert_eq!(&*token.surface, unit, "{name}: {tokens:?}");
+            assert!(token.pos.starts_with("名詞,接尾,助数詞"));
+            assert_eq!(&*token.reading, reading);
+            assert!(
+                tokens[..tokens.len() - 1]
+                    .iter()
+                    .all(|t| t.pos.starts_with("名詞,数"))
+            );
+        }
+        for (text, reading) in [
+            ("GitHubActions", "ギットハブアクションズ"),
+            ("Sonnet", "ソネット"),
+        ] {
+            let tokens = analyzer.tokenize(text);
+            assert_eq!(tokens.len(), 1, "{name}: {tokens:?}");
+            assert!(tokens[0].is_known);
+            assert_eq!(&*tokens[0].reading, reading);
+        }
+        for (surface, reading) in [("漏洩", "ロウセツ"), ("D.C.", "ダカーポ")] {
+            let entries = analyzer.dictionary().lookup(surface).unwrap();
+            assert!(
+                entries
+                    .iter()
+                    .any(|(end, es)| *end == surface.len()
+                        && es.iter().any(|e| &*e.reading == reading)),
+                "{name}: {surface}"
+            );
+        }
+    }
+}
+
+#[test]
+#[ignore = "配布辞書（dict/*.hsd）を使う。cargo test -- --ignored distributed で実行"]
+fn test_distributed_dicts_md_corpus_readings_and_grammar() {
+    for name in ["ipadic-neologd", "ipadic-neologd-sudachi"] {
+        let mut analyzer = load_distributed_dict(name);
+        for (text, surface, reading, pos) in [
+            ("ホワイソを繰り返す。", "ホワイソ", "ホワイソ", "名詞,一般"),
+            (
+                "サティスファイスする。",
+                "サティスファイス",
+                "サティスファイス",
+                "名詞,サ変接続",
+            ),
+            (
+                "プレモーテムを行う。",
+                "プレモーテム",
+                "プレモーテム",
+                "名詞,一般",
+            ),
+            (
+                "ファネルモデルを作る。",
+                "ファネル",
+                "ファネル",
+                "名詞,一般",
+            ),
+            (
+                "FoundX Startupの資料。",
+                "FoundX",
+                "ファウンドエックス",
+                "名詞,固有名詞,一般",
+            ),
+            ("Startupの資料。", "Startup", "スタートアップ", "名詞,一般"),
+            (
+                "kikitoriのサービス。",
+                "kikitori",
+                "キキトリ",
+                "名詞,固有名詞,組織",
+            ),
+            (
+                "ELSEVIERの書籍。",
+                "ELSEVIER",
+                "エルゼビア",
+                "名詞,固有名詞,組織",
+            ),
+            ("caféに行く。", "café", "カフェ", "名詞,一般"),
+            (
+                "五W一Hで考える。",
+                "五W一H",
+                "ゴダブリューイチエイチ",
+                "名詞,一般",
+            ),
+            (
+                "六W三Hで考える。",
+                "六W三H",
+                "ロクダブリューサンエイチ",
+                "名詞,一般",
+            ),
+            ("一まん点の商品。", "まん", "マン", "名詞,数"),
+            ("外れ値を調べる。", "外れ値", "ハズレチ", "名詞,一般"),
+            ("体言止めを使う。", "体言止め", "タイゲンドメ", "名詞,一般"),
+            (
+                "色鮮やかな画像。",
+                "色鮮やか",
+                "イロアザヤカ",
+                "名詞,形容動詞語幹",
+            ),
+            ("イシューを探す。", "イシュー", "イシュー", "名詞,一般"),
+            (
+                "要件定義を進める。",
+                "要件定義",
+                "ヨウケンテイギ",
+                "名詞,一般",
+            ),
+            (
+                "温室効果ガスを減らす。",
+                "温室効果ガス",
+                "オンシツコウカガス",
+                "名詞,一般",
+            ),
+        ] {
+            let tokens = analyzer.tokenize(text);
+            assert!(
+                tokens.iter().any(|t| &*t.surface == surface
+                    && &*t.reading == reading
+                    && t.pos.starts_with(pos)
+                    && t.is_known),
+                "{name}: {text}: {tokens:?}"
+            );
+            for token in &tokens {
+                assert_eq!(&text[token.start..token.end], &*token.surface);
+            }
+        }
+        for text in [
+            "最初のところで止める。",
+            "どの人に聞く。",
+            "実用最小限の製品を作る。",
+            "一まん点の商品。",
+            "M8のネジ。",
+        ] {
+            let tokens = analyzer.tokenize(text);
+            assert!(
+                !tokens.iter().any(|t| matches!(
+                    &*t.surface,
+                    "のところ" | "どの人" | "実用最小限の製品" | "まん点" | "M8"
+                )),
+                "{name}: {text}: {tokens:?}"
+            );
+        }
+        // 同形の健全な読み、任意の英字識別子、作品名は維持する。
+        for (text, surface, reading) in [
+            ("満点を取る。", "満点", "マンテン"),
+            ("戻り値を返す。", "戻り値", "モドリチ"),
+            ("むしろを編む。", "むしろ", "ムシロ"),
+        ] {
+            let tokens = analyzer.tokenize(text);
+            assert!(
+                tokens
+                    .iter()
+                    .any(|t| &*t.surface == surface && &*t.reading == reading),
+                "{name}: {text}: {tokens:?}"
+            );
+        }
+        for text in ["StartupHelper", "teamster", "パウロ"] {
+            let tokens = analyzer.tokenize(text);
+            assert_eq!(tokens.len(), 1, "{name}: {text}: {tokens:?}");
+            assert!(!tokens[0].is_known, "{name}: {text}: {tokens:?}");
+        }
+    }
+}
+
+#[test]
+#[ignore = "配布辞書（dict/*.hsd）を使う。cargo test -- --ignored distributed で実行"]
+fn test_distributed_dicts_unicode_reading_and_byte_offsets() {
+    for name in ["ipadic", "ipadic-neologd", "ipadic-neologd-sudachi"] {
+        let mut analyzer = load_distributed_dict(name);
+        for (text, reading) in [
+            ("ｶﾞｯｺｳ", "ガッコウ"),
+            ("ｳﾞｨｰﾅｽ", "ヴィーナス"),
+            ("ＡＩ", "エーアイ"),
+        ] {
+            let tokens = analyzer.tokenize(text);
+            assert_eq!(
+                tokens.iter().map(|t| &*t.reading).collect::<String>(),
+                reading,
+                "{name}: {tokens:?}"
+            );
+            assert_eq!(tokens.iter().map(|t| &*t.surface).collect::<String>(), text);
+            for token in tokens {
+                assert_eq!(&text[token.start..token.end], &*token.surface);
+            }
+        }
+        for c in [
+            '\u{2A700}',
+            '\u{2B740}',
+            '\u{2B820}',
+            '\u{2CEB0}',
+            '\u{2EBF0}',
+            '\u{2F800}',
+            '\u{30000}',
+            '\u{31350}',
+            '\u{323B0}',
+        ] {
+            let text = format!(" {c} ");
+            let tokens = analyzer.tokenize(&text);
+            assert_eq!(tokens.len(), 1, "{name}: {tokens:?}");
+            assert_ne!(
+                tokens[0].coarse_pos(),
+                hasami::CoarsePos::Symbol,
+                "{name}: {tokens:?}"
+            );
+            assert_eq!(&text[tokens[0].start..tokens[0].end], &*tokens[0].surface);
+        }
+    }
+}
+
 /// `hasami tokenize` に標準入力を渡して (終了コードが 0 か, 標準出力, 標準エラー) を返す
 #[cfg(feature = "cli")]
 fn run_cli_tokenize(

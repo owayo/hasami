@@ -101,7 +101,7 @@ make dict-clean
 
 | 辞書 | 作り方 |
 | --- | --- |
-| `ipadic.hsd` | IPAdic を `scripts/prepare_ipadic.py` で整えて build し、外国人名の姓・名だけを除く（発音の修復は掛けない） |
+| `ipadic.hsd` | IPAdic を `scripts/prepare_ipadic.py` で整えて build し、外国人名の姓・名を除き、`dict/user/ascii-numerals.csv` の半角数字を足す（発音の修復は掛けない） |
 | `ipadic-neologd.hsd` | IPAdic に NEologd の seed を merge し、repair 一式（範囲外 ID・表記ゆれ・漢数字の人名・`dict/user-remove/*.csv`・文や句の名詞・数と単位の組の名詞・一般語の固有名詞の降格）を掛けてから `dict/user/*.csv` を足す |
 | `ipadic-neologd-sudachi.hsd` | IPAdic + NEologd に SudachiDict の raw 辞書を `scripts/convert_sudachi_raw.py` で変換して merge し、同じ repair 一式を掛ける |
 

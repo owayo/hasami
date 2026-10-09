@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 上流の辞書ソースから配布辞書 (dict/*.hsd) を作り直す
 #
-#   ipadic.hsd                   IPAdic。外国人名の姓・名だけを除く
+#   ipadic.hsd                   IPAdic。外国人名の姓・名を除き、半角数字の数詞を補う
 #   ipadic-neologd.hsd           IPAdic + NEologd + dict/user。repair 一式を適用
 #   ipadic-neologd-sudachi.hsd   上の IPAdic + NEologd に SudachiDict を足したもの。repair 一式を適用
 #
@@ -200,7 +200,7 @@ build_ipadic() {
   # IPAdic 単体は発音の修復を掛けない (記号の読みを残す)。外国人名の姓・名だけを除く
   "$HASAMI" repair --dict "$WORK/ipadic.base.hsd" --output "$WORK/ipadic.tmp.hsd" \
     --drop-invalid-context-ids --no-pronunciation-repair \
-    --remove dict/user-remove/foreign-names.csv
+    --remove dict/user-remove/foreign-names.csv --merge dict/user/ascii-numerals.csv
   install_dict "$WORK/ipadic.tmp.hsd" "$OUT/ipadic.hsd"
 }
 
