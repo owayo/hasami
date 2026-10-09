@@ -10,7 +10,8 @@ target
 __pycache__/
 
 # 配布辞書はリポジトリに置かず、リリースに添付する (make dict で作るか make dict-download で取る)。
-# dict/user/ などの入力の CSV は追跡するので、dict/ 全体は無視しない
+# dict は非公開の入力CSVを別の Git リポジトリとして取得する場所。公開側へは含めない。
+/dict/
 *.hsd
 *.hsd.zst
 /dict/dictionaries.json

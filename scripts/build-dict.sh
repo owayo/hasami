@@ -71,6 +71,9 @@ while [ $# -gt 0 ]; do
 done
 [ ${#TARGETS[@]} -eq 0 ] && TARGETS=(ipadic neologd sudachi)
 
+# 入力が無い、または別の版なら、取得やビルドを始める前に止める。
+DICTIONARY_REVISION=$(python3 scripts/dictionary_inputs.py verify)
+
 mkdir -p "$OUT" "$SRC"
 # 中間成果物の作業ディレクトリ。--src の下に作る (既定では --out と同じファイルシステムなので、
 # 配布辞書への mv が rename になる)
@@ -142,6 +145,7 @@ done
 # (50%・30℃ 等) の削除、NEologd が固有名詞にした一般語 (成果物・可視化・多角的 等) の降格は、IPAdic 単体の
 # 中間辞書で表層形を解析して決める (中間辞書は同じ接続行列を持つので、降格では文脈 ID をそのまま持ち込める)
 FULL_REPAIR=(
+  --meta "user_dictionary=$DICTIONARY_REVISION"
   --drop-invalid-context-ids
   --drop-ortho-variants
   --drop-numeral-misreadings
@@ -199,6 +203,7 @@ build_ipadic() {
   ensure_ipadic_base
   # IPAdic 単体は発音の修復を掛けない (記号の読みを残す)。外国人名の姓・名だけを除く
   "$HASAMI" repair --dict "$WORK/ipadic.base.hsd" --output "$WORK/ipadic.tmp.hsd" \
+    --meta "user_dictionary=$DICTIONARY_REVISION" \
     --drop-invalid-context-ids --no-pronunciation-repair \
     --remove dict/user-remove/foreign-names.csv --merge dict/user/ascii-numerals.csv
   install_dict "$WORK/ipadic.tmp.hsd" "$OUT/ipadic.hsd"

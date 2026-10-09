@@ -16,6 +16,8 @@ description = "High-performance Japanese morphological analyzer"
 license = "MIT AND NAIST-2003 AND Apache-2.0 AND BSD-3-Clause"
 repository = "https://github.com/owayo/hasami"
 rust-version = "1.98"
+# 非公開辞書の入力を crates.io のパッケージへ含めない。
+exclude = ["dict/**"]
 
 [lib]
 name = "hasami"

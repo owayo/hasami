@@ -149,6 +149,7 @@ dict-sudachi: release ## IPAdic + NEologd + SudachiDict の辞書を作る (推�
 # IPAdic 単体の配布辞書を使う
 dict-repair: release ## 辞書をその場で修復する (DICT=path/to/dict.hsd)
 	@test -n "$(DICT)" || { echo "usage: make dict-repair DICT=dict/xxx.hsd"; exit 1; }
+	$(RUN) python3 scripts/dictionary_inputs.py verify
 	$(HASAMI) repair --dict $(DICT) \
 		--drop-invalid-context-ids \
 		--drop-ortho-variants \

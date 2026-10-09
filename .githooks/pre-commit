@@ -13,6 +13,13 @@ fail=0
 # :0:<パス> はインデックスに置いた内容
 while IFS= read -r path; do
 	[ -n "$path" ] || continue
+	case "$path" in
+		dict/*)
+			printf 'error: dictionary inputs belong in the private dictionary repository: %s\n' "$path" >&2
+			fail=1
+			continue
+			;;
+	esac
 	size=$(git cat-file -s ":0:$path" 2>/dev/null) || continue
 	[ "$size" -gt "$limit" ] || continue
 
