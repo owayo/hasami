@@ -3376,6 +3376,53 @@ fn test_distributed_dicts_md_corpus_readings_and_grammar() {
 
 #[test]
 #[ignore = "配布辞書（dict/*.hsd）を使う。cargo test -- --ignored distributed で実行"]
+fn test_distributed_dicts_explanatory_vocabulary_and_readings() {
+    for name in ["ipadic-neologd", "ipadic-neologd-sudachi"] {
+        let mut analyzer = load_distributed_dict(name);
+        for (word, reading, pronunciation) in [
+            ("あらすじ", "アラスジ", "アラスジ"),
+            ("キービジュアル", "キービジュアル", "キービジュアル"),
+            ("跗蹠", "フショ", "フショ"),
+            ("閉球", "ヘイキュウ", "ヘイキュー"),
+            ("閉近傍", "ヘイキンボウ", "ヘイキンボー"),
+            ("擬ベクトル", "ギベクトル", "ギベクトル"),
+            ("陪法線", "ハイホウセン", "ハイホーセン"),
+        ] {
+            let text = format!("{word}を確認する。");
+            let tokens = analyzer.tokenize(&text);
+            assert_eq!(&*tokens[0].surface, word, "{name}: {tokens:?}");
+            assert_eq!(&*tokens[0].pos, "名詞,一般,*,*", "{name}: {tokens:?}");
+            assert_eq!(&*tokens[0].reading, reading, "{name}: {tokens:?}");
+            assert_eq!(
+                &*tokens[0].pronunciation, pronunciation,
+                "{name}: {tokens:?}"
+            );
+            assert!(tokens[0].is_known, "{name}: {tokens:?}");
+            assert_eq!(&*tokens[1].surface, "を", "{name}: {tokens:?}");
+            for token in tokens {
+                assert_eq!(&text[token.start..token.end], &*token.surface);
+            }
+        }
+        for (word, base, pronunciation) in [
+            ("Rust", "Rust", "ラスト"),
+            ("ChromeOS", "ChromeOS", "クロームオーエス"),
+            ("Youtube", "YouTube", "ユーチューブ"),
+        ] {
+            let tokens = analyzer.tokenize(&format!("{word}を使う。"));
+            assert_eq!(&*tokens[0].surface, word, "{name}: {tokens:?}");
+            assert_eq!(&*tokens[0].base_form, base, "{name}: {tokens:?}");
+            assert_eq!(
+                &*tokens[0].pronunciation, pronunciation,
+                "{name}: {tokens:?}"
+            );
+            assert!(tokens[0].is_known, "{name}: {tokens:?}");
+            assert_eq!(&*tokens[1].surface, "を", "{name}: {tokens:?}");
+        }
+    }
+}
+
+#[test]
+#[ignore = "配布辞書（dict/*.hsd）を使う。cargo test -- --ignored distributed で実行"]
 fn test_distributed_dicts_modern_terms_and_width_variants() {
     for name in ["ipadic-neologd", "ipadic-neologd-sudachi"] {
         let mut analyzer = load_distributed_dict(name);
