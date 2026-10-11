@@ -3950,6 +3950,114 @@ fn test_distributed_technical_and_sports_terms_keep_common_pos() {
     }
 }
 
+#[test]
+#[ignore = "配布辞書（dict/*.hsd）を使う。cargo test -- --ignored distributed で実行"]
+fn test_distributed_common_vocabulary_readings_and_pos() {
+    for name in ["ipadic-neologd", "ipadic-neologd-sudachi"] {
+        let mut analyzer = load_distributed_dict(name);
+        for (word, reading, pronunciation, pos) in [
+            ("共通点", "キョウツウテン", "キョーツーテン", "名詞,一般"),
+            ("管理職", "カンリショク", "カンリショク", "名詞,一般"),
+            ("日系人", "ニッケイジン", "ニッケイジン", "名詞,一般"),
+            ("アレルゲン", "アレルゲン", "アレルゲン", "名詞,一般"),
+            ("感作", "カンサ", "カンサ", "名詞,サ変接続"),
+            ("負", "フ", "フ", "名詞,一般"),
+            ("コミュ力", "コミュリョク", "コミュリョク", "名詞,一般"),
+            ("修飾語", "シュウショクゴ", "シューショクゴ", "名詞,一般"),
+            (
+                "集団浅慮",
+                "シュウダンセンリョ",
+                "シューダンセンリョ",
+                "名詞,一般",
+            ),
+            ("受取人", "ウケトリニン", "ウケトリニン", "名詞,一般"),
+            (
+                "スキルアップ",
+                "スキルアップ",
+                "スキルアップ",
+                "名詞,サ変接続",
+            ),
+            (
+                "インスパイア",
+                "インスパイア",
+                "インスパイア",
+                "名詞,サ変接続",
+            ),
+            (
+                "ブレイクダウン",
+                "ブレイクダウン",
+                "ブレイクダウン",
+                "名詞,サ変接続",
+            ),
+        ] {
+            let text = format!("{word}を調べる。");
+            let tokens = analyzer.tokenize(&text);
+            let token = &tokens[0];
+            assert_eq!(&*token.surface, word, "{name}: {tokens:?}");
+            assert!(token.pos.starts_with(pos), "{name}: {tokens:?}");
+            assert_eq!(&*token.reading, reading, "{name}: {tokens:?}");
+            assert_eq!(&*token.pronunciation, pronunciation, "{name}: {tokens:?}");
+            assert_eq!(&*token.base_form, word);
+            assert!(token.is_known);
+            assert_eq!(&*tokens[1].surface, "を");
+            assert!(tokens[1].pos.starts_with("助詞"));
+            for token in tokens {
+                assert_eq!(&text[token.start..token.end], &*token.surface);
+            }
+        }
+        for (text, compound) in [
+            ("チーム内に掲示する。", "チーム内"),
+            ("手段の目的化を防ごう。", "手段の目的化"),
+            ("解決方法を選ぶ。", "解決方法"),
+            ("どうしたらいいのかを尋ねた。", "どうしたらいいの"),
+            ("彼女たちは先に帰った。", "彼女たち"),
+        ] {
+            let tokens = analyzer.tokenize(text);
+            assert!(
+                !tokens.iter().any(|t| &*t.surface == compound),
+                "{name}: {tokens:?}"
+            );
+            assert!(tokens.iter().any(|t| t.pos.starts_with("助詞")));
+        }
+        let tokens = analyzer.tokenize("チーム学習の方法を変える。");
+        assert_eq!(
+            [&*tokens[0].surface, &*tokens[1].surface],
+            ["チーム", "学習"]
+        );
+        assert_eq!(&*tokens[1].reading, "ガクシュウ");
+        assert_eq!(&*tokens[1].pronunciation, "ガクシュー");
+        let tokens = analyzer.tokenize("負の数を扱う。");
+        assert_eq!(&*tokens[0].surface, "負");
+        assert_eq!(&*tokens[0].reading, "フ");
+        assert_eq!(&*tokens[1].surface, "の");
+        assert!(tokens[1].pos.starts_with("助詞"));
+        let tokens = analyzer.tokenize("勝負に負けた。");
+        let verb = tokens.iter().find(|t| &*t.surface == "負け").unwrap();
+        assert_eq!(&*verb.base_form, "負ける");
+        assert_eq!(&*verb.reading, "マケ");
+        assert!(verb.pos.starts_with("動詞"));
+        for (text, end, reading) in [
+            ("お題を決める。", 6, "オダイ"),
+            ("お題目を唱える。", 9, "オダイモク"),
+        ] {
+            let tokens = analyzer.tokenize(text);
+            let actual: String = tokens
+                .iter()
+                .filter(|t| t.end <= end)
+                .map(|t| &*t.reading)
+                .collect();
+            assert_eq!(actual, reading, "{name}: {tokens:?}");
+        }
+        for text in ["夏目漱石の作品を読む。", "徳川家康の生涯を調べる。"] {
+            let tokens = analyzer.tokenize(text);
+            assert!(
+                tokens[0].pos.starts_with("名詞,固有名詞,人名"),
+                "{name}: {tokens:?}"
+            );
+        }
+    }
+}
+
 /// `hasami tokenize` に標準入力を渡して (終了コードが 0 か, 標準出力, 標準エラー) を返す
 #[cfg(feature = "cli")]
 fn run_cli_tokenize(
