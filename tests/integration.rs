@@ -3869,6 +3869,87 @@ fn test_distributed_common_terms_and_ascii_identifier_boundaries() {
     }
 }
 
+#[test]
+#[ignore = "配布辞書が必要"]
+fn test_distributed_technical_and_sports_terms_keep_common_pos() {
+    for name in ["ipadic-neologd", "ipadic-neologd-sudachi"] {
+        let mut analyzer = load_distributed_dict(name);
+        for (word, reading, pronunciation, pos) in [
+            (
+                "クライアント",
+                "クライアント",
+                "クライアント",
+                "名詞,一般,*,*",
+            ),
+            (
+                "通信プロトコル",
+                "ツウシンプロトコル",
+                "ツーシンプロトコル",
+                "名詞,一般,*,*",
+            ),
+            (
+                "エンコード",
+                "エンコード",
+                "エンコード",
+                "名詞,サ変接続,*,*",
+            ),
+            (
+                "バンタム級",
+                "バンタムキュウ",
+                "バンタムキュー",
+                "名詞,一般,*,*",
+            ),
+            (
+                "総合格闘技",
+                "ソウゴウカクトウギ",
+                "ソーゴーカクトーギ",
+                "名詞,一般,*,*",
+            ),
+            ("ミーム", "ミーム", "ミーム", "名詞,一般,*,*"),
+            ("参考人", "サンコウニン", "サンコーニン", "名詞,一般,*,*"),
+            (
+                "住民投票",
+                "ジュウミントウヒョウ",
+                "ジューミントーヒョー",
+                "名詞,サ変接続,*,*",
+            ),
+            (
+                "二重行政",
+                "ニジュウギョウセイ",
+                "ニジューギョーセイ",
+                "名詞,一般,*,*",
+            ),
+            (
+                "期日前投票所",
+                "キジツゼントウヒョウジョ",
+                "キジツゼントーヒョージョ",
+                "名詞,一般,*,*",
+            ),
+        ] {
+            let text = format!("{word}を調べる。");
+            let tokens = analyzer.tokenize(&text);
+            assert_eq!(&*tokens[0].surface, word, "{name}: {tokens:?}");
+            assert_eq!(&*tokens[0].reading, reading, "{name}: {tokens:?}");
+            assert_eq!(
+                &*tokens[0].pronunciation, pronunciation,
+                "{name}: {tokens:?}"
+            );
+            assert_eq!(&*tokens[0].pos, pos, "{name}: {tokens:?}");
+            assert!(tokens[0].is_known);
+            assert_eq!(&*tokens[1].surface, "を");
+            assert!(tokens[1].pos.starts_with("助詞"));
+            for token in tokens {
+                assert_eq!(&text[token.start..token.end], &*token.surface);
+            }
+        }
+        let text = "必要じゃない方を選ぶ。";
+        let tokens = analyzer.tokenize(text);
+        assert!(!tokens.iter().any(|t| &*t.surface == "じゃない方"));
+        assert!(tokens.iter().any(|t| &*t.surface == "ない"));
+        assert!(tokens.iter().any(|t| &*t.surface == "方"));
+    }
+}
+
 /// `hasami tokenize` に標準入力を渡して (終了コードが 0 か, 標準出力, 標準エラー) を返す
 #[cfg(feature = "cli")]
 fn run_cli_tokenize(
