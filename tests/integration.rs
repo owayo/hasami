@@ -3796,6 +3796,79 @@ fn test_distributed_general_terms_readings_and_grammar() {
     }
 }
 
+#[test]
+#[ignore = "配布辞書（dict/*.hsd）を使う。cargo test -- --ignored distributed で実行"]
+fn test_distributed_common_terms_and_ascii_identifier_boundaries() {
+    for name in ["ipadic-neologd", "ipadic-neologd-sudachi"] {
+        let mut analyzer = load_distributed_dict(name);
+        for (word, reading, pronunciation) in [
+            ("T細胞", "ティーサイボウ", "ティーサイボー"),
+            ("リンパ球", "リンパキュウ", "リンパキュー"),
+            ("波動関数", "ハドウカンスウ", "ハドーカンスー"),
+            ("トークン", "トークン", "トークン"),
+            ("通常国会", "ツウジョウコッカイ", "ツージョーコッカイ"),
+            (
+                "内閣府特命担当大臣",
+                "ナイカクフトクメイタントウダイジン",
+                "ナイカクフトクメイタントーダイジン",
+            ),
+        ] {
+            let text = format!("{word}を調べる。");
+            let tokens = analyzer.tokenize(&text);
+            assert_eq!(&*tokens[0].surface, word, "{name}: {tokens:?}");
+            assert_eq!(&*tokens[0].reading, reading, "{name}: {tokens:?}");
+            assert_eq!(
+                &*tokens[0].pronunciation, pronunciation,
+                "{name}: {tokens:?}"
+            );
+            assert_eq!(&*tokens[0].pos, "名詞,一般,*,*", "{name}: {tokens:?}");
+            assert!(tokens[0].is_known);
+            assert_eq!(&*tokens[1].surface, "を");
+            for token in tokens {
+                assert_eq!(&text[token.start..token.end], &*token.surface);
+            }
+        }
+        for (word, reading) in [
+            ("Debian", "デビアン"),
+            ("Desktop", "デスクトップ"),
+            ("Kernel", "カーネル"),
+        ] {
+            let text = format!("{word}を使う。");
+            let tokens = analyzer.tokenize(&text);
+            assert_eq!(&*tokens[0].surface, word, "{name}: {tokens:?}");
+            assert_eq!(&*tokens[0].reading, reading, "{name}: {tokens:?}");
+            assert!(tokens[0].is_known);
+        }
+        for text in [
+            "Debians",
+            "Debianized",
+            "Debianfoo",
+            "DesktopWindow",
+            "Desktopify",
+            "Desktopfoo",
+            "Kernelized",
+            "Kernelfoo",
+        ] {
+            let tokens = analyzer.tokenize(text);
+            assert_eq!(tokens.len(), 1, "{name}: {text}: {tokens:?}");
+            assert_eq!(&*tokens[0].surface, text);
+            assert!(!tokens[0].is_known);
+        }
+        let tokens = analyzer.tokenize("第十かい通常国会で説明する。");
+        assert!(tokens.iter().any(|t| &*t.surface == "かい"));
+        assert!(tokens.iter().any(|t| &*t.surface == "通常国会"));
+        assert!(!tokens.iter().any(|t| &*t.surface == "かい通"));
+        let tokens = analyzer.tokenize("同時代人が話す。");
+        assert_eq!(&*tokens[0].surface, "同時代");
+        assert_eq!(&*tokens[1].surface, "人");
+        assert!(!tokens[0].pos.starts_with("名詞,固有名詞"));
+        let tokens = analyzer.tokenize("TVアニメ版を比べる。");
+        assert_eq!(&*tokens[0].surface, "TVアニメ");
+        assert_eq!(&*tokens[0].pos, "名詞,一般,*,*");
+        assert_eq!(&*tokens[1].surface, "版");
+    }
+}
+
 /// `hasami tokenize` に標準入力を渡して (終了コードが 0 か, 標準出力, 標準エラー) を返す
 #[cfg(feature = "cli")]
 fn run_cli_tokenize(
