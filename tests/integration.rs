@@ -3733,6 +3733,69 @@ fn test_distributed_dicts_unicode_reading_and_byte_offsets() {
     }
 }
 
+// 一般名詞の読みと、同形の姓・機能語・英字の境界を配布辞書で確かめる。
+#[test]
+#[ignore = "配布辞書（dict/*.hsd）を使う。cargo test -- --ignored distributed で実行"]
+fn test_distributed_general_terms_readings_and_grammar() {
+    for name in ["ipadic-neologd", "ipadic-neologd-sudachi"] {
+        let mut analyzer = load_distributed_dict(name);
+        for (word, reading, pronunciation) in [
+            ("本作", "ホンサク", "ホンサク"),
+            ("本問", "ホンモン", "ホンモン"),
+            ("米作り", "コメヅクリ", "コメズクリ"),
+            ("裁判員裁判", "サイバンインサイバン", "サイバンインサイバン"),
+            ("分子量", "ブンシリョウ", "ブンシリョー"),
+            ("正孔", "セイコウ", "セイコー"),
+            ("閉回路", "ヘイカイロ", "ヘイカイロ"),
+            ("MOSFET", "モスフェット", "モスフェット"),
+            ("pn接合", "ピーエヌセツゴウ", "ピーエヌセツゴー"),
+            ("男性アイドル", "ダンセイアイドル", "ダンセイアイドル"),
+            ("情報番組", "ジョウホウバングミ", "ジョーホーバングミ"),
+        ] {
+            let text = format!("{word}を確認する。");
+            let tokens = analyzer.tokenize(&text);
+            let token = &tokens[0];
+            assert_eq!(&*token.surface, word, "{name}: {tokens:?}");
+            assert_eq!(&*token.pos, "名詞,一般,*,*", "{name}: {tokens:?}");
+            assert_eq!(&*token.reading, reading, "{name}: {tokens:?}");
+            assert_eq!(&*token.pronunciation, pronunciation, "{name}: {tokens:?}");
+            assert_eq!(&*token.base_form, word);
+            assert!(token.is_known);
+            assert_eq!(&*tokens[1].surface, "を");
+            assert!(tokens[1].pos.starts_with("助詞"));
+            for token in tokens {
+                assert_eq!(&text[token.start..token.end], &*token.surface);
+            }
+        }
+        for (text, surname, reading) in [
+            ("本作さんに会う。", "本作", "モトサク"),
+            ("本問氏に話す。", "本問", "ホントイ"),
+        ] {
+            let tokens = analyzer.tokenize(text);
+            assert_eq!(&*tokens[0].surface, surname);
+            assert_eq!(&*tokens[0].reading, reading);
+            assert!(tokens[0].pos.starts_with("名詞,固有名詞,人名"));
+        }
+        for (text, surfaces, pos) in [
+            ("わたしたちの予定だ。", ["わたし", "たち"], "名詞,代名詞"),
+            ("予定通りに作業する。", ["予定", "通り"], "名詞,サ変接続"),
+            ("思慮深い判断をする。", ["思慮", "深い"], "名詞,一般"),
+            ("ある子供たちに話す。", ["ある", "子供"], "連体詞"),
+        ] {
+            let tokens = analyzer.tokenize(text);
+            assert_eq!([&*tokens[0].surface, &*tokens[1].surface], surfaces);
+            assert!(tokens[0].pos.starts_with(pos));
+        }
+        let tokens = analyzer.tokenize("思慮深い判断をする。");
+        assert!(tokens[1].pos.starts_with("形容詞"));
+        for text in ["MOSFETs", "MOSFETfoo"] {
+            let tokens = analyzer.tokenize(text);
+            assert_eq!(tokens.len(), 1, "{name}: {tokens:?}");
+            assert_eq!(&*tokens[0].surface, text);
+        }
+    }
+}
+
 /// `hasami tokenize` に標準入力を渡して (終了コードが 0 か, 標準出力, 標準エラー) を返す
 #[cfg(feature = "cli")]
 fn run_cli_tokenize(
