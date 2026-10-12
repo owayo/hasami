@@ -1,10 +1,14 @@
-//! 最良パスの数詞と助数詞の読み。トークンの境界・品詞・辞書由来の情報は変えない。
+//! 最良パスの数詞と助数詞の読み。ASCII の数量だけは数詞列を合成する。
 //!
-//! 音便は助数詞ごとの対応表で決める。人・日の和語読みだけは数詞列全体を見る。
+//! 音便は助数詞ごとの対応表で決め、読み以外の情報を保持する。人・日の和語読みは数詞列全体を見る。
 //! 一日は日付と期間を区別できないので変更せず、二十日のハツカも分配しない。
 
 use crate::lattice::Token;
+use std::ops::Range;
 use std::sync::Arc;
+
+mod ascii;
+pub(crate) use ascii::{AsciiPlan, apply as apply_ascii_quantities};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Ending {
@@ -37,6 +41,7 @@ enum Counter {
     Person,
     Day,
     Hour,
+    Trillion,
 }
 
 fn pos_has(pos: &str, prefix: &str) -> bool {
@@ -77,10 +82,11 @@ fn place(c: char) -> Option<u64> {
 fn is_numeral(token: &Token) -> bool {
     pos_has(&token.pos, "名詞,数")
         && !token.surface.is_empty()
-        && token
-            .surface
-            .chars()
-            .all(|c| digit(c).is_some() || place(c).is_some())
+        && (ascii::integer_value(&token.surface).is_some()
+            || token
+                .surface
+                .chars()
+                .all(|c| digit(c).is_some() || place(c).is_some()))
 }
 
 /// 位を含む数と、位を省いた数字列を読む。桁あふれ・位の逆転は曖昧な数として拒む。
@@ -122,7 +128,11 @@ fn numeral_value<'a>(surfaces: impl Iterator<Item = &'a str>) -> Option<u64> {
 }
 
 fn ending(surface: &str) -> Option<Ending> {
-    let value = numeral_value(std::iter::once(surface))?;
+    let value = if surface.contains(',') {
+        ascii::integer_value(surface)?
+    } else {
+        numeral_value(std::iter::once(surface))?
+    };
     Some(match value % 10 {
         1 => Ending::One,
         2 => Ending::Two,
@@ -153,6 +163,7 @@ fn counter(token: &Token) -> Option<Counter> {
                 Some(Counter::Hundred)
             }
             "千" if has_reading(token, &["セン", "ゼン"]) => Some(Counter::Thousand),
+            "兆" if has_reading(token, &["チョウ", "チョー"]) => Some(Counter::Trillion),
             _ => None,
         };
     }
@@ -271,15 +282,20 @@ fn numeral_glyph_readings(
 
 fn standard_number_readings(token: &Token, tails: &[&str]) -> bool {
     let mut chars = token.surface.chars().peekable();
-    let Some(first) = chars.next() else {
+    let Some(_) = chars.next() else {
         return false;
     };
     if chars.peek().is_none() {
         return has_reading(token, tails);
     }
-    // ASCII・全角の複数桁や混在表記は、数全体を読める処理を導入するまで辞書の読みを保つ。
-    let mut chars = std::iter::once(first).chain(chars).peekable();
-    let (mut reading, mut pronunciation) = (token.reading.as_ref(), token.pronunciation.as_ref());
+    if token.surface.is_ascii() {
+        return ascii::standard_readings(&token.surface, &token.reading, &token.pronunciation);
+    }
+    standard_kanji_readings(&token.surface, &token.reading, &token.pronunciation)
+}
+
+fn standard_kanji_readings(surface: &str, mut reading: &str, mut pronunciation: &str) -> bool {
+    let mut chars = surface.chars().peekable();
     let mut previous = None;
     while let Some(c) = chars.next() {
         let allowed = numeral_glyph_readings(previous, c, chars.peek().copied());
@@ -412,16 +428,45 @@ fn ten_minutes(tokens: &mut [Token], i: usize) {
 
 /// 仮名などの読み補完の後に呼ぶ。数詞列をまとめず、読みと発音だけを変更する。
 pub(crate) fn apply_counter_readings(tokens: &mut [Token]) {
+    apply_counter_readings_with_protection(tokens, &[]);
+}
+
+pub(crate) fn apply_counter_readings_with_protection(
+    tokens: &mut [Token],
+    protected: &[Range<usize>],
+) {
     let mut start = 0;
+    let mut protection = 0;
+    let (mut run_ascii, mut run_kanji, mut run_protected) = (true, true, false);
     for i in 0..tokens.len() {
         ten_minutes(tokens, i);
         if i == 0 || tokens[i - 1].end != tokens[i].start || !is_numeral(&tokens[i - 1]) {
             start = i;
+            (run_ascii, run_kanji, run_protected) = (true, true, false);
             continue;
         }
+        let previous = &tokens[i - 1];
+        run_ascii &= previous.surface.is_ascii();
+        run_kanji &= previous.surface.chars().all(|c| {
+            matches!(
+                c,
+                '〇' | '零' | '一' | '二' | '三' | '四' | '五' | '六' | '七' | '八' | '九'
+            ) || place(c).is_some()
+        });
+        while protection < protected.len() && protected[protection].end <= previous.start {
+            protection += 1;
+        }
+        let previous_protected = protected
+            .get(protection)
+            .is_some_and(|range| range.start < previous.end && previous.start < range.end);
+        run_protected |= previous_protected;
         let Some(counter) = counter(&tokens[i]) else {
             continue;
         };
+        // 兆の新しい促音化は、保護されていない純ASCIIまたは純漢数字の列だけに適用する。
+        if matches!(counter, Counter::Trillion) && (run_protected || !(run_ascii || run_kanji)) {
+            continue;
+        }
         if after_decimal(tokens, start) {
             continue;
         }
@@ -429,6 +474,11 @@ pub(crate) fn apply_counter_readings(tokens: &mut [Token]) {
             continue;
         };
         let tails = number_tails(e);
+        // 既存の1桁数字の音便は保ち、新たな複数字の補正だけを保護する。
+        if tokens[i - 1].surface.is_ascii() && tokens[i - 1].surface.len() > 1 && previous_protected
+        {
+            continue;
+        }
         if !standard_number_readings(&tokens[i - 1], tails) {
             continue;
         }
@@ -501,6 +551,11 @@ pub(crate) fn apply_counter_readings(tokens: &mut [Token]) {
                 }
                 _ => set_readings(suffix, "セン", "セン"),
             },
+            Counter::Trillion => {
+                if matches!(e, Ending::One | Ending::Eight | Ending::Ten) {
+                    geminate(number, e);
+                }
+            }
             Counter::Person => {
                 if person {
                     let r = if e == Ending::One { "ヒト" } else { "フタ" };
@@ -677,6 +732,69 @@ mod tests {
                 "repeat {n}{c}"
             );
         }
+    }
+
+    #[test]
+    fn protected_ascii_numbers_skip_new_euphony_and_keep_existing_single_digit_rules() {
+        for (n, nr, c, cr, expected) in [
+            ("1", "イチ", "兆", "チョウ", "イチチョウ"),
+            ("8", "ハチ", "兆", "チョウ", "ハチチョウ"),
+            ("10", "ジュウ", "兆", "チョウ", "ジュウチョウ"),
+            ("11", "ジュウイチ", "本", "ホン", "ジュウイチホン"),
+            ("1", "イチ", "本", "ホン", "イッポン"),
+            ("8", "ハチ", "分", "フン", "ハップン"),
+        ] {
+            let cpos = if c == "兆" { NUMBER } else { COUNTER };
+            let mut out = tokens(&[(n, NUMBER, nr), (c, cpos, cr)]);
+            let fields = non_reading_fields(&out);
+            let protected = out[0].start..out[0].end;
+            apply_counter_readings_with_protection(&mut out, std::slice::from_ref(&protected));
+            assert_eq!(readings(&out), (expected.into(), expected.into()), "{n}{c}");
+            assert_eq!(non_reading_fields(&out), fields, "{n}{c}");
+        }
+    }
+
+    #[test]
+    fn trillion_euphony_requires_a_uniform_supported_number_run() {
+        for parts in [
+            vec![("1", NUMBER, "イチ"), ("８", NUMBER, "ハチ")],
+            vec![("1", NUMBER, "イチ"), ("八", NUMBER, "ハチ")],
+            vec![("1８", NUMBER, "イチハチ")],
+            vec![("1八", NUMBER, "イチハチ")],
+            vec![("８", NUMBER, "ハチ")],
+            vec![("１８", NUMBER, "ジュウハチ")],
+            vec![("１", NUMBER, "イチ"), ("８", NUMBER, "ハチ")],
+        ] {
+            let mut parts = parts;
+            parts.push(("兆", NUMBER, "チョウ"));
+            let mut out = tokens(&parts);
+            let before = format!("{out:?}");
+            apply_counter_readings(&mut out);
+            assert_eq!(format!("{out:?}"), before, "{parts:?}");
+        }
+        for (n, reading, expected) in [
+            ("1", "イチ", "イッチョウ"),
+            ("8", "ハチ", "ハッチョウ"),
+            ("10", "ジュウ", "ジュッチョウ"),
+            ("一", "イチ", "イッチョウ"),
+            ("八", "ハチ", "ハッチョウ"),
+            ("十", "ジュウ", "ジュッチョウ"),
+        ] {
+            let mut out = tokens(&[(n, NUMBER, reading), ("兆", NUMBER, "チョウ")]);
+            let fields = non_reading_fields(&out);
+            apply_counter_readings(&mut out);
+            assert_eq!(readings(&out), (expected.into(), expected.into()), "{n}兆");
+            assert_eq!(non_reading_fields(&out), fields, "{n}兆");
+        }
+        let mut out = tokens(&[
+            ("1", NUMBER, "イチ"),
+            ("8", NUMBER, "ハチ"),
+            ("兆", NUMBER, "チョウ"),
+        ]);
+        let before = format!("{out:?}");
+        let protected = out[0].start..out[0].end;
+        apply_counter_readings_with_protection(&mut out, std::slice::from_ref(&protected));
+        assert_eq!(format!("{out:?}"), before);
     }
 
     #[test]
