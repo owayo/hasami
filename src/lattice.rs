@@ -341,7 +341,7 @@ fn apply_decimal_counter_override(token: &mut Token, after_decimal_point: bool) 
 /// 辞書の読みを文脈で補正し、読みが欠けているトークンを補完する。
 /// - 品詞で読みが決まる語: `POS_READING_OVERRIDES`（「他」の名詞/接頭詞）
 /// - 後続で読みが決まる語: 「数」（数詞が続けば「スウ」、続かなければ「カズ」）
-/// - アルファベット: 数字トークンの直後 → 単位読み（該当する場合）、なければアルファベット読み
+/// - アルファベット: 数字トークンと隙間なく隣接 → 単位読み（該当する場合）、なければアルファベット読み
 /// - 繰り返し記号「々」: 直前のトークンの読み（そこだけ無音になるのを防ぐ）
 /// - 仮名のみの語: 表層形をカタカナ化した読み（未知語で読みが空になるケースの救済）
 fn apply_contextual_readings(tokens: &mut [Token]) {
@@ -404,7 +404,8 @@ fn apply_contextual_readings(tokens: &mut [Token]) {
             continue;
         }
 
-        let preceded_by_number = i > 0 && is_number_like(&tokens[i - 1]);
+        let preceded_by_number =
+            i > 0 && tokens[i - 1].end == tokens[i].start && is_number_like(&tokens[i - 1]);
 
         if preceded_by_number && let Some(reading) = unit_reading(&tokens[i].surface) {
             let arc: Arc<str> = Arc::from(reading);
@@ -1911,12 +1912,67 @@ mod tests {
                 reading_token("３", "名詞,数,*,*", "サン"),
                 reading_token(surface, NOUN, ""),
             ];
+            tokens[1].start = tokens[0].end;
+            tokens[1].end += tokens[1].start;
             apply_contextual_readings(&mut tokens);
             assert_eq!(&*tokens[1].reading, expected);
         }
         let mut tokens = vec![reading_token("ＮＡＳＡ", NOUN, "ナサ")];
         apply_contextual_readings(&mut tokens);
         assert_eq!(&*tokens[0].reading, "ナサ");
+    }
+
+    #[test]
+    fn test_alphabet_unit_readings_require_adjacent_number_spans() {
+        let words = [
+            ("第", 0, NOUN),
+            ("3", 0, "名詞,数,*,*"),
+            ("３", 0, "名詞,数,*,*"),
+            ("会議室", 0, NOUN),
+            ("　", 0, "記号,空白,*,*"),
+        ];
+        for (surface, unit, spelled) in [
+            ("F", "ファラド", "エフ"),
+            ("A", "アンペア", "エー"),
+            ("W", "ワット", "ダブリュー"),
+            ("V", "ボルト", "ブイ"),
+            ("km", "キロメートル", "ケーエム"),
+            ("GB", "ギガバイト", "ジービー"),
+            ("Ｆ", "ファラド", "エフ"),
+            ("ｋｍ", "キロメートル", "ケーエム"),
+        ] {
+            for known in [false, true] {
+                let mut entries = words.to_vec();
+                if known {
+                    entries.push((surface, 0, NOUN));
+                }
+                let dict = cost_dict(&entries);
+                let mut workspace = LatticeWorkspace::new();
+                for number in ["3", "３"] {
+                    for gap in ["", " ", "  ", "\t", "\n", "\r\n", "　"] {
+                        let text = format!("第{number}{gap}{surface}会議室");
+                        let offset = 17;
+                        // 既存の出力へ追加する経路でも、元入力の位置で隣接を判定する。
+                        let mut out = vec![reading_token("3", "名詞,数,*,*", "サン")];
+                        workspace
+                            .tokenize_into(&text, &dict, offset, &mut out)
+                            .unwrap();
+                        let token = out.iter().find(|t| &*t.surface == surface).unwrap();
+                        let expected = if gap.is_empty() { unit } else { spelled };
+                        assert_eq!(&*token.reading, expected, "{text:?}, known={known}");
+                        assert_eq!(&*token.pronunciation, expected, "{text:?}");
+                        let start = offset + "第".len() + number.len() + gap.len();
+                        assert_eq!((token.start, token.end), (start, start + surface.len()));
+                        assert_eq!(token.is_known, known);
+                    }
+                }
+                let mut out = vec![reading_token("3", "名詞,数,*,*", "サン")];
+                workspace
+                    .tokenize_into(surface, &dict, 1, &mut out)
+                    .unwrap();
+                assert_eq!(&*out[1].reading, spelled);
+            }
+        }
     }
 
     #[test]
