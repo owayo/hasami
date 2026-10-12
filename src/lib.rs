@@ -24,6 +24,8 @@ mod kana;
 #[cfg(feature = "analyzer")]
 pub mod lattice;
 #[cfg(feature = "analyzer")]
+mod numeric;
+#[cfg(feature = "analyzer")]
 pub mod pos;
 pub mod sentence;
 
