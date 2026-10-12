@@ -56,9 +56,9 @@ pub struct Token {
     pub reading: Arc<str>,
     /// 発音
     pub pronunciation: Arc<str>,
-    /// 単語コスト
+    /// 単語コスト。合成した ASCII 数詞は元トークンのコストの総和（i16 の範囲に飽和）
     pub word_cost: i16,
-    /// 辞書由来 (true=辞書, false=未知語)
+    /// 辞書由来 (true=辞書, false=未知語または合成した ASCII 数詞)
     pub is_known: bool,
 }
 
@@ -344,7 +344,15 @@ fn apply_decimal_counter_override(token: &mut Token, after_decimal_point: bool) 
 /// - アルファベット: 数字トークンと隙間なく隣接 → 単位読み（該当する場合）、なければアルファベット読み
 /// - 繰り返し記号「々」: 直前のトークンの読み（そこだけ無音になるのを防ぐ）
 /// - 仮名のみの語: 表層形をカタカナ化した読み（未知語で読みが空になるケースの救済）
+#[cfg(all(test, feature = "build"))]
 fn apply_contextual_readings(tokens: &mut [Token]) {
+    apply_contextual_readings_with_protection(tokens, &[]);
+}
+
+fn apply_contextual_readings_with_protection(
+    tokens: &mut [Token],
+    protected: &[std::ops::Range<usize>],
+) {
     for i in 0..tokens.len() {
         if tokens[i].surface.is_empty() {
             continue;
@@ -408,7 +416,11 @@ fn apply_contextual_readings(tokens: &mut [Token]) {
             tokens[i].pronunciation = kana;
         }
     }
-    crate::numeric::apply_counter_readings(tokens);
+    if protected.is_empty() {
+        crate::numeric::apply_counter_readings(tokens);
+    } else {
+        crate::numeric::apply_counter_readings_with_protection(tokens, protected);
+    }
 }
 
 /// 仮名のみからなる表層形をカタカナの読みに変換する。
@@ -1031,6 +1043,19 @@ impl LatticeWorkspace {
         offset: usize,
         out: &mut Vec<Token>,
     ) -> Result<(), DictError> {
+        let plan = crate::numeric::AsciiPlan::new(input, offset);
+        self.tokenize_into_prepared(input, dict, offset, out, &plan, &mut 0)
+    }
+
+    pub(crate) fn tokenize_into_prepared(
+        &mut self,
+        input: &str,
+        dict: &Dictionary,
+        offset: usize,
+        out: &mut Vec<Token>,
+        plan: &crate::numeric::AsciiPlan,
+        cursor: &mut usize,
+    ) -> Result<(), DictError> {
         if input.is_empty() {
             return Ok(());
         }
@@ -1241,7 +1266,16 @@ impl LatticeWorkspace {
                 }
             });
         }
-        apply_contextual_readings(&mut out[first..]);
+        let protected = crate::numeric::apply_ascii_quantities(
+            input,
+            offset,
+            out,
+            first,
+            plan,
+            cursor,
+            |surface| unit_reading(surface).is_some_and(is_katakana_str),
+        );
+        apply_contextual_readings_with_protection(&mut out[first..], &protected);
         Ok(())
     }
 }

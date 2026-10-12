@@ -1,0 +1,907 @@
+//! ASCII 数量の構文検査と位取り。識別子の候補全体を先に調べ、途中の数字だけを変換しない。
+
+use crate::lattice::Token;
+use std::ops::Range;
+use std::sync::Arc;
+
+#[derive(Clone, Copy, Debug)]
+struct Number {
+    integer: u64,
+    dot: Option<usize>,
+}
+
+/// 整数16桁、小数部16桁。カンマは整数部の正しい3桁区切りだけを許す。
+fn parse(raw: &str) -> Option<Number> {
+    let (mut integer, mut integer_digits, mut fraction_digits) = (0u64, 0usize, 0usize);
+    let (mut group, mut comma, mut dot) = (0usize, false, None);
+    for (i, b) in raw.bytes().enumerate() {
+        match b {
+            b'0'..=b'9' if dot.is_none() => {
+                integer_digits += 1;
+                group += 1;
+                if integer_digits > 16 {
+                    return None;
+                }
+                integer = integer * 10 + u64::from(b - b'0');
+            }
+            b'0'..=b'9' => {
+                fraction_digits += 1;
+                if fraction_digits > 16 {
+                    return None;
+                }
+            }
+            b',' if dot.is_none() => {
+                if group == 0 || (!comma && group > 3) || (comma && group != 3) {
+                    return None;
+                }
+                comma = true;
+                group = 0;
+            }
+            b'.' if dot.is_none() && integer_digits > 0 && (!comma || group == 3) => dot = Some(i),
+            _ => return None,
+        }
+    }
+    if integer_digits == 0
+        || (comma && group != 3)
+        || (dot.is_some() && fraction_digits == 0)
+        || (raw.starts_with('0') && integer_digits != 1)
+    {
+        return None;
+    }
+    Some(Number { integer, dot })
+}
+
+pub(super) fn integer_value(raw: &str) -> Option<u64> {
+    let parsed = parse(raw)?;
+    parsed.dot.is_none().then_some(parsed.integer)
+}
+
+fn kanji(integer: u64) -> String {
+    if integer == 0 {
+        return "零".into();
+    }
+    const DIGITS: &[char; 10] = &['〇', '一', '二', '三', '四', '五', '六', '七', '八', '九'];
+    let mut out = String::new();
+    for (divisor, large) in [
+        (1_000_000_000_000, "兆"),
+        (100_000_000, "億"),
+        (10_000, "万"),
+        (1, ""),
+    ] {
+        let mut group = integer / divisor % 10_000;
+        if group == 0 {
+            continue;
+        }
+        for (small, unit) in [(1_000, '千'), (100, '百'), (10, '十')] {
+            let n = group / small;
+            if n != 0 {
+                if n != 1 {
+                    out.push(DIGITS[n as usize]);
+                }
+                out.push(unit);
+            }
+            group %= small;
+        }
+        if group != 0 {
+            out.push(DIGITS[group as usize]);
+        }
+        out.push_str(large);
+    }
+    out
+}
+
+pub(super) fn standard_readings(raw: &str, reading: &str, pronunciation: &str) -> bool {
+    let Some(integer) = integer_value(raw) else {
+        return false;
+    };
+    super::standard_kanji_readings(&kanji(integer), reading, pronunciation)
+}
+
+fn readings(raw: &str, number: Number) -> (String, String) {
+    let spelling = kanji(number.integer);
+    let mut chars = spelling.chars().peekable();
+    let (mut reading, mut pronunciation) = (String::new(), String::new());
+    let mut previous = None;
+    while let Some(c) = chars.next() {
+        let kana = super::numeral_glyph_readings(previous, c, chars.peek().copied())[0];
+        reading.push_str(kana);
+        pronunciation.push_str(match kana {
+            "ジュウ" => "ジュー",
+            "キュウ" => "キュー",
+            "チョウ" => "チョー",
+            _ => kana,
+        });
+        previous = Some(c);
+    }
+    if let Some(dot) = number.dot {
+        reading.push_str("テン");
+        pronunciation.push_str("テン");
+        for b in raw[dot + 1..].bytes() {
+            let kana = [
+                "ゼロ",
+                "イチ",
+                "ニ",
+                "サン",
+                "ヨン",
+                "ゴ",
+                "ロク",
+                "ナナ",
+                "ハチ",
+                "キュウ",
+            ][(b - b'0') as usize];
+            reading.push_str(kana);
+            pronunciation.push_str(if kana == "キュウ" {
+                "キュー"
+            } else {
+                kana
+            });
+        }
+    }
+    (reading, pronunciation)
+}
+
+#[derive(Debug)]
+struct Candidate {
+    number: Range<usize>,
+    envelope: Range<usize>,
+    parsed: Option<Number>,
+}
+
+#[derive(Default, Debug)]
+pub(crate) struct AsciiPlan {
+    candidates: Vec<Candidate>,
+}
+
+fn envelope_byte(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b"_.,:+*/=-%^".contains(&b)
+}
+
+impl AsciiPlan {
+    /// 位置は offset を加えた入力全体の位置。空白越しの英字・裸の数字も識別子の前置とみなす。
+    pub(crate) fn new(input: &str, offset: usize) -> Self {
+        if !input.bytes().any(|b| b.is_ascii_digit()) {
+            return Self::default();
+        }
+        let bytes = input.as_bytes();
+        let (mut pos, mut prefix) = (0, false);
+        let mut plan = Self::default();
+        while pos < bytes.len() {
+            if envelope_byte(bytes[pos]) {
+                let start = pos;
+                while pos < bytes.len() && envelope_byte(bytes[pos]) {
+                    pos += 1;
+                }
+                let block = &input[start..pos];
+                if let Some(first) = block.bytes().position(|b| b.is_ascii_digit()) {
+                    let end = first
+                        + block[first..]
+                            .bytes()
+                            .take_while(|b| b.is_ascii_digit() || matches!(b, b',' | b'.'))
+                            .count();
+                    let suffix = &block[end..];
+                    let allowed_suffix = suffix.is_empty()
+                        || suffix == "%"
+                        || suffix.bytes().all(|b| b.is_ascii_alphabetic());
+                    let parsed = if first == 0 && !prefix && allowed_suffix {
+                        parse(&block[..end])
+                    } else {
+                        None
+                    };
+                    plan.candidates.push(Candidate {
+                        number: offset + start + first..offset + start + end,
+                        envelope: offset + start..offset + pos,
+                        parsed,
+                    });
+                }
+                prefix = block.bytes().any(|b| b.is_ascii_alphanumeric());
+            } else {
+                let c = input[pos..].chars().next().unwrap();
+                if matches!(
+                    c,
+                    '－' | '−'
+                        | '‐'
+                        | '‑'
+                        | '‒'
+                        | '–'
+                        | '—'
+                        | '―'
+                        | '．'
+                        | '，'
+                        | '／'
+                        | '∕'
+                        | '÷'
+                        | '×'
+                        | '＋'
+                ) {
+                    prefix = true;
+                } else if !c.is_whitespace() && !(prefix && matches!(c, '(' | '[' | '（' | '［'))
+                {
+                    prefix = matches!(c, 'Ａ'..='Ｚ' | 'ａ'..='ｚ' | '０'..='９' | '〇' | '零' | '一' | '二' | '三' | '四' | '五' | '六' | '七' | '八' | '九');
+                }
+                pos += c.len_utf8();
+            }
+        }
+        plan
+    }
+}
+
+fn number_pos(t: &Token) -> bool {
+    super::pos_has(&t.pos, "名詞,数")
+}
+
+fn quantity(t: &Token, unit: impl Fn(&str) -> bool) -> bool {
+    super::pos_has(&t.pos, "名詞,接尾,助数詞")
+        || (t.surface.as_ref() == "年度" && super::pos_has(&t.pos, "名詞"))
+        || (number_pos(t) && matches!(t.surface.as_ref(), "百" | "千" | "万" | "億" | "兆"))
+        || unit(&t.surface)
+}
+
+fn unit_boundary(input: &str, offset: usize, t: &Token) -> bool {
+    let Some(end) = t.end.checked_sub(offset) else {
+        return false;
+    };
+    input.get(end..).is_some_and(|rest| rest.chars().next().is_none_or(|c| {
+        !c.is_ascii_alphanumeric() && !matches!(c, '_' | '^' | '/' | '*' | '+' | '-' | '=' | '²' | '³' | 'Ａ'..='Ｚ' | 'ａ'..='ｚ' | '０'..='９')
+    }))
+}
+
+/// 範囲 first.. だけを線形に圧縮する。保護した範囲は後段の数詞補正にも渡す。
+pub(crate) fn apply(
+    input: &str,
+    offset: usize,
+    out: &mut Vec<Token>,
+    first: usize,
+    plan: &AsciiPlan,
+    cursor: &mut usize,
+    unit: impl Fn(&str) -> bool,
+) -> Vec<Range<usize>> {
+    let mut protected = Vec::new();
+    let (mut read, mut write) = (first, first);
+    let end = offset + input.len();
+    while *cursor < plan.candidates.len() && plan.candidates[*cursor].envelope.end <= offset {
+        *cursor += 1;
+    }
+    while *cursor < plan.candidates.len() {
+        let candidate = &plan.candidates[*cursor];
+        if candidate.envelope.start >= end {
+            break;
+        }
+        // 候補全体を含むチャンクまで進めず、各チャンクの後段にも同じ保護範囲を渡す。
+        if candidate.envelope.end > end {
+            protected.push(candidate.envelope.clone());
+            break;
+        }
+        *cursor += 1;
+        while read < out.len() && out[read].end <= candidate.number.start {
+            out.swap(write, read);
+            read += 1;
+            write += 1;
+        }
+        let start = read;
+        let mut limit = read;
+        while limit < out.len() && out[limit].end <= candidate.number.end {
+            limit += 1;
+        }
+        let eligible = candidate.parsed.is_some()
+            && start < limit
+            && out[start].start == candidate.number.start
+            && out[limit - 1].end == candidate.number.end
+            && out[start..limit]
+                .iter()
+                .all(|t| number_pos(t) || matches!(t.surface.as_ref(), "," | "."))
+            && out[start..limit].windows(2).all(|p| p[0].end == p[1].start)
+            && out.get(limit).is_some_and(|t| {
+                t.start == candidate.number.end
+                    && quantity(t, &unit)
+                    && (candidate.envelope.end == candidate.number.end
+                        || t.end == candidate.envelope.end)
+                    && (!unit(&t.surface) || unit_boundary(input, offset, t))
+            });
+        if !eligible {
+            protected.push(candidate.envelope.clone());
+            continue;
+        }
+        let raw = &input[candidate.number.start - offset..candidate.number.end - offset];
+        if limit - start == 1 {
+            let token = &mut out[start];
+            // 非空の既知の読みは尊重する。未知語と欠けたフィールドだけ位取りで補う。
+            if !token.is_known || token.reading.is_empty() || token.pronunciation.is_empty() {
+                let (reading, pronunciation) = readings(raw, candidate.parsed.unwrap());
+                if !token.is_known || token.reading.is_empty() {
+                    token.reading = Arc::from(reading.as_str());
+                }
+                if !token.is_known || token.pronunciation.is_empty() {
+                    token.pronunciation = Arc::from(pronunciation.as_str());
+                }
+            }
+            out.swap(write, start);
+        } else {
+            let (reading, pronunciation) = readings(raw, candidate.parsed.unwrap());
+            let cost: i64 = out[start..limit]
+                .iter()
+                .map(|t| i64::from(t.word_cost))
+                .sum();
+            let surface: Arc<str> = Arc::from(raw);
+            out[write] = Token {
+                base_form: Arc::clone(&surface),
+                surface,
+                start: candidate.number.start,
+                end: candidate.number.end,
+                pos: Arc::from("名詞,数,*,*"),
+                conj_type: Arc::from(""),
+                conj_form: Arc::from(""),
+                reading: Arc::from(reading),
+                pronunciation: Arc::from(pronunciation),
+                word_cost: cost.clamp(i64::from(i16::MIN), i64::from(i16::MAX)) as i16,
+                is_known: false,
+            };
+        }
+        read = limit;
+        write += 1;
+    }
+    while read < out.len() {
+        out.swap(write, read);
+        read += 1;
+        write += 1;
+    }
+    out.truncate(write);
+    protected
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn quantity_grammar_limits_and_number_notation() {
+        for raw in [
+            "0",
+            "10",
+            "2031",
+            "1,000",
+            "2.5",
+            "0.5",
+            "1234567890123456",
+            "1234567890123456.1234567890123456",
+        ] {
+            assert!(parse(raw).is_some(), "{raw}");
+        }
+        for raw in [
+            "",
+            "00",
+            "01",
+            "00.5",
+            ".5",
+            "5.",
+            "1,23",
+            "1,,000",
+            "1234,000",
+            "1.2.3",
+            "2.5,000",
+            "12345678901234567",
+            "0.12345678901234567",
+        ] {
+            assert!(parse(raw).is_none(), "{raw}");
+        }
+    }
+
+    #[test]
+    fn positional_readings_include_places_internal_zeroes_and_euphony() {
+        for (raw, r, p) in [
+            ("10", "ジュウ", "ジュー"),
+            ("2031", "ニセンサンジュウイチ", "ニセンサンジューイチ"),
+            ("1,000", "セン", "セン"),
+            ("2.5", "ニテンゴ", "ニテンゴ"),
+            ("1010", "センジュウ", "センジュー"),
+            ("300", "サンビャク", "サンビャク"),
+            ("600", "ロッピャク", "ロッピャク"),
+            ("8000", "ハッセン", "ハッセン"),
+            ("10000", "イチマン", "イチマン"),
+            ("100000000", "イチオク", "イチオク"),
+            ("1000000000000", "イッチョウ", "イッチョー"),
+            ("8000000000000", "ハッチョウ", "ハッチョー"),
+            ("10000000000000", "ジュッチョウ", "ジュッチョー"),
+            ("0.09", "ゼロテンゼロキュウ", "ゼロテンゼロキュー"),
+        ] {
+            assert_eq!(
+                readings(raw, parse(raw).unwrap()),
+                (r.into(), p.into()),
+                "{raw}"
+            );
+        }
+    }
+
+    fn input_tokens(text: &str, offset: usize) -> Vec<Token> {
+        text.char_indices()
+            .map(|(i, c)| {
+                let surface = c.to_string();
+                Token {
+                    surface: surface.clone().into(),
+                    start: offset + i,
+                    end: offset + i + c.len_utf8(),
+                    pos: if c.is_ascii_digit() {
+                        "名詞,数,*,*"
+                    } else if matches!(c, '円' | '分' | '倍') {
+                        "名詞,接尾,助数詞,*"
+                    } else {
+                        "記号,一般,*,*"
+                    }
+                    .into(),
+                    base_form: surface.into(),
+                    conj_type: "".into(),
+                    conj_form: "".into(),
+                    reading: "".into(),
+                    pronunciation: "".into(),
+                    word_cost: 100,
+                    is_known: true,
+                }
+            })
+            .collect()
+    }
+
+    #[test]
+    fn compression_covers_the_original_number_and_preserves_existing_output() {
+        let text = "1,000円2.5倍";
+        let mut out = input_tokens("先", 0);
+        let previous = format!("{:?}", out[0]);
+        out.extend(input_tokens(text, 91));
+        apply(
+            text,
+            91,
+            &mut out,
+            1,
+            &AsciiPlan::new(text, 91),
+            &mut 0,
+            |_| false,
+        );
+        assert_eq!(format!("{:?}", out[0]), previous);
+        assert_eq!(out[1].surface.as_ref(), "1,000");
+        assert_eq!(out[1].pronunciation.as_ref(), "セン");
+        assert_eq!(out[1].word_cost, 500);
+        assert!(!out[1].is_known);
+        assert_eq!(out[3].surface.as_ref(), "2.5");
+        assert_eq!(out[3].pronunciation.as_ref(), "ニテンゴ");
+        for t in &out[1..] {
+            assert_eq!(&text[t.start - 91..t.end - 91], t.surface.as_ref());
+        }
+    }
+
+    #[test]
+    fn crossing_envelopes_remain_protected_in_every_intersecting_chunk() {
+        for parts in [&["ISO.", "8兆"][..], &["ISO.", ".", "8兆"][..]] {
+            let input = parts.concat();
+            let offset = 91;
+            let plan = AsciiPlan::new(&input, offset);
+            let envelope = offset..offset + input.len() - "兆".len();
+            let mut cursor = 0;
+            let mut position = offset;
+            let mut out = input_tokens("先", 0);
+            for (i, part) in parts.iter().enumerate() {
+                let first = out.len();
+                out.extend(input_tokens(part, position));
+                let before = format!("{out:?}");
+                let protected = apply(part, position, &mut out, first, &plan, &mut cursor, |_| {
+                    false
+                });
+                assert_eq!(protected.as_slice(), std::slice::from_ref(&envelope));
+                assert_eq!(format!("{out:?}"), before);
+                assert_eq!(cursor, usize::from(i + 1 == parts.len()));
+                position += part.len();
+            }
+        }
+    }
+
+    #[test]
+    fn identifiers_and_malformed_runs_are_preserved_as_a_whole() {
+        for text in [
+            "03-1234-5678円",
+            "123-4567円",
+            "123－4567円",
+            "123−4567円",
+            "ISO9001円",
+            "ISO 9001円",
+            "ISO\n9001円",
+            "v1.2.3円",
+            "192.168.0.1円",
+            "1,23円",
+            "1.2.3円",
+            "1．23円",
+            "1，234円",
+            "0010分",
+            "1e3円",
+            "10m2",
+            "10ms",
+            "123４円",
+            "１２34円",
+            "−10円",
+        ] {
+            let mut out = input_tokens(text, 0);
+            let before = format!("{out:?}");
+            apply(
+                text,
+                0,
+                &mut out,
+                0,
+                &AsciiPlan::new(text, 0),
+                &mut 0,
+                |s| s == "m",
+            );
+            assert_eq!(format!("{out:?}"), before, "{text}");
+        }
+        let text = format!("ISO{}9001円", ".1".repeat(100_000));
+        assert_eq!(AsciiPlan::new(&text, 0).candidates.len(), 1);
+    }
+
+    #[test]
+    fn synthetic_cost_is_summed_widely_and_saturated_only_once() {
+        for (costs, expected) in [
+            ([30000, 30000, -30000], 30000),
+            ([32000, 32000, 32000], i16::MAX),
+            ([-32000, -32000, -32000], i16::MIN),
+        ] {
+            let text = "123円";
+            let mut out = input_tokens(text, 0);
+            for (t, cost) in out.iter_mut().zip(costs) {
+                t.word_cost = cost;
+            }
+            apply(
+                text,
+                0,
+                &mut out,
+                0,
+                &AsciiPlan::new(text, 0),
+                &mut 0,
+                |_| false,
+            );
+            assert_eq!(out[0].word_cost, expected);
+        }
+    }
+}
+
+#[cfg(all(test, feature = "build"))]
+mod analyzer_tests {
+    use super::*;
+    use crate::dict::{DictBuilder, DictEntry};
+    use crate::{Analyzer, Dictionary};
+
+    fn dictionary() -> Dictionary {
+        let mut builder = DictBuilder::new();
+        for (n, r, p) in [
+            ("0", "ゼロ", "ゼロ"),
+            ("1", "イチ", "イチ"),
+            ("2", "ニ", "ニ"),
+            ("3", "サン", "サン"),
+            ("4", "ヨン", "ヨン"),
+            ("5", "ゴ", "ゴ"),
+            ("6", "ロク", "ロク"),
+            ("7", "ナナ", "ナナ"),
+            ("8", "ハチ", "ハチ"),
+            ("9", "キュウ", "キュー"),
+            ("一", "イチ", "イチ"),
+            ("八", "ハチ", "ハチ"),
+            ("十", "ジュウ", "ジュー"),
+            ("１", "イチ", "イチ"),
+            ("８", "ハチ", "ハチ"),
+        ] {
+            builder.add_entry(DictEntry {
+                surface: n.into(),
+                pos: "名詞,数,*,*".into(),
+                reading: r.into(),
+                pronunciation: p.into(),
+                ..Default::default()
+            });
+        }
+        for (surface, pos, r, p, cost) in [
+            ("分", "名詞,接尾,助数詞,*", "フン", "フン", 0),
+            ("本", "名詞,接尾,助数詞,*", "ホン", "ホン", 0),
+            ("円", "名詞,接尾,助数詞,*", "エン", "エン", 0),
+            ("倍", "名詞,接尾,助数詞,*", "バイ", "バイ", 0),
+            ("人", "名詞,接尾,助数詞,*", "ニン", "ニン", 0),
+            ("日", "名詞,接尾,助数詞,*", "ニチ", "ニチ", 0),
+            ("年度", "名詞,一般,*,*", "ネンド", "ネンド", 0),
+            ("万", "名詞,数,*,*", "マン", "マン", 0),
+            ("兆", "名詞,数,*,*", "チョウ", "チョー", 0),
+            ("kg", "名詞,一般,*,*", "キログラム", "キログラム", 0),
+            ("12", "名詞,数,*,*", "ジュウニ", "ジューニ", -100),
+            ("11", "名詞,数,*,*", "テンイチ", "テンイチ", -100),
+            (
+                "2026年度",
+                "名詞,固有名詞,一般,*",
+                "ニセンニジュウロクネンド",
+                "ニセンニジューロクネンド",
+                -100,
+            ),
+            (
+                "2.5倍",
+                "名詞,固有名詞,一般,*",
+                "ニテンゴバイ",
+                "ニテンゴバイ",
+                -100,
+            ),
+        ] {
+            builder.add_entry(DictEntry {
+                surface: surface.into(),
+                pos: pos.into(),
+                reading: r.into(),
+                pronunciation: p.into(),
+                base_form: format!("base:{surface}").into(),
+                conj_type: "fixture-type".into(),
+                conj_form: "fixture-form".into(),
+                cost,
+                ..Default::default()
+            });
+        }
+        builder.build().unwrap()
+    }
+
+    fn pronunciation(tokens: &[Token]) -> String {
+        tokens.iter().map(|t| t.pronunciation.as_ref()).collect()
+    }
+
+    #[test]
+    fn analyzer_quantity_readings_cover_integers_fractions_units_and_native_counters() {
+        let mut analyzer = Analyzer::from_dict(dictionary());
+        for (text, expected) in [
+            ("10分", "ジュップン"),
+            ("2031年度", "ニセンサンジューイチネンド"),
+            ("1,000円", "センエン"),
+            ("1.5倍", "イチテンゴバイ"),
+            ("0.5分", "ゼロテンゴフン"),
+            ("1.0分", "イチテンゼロフン"),
+            ("2.50分", "ニテンゴゼロフン"),
+            ("300本", "サンビャッポン"),
+            ("21本", "ニジューイッポン"),
+            ("14日", "ジューヨッカ"),
+            ("24日", "ニジューヨッカ"),
+            ("2人", "フタリ"),
+            ("12人", "ジューニニン"),
+            ("13日", "ジューサンニチ"),
+            ("10万", "ジューマン"),
+            ("1兆", "イッチョー"),
+            ("8兆", "ハッチョー"),
+            ("10兆", "ジュッチョー"),
+            ("一兆", "イッチョー"),
+            ("八兆", "ハッチョー"),
+            ("十兆", "ジュッチョー"),
+            ("1000kg", "センキログラム"),
+            ("1,000円2.5倍", "センエンニテンゴバイ"),
+            ("10万2031円", "ジューマンニセンサンジューイチエン"),
+            ("10円2031年度", "ジューエンニセンサンジューイチネンド"),
+        ] {
+            let out = analyzer.try_tokenize(text).unwrap();
+            assert_eq!(pronunciation(&out), expected, "{text}");
+            for t in &out {
+                assert_eq!(&text[t.start..t.end], t.surface.as_ref());
+            }
+        }
+        let out = analyzer.try_tokenize("2031年度").unwrap();
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].surface.as_ref(), "2031");
+        assert!(!out[0].is_known);
+        assert_eq!(out[0].base_form.as_ref(), "2031");
+        assert_eq!(out[0].pos.as_ref(), "名詞,数,*,*");
+        assert!(out[0].conj_type.is_empty() && out[0].conj_form.is_empty());
+        assert!(out[0].mora_count() > 0);
+    }
+
+    #[test]
+    fn known_single_number_and_known_mixed_word_keep_all_dictionary_fields() {
+        let mut analyzer = Analyzer::from_dict(dictionary());
+        for (text, surface, expected) in [
+            ("12円", "12", "ジューニ"),
+            ("11本", "11", "テンイチ"),
+            ("2026年度", "2026年度", "ニセンニジューロクネンド"),
+            ("2.5倍", "2.5倍", "ニテンゴバイ"),
+        ] {
+            let out = analyzer.try_tokenize(text).unwrap();
+            let t = &out[0];
+            assert_eq!(t.surface.as_ref(), surface);
+            assert_eq!(t.base_form.as_ref(), format!("base:{surface}"));
+            assert_eq!(t.conj_type.as_ref(), "fixture-type");
+            assert_eq!(t.conj_form.as_ref(), "fixture-form");
+            assert_eq!(t.word_cost, -100);
+            assert!(t.is_known);
+            assert_eq!(t.pronunciation.as_ref(), expected);
+        }
+    }
+
+    #[test]
+    fn protected_single_digits_do_not_receive_new_trillion_euphony() {
+        let mut analyzer = Analyzer::from_dict(dictionary());
+        for (text, surface, expected) in [
+            ("ISO 1兆", "1", "イチ"),
+            ("ISO 8兆", "8", "ハチ"),
+            ("ISO\n8兆", "8", "ハチ"),
+            ("−1兆", "1", "イチ"),
+            ("01兆", "1", "イチ"),
+            ("1.2.1兆", "1", "イチ"),
+            ("1,01兆", "1", "イチ"),
+            ("1８兆", "８", "ハチ"),
+            ("1八兆", "八", "ハチ"),
+            ("８兆", "８", "ハチ"),
+            ("１８兆", "８", "ハチ"),
+        ] {
+            let out = analyzer.try_tokenize(text).unwrap();
+            let t = out
+                .iter()
+                .rev()
+                .find(|t| t.surface.as_ref() == surface)
+                .unwrap();
+            assert_eq!(t.reading.as_ref(), expected, "{text}");
+            assert_eq!(t.pronunciation.as_ref(), expected, "{text}");
+        }
+    }
+
+    #[test]
+    fn original_input_protects_identifier_prefixes_across_analyzer_chunks_and_sentences() {
+        let mut analyzer = Analyzer::from_dict(dictionary());
+        for separator in [" ", "\t", "\n", "\r\n"] {
+            let text = format!("ISO{separator}9001円");
+            let out = analyzer.try_tokenize(&text).unwrap();
+            assert_eq!(
+                out.iter()
+                    .filter(|t| t.surface.chars().all(|c| c.is_ascii_digit()))
+                    .count(),
+                4,
+                "{text}"
+            );
+            let sentences = analyzer
+                .try_tokenize_sentences(&text, &crate::sentence::SplitOptions::default())
+                .unwrap();
+            assert_eq!(
+                sentences
+                    .iter()
+                    .flat_map(|(_, t)| t)
+                    .filter(|t| t.surface.chars().all(|c| c.is_ascii_digit()))
+                    .count(),
+                4
+            );
+        }
+        let out = analyzer.try_tokenize("価格。10分。2.50分").unwrap();
+        assert!(
+            out.iter()
+                .any(|t| t.surface.as_ref() == "10" && t.pronunciation.as_ref() == "ジュッ")
+        );
+        assert!(out.iter().any(|t| t.surface.as_ref() == "2.50" && t.pronunciation.as_ref() == "ニテンゴゼロ"));
+    }
+
+    #[test]
+    fn prepared_chunks_keep_identifier_protection_until_the_envelope_ends() {
+        let dict = dictionary();
+        let mut workspace = crate::lattice::LatticeWorkspace::new();
+        for parts in [&["ISO.", "8兆"][..], &["ISO.", ".", "8兆"][..]] {
+            let input = parts.concat();
+            for offset in [0, 91] {
+                let plan = AsciiPlan::new(&input, offset);
+                let mut cursor = 0;
+                let mut position = offset;
+                let mut out = Vec::new();
+                let mut cursors = Vec::new();
+                for part in parts {
+                    let first = out.len();
+                    let previous = format!("{out:?}");
+                    workspace
+                        .tokenize_into_prepared(part, &dict, position, &mut out, &plan, &mut cursor)
+                        .unwrap();
+                    assert_eq!(format!("{:?}", &out[..first]), previous);
+                    cursors.push(cursor);
+                    position += part.len();
+                }
+                let number = out.iter().find(|t| t.surface.as_ref() == "8").unwrap();
+                assert_eq!(number.reading.as_ref(), "ハチ", "{parts:?} at {offset}");
+                assert_eq!(
+                    number.pronunciation.as_ref(),
+                    "ハチ",
+                    "{parts:?} at {offset}"
+                );
+                assert!(cursors[..cursors.len() - 1].iter().all(|&c| c == 0));
+                assert_eq!(cursor, plan.candidates.len());
+                for t in &out {
+                    assert_eq!(&input[t.start - offset..t.end - offset], t.surface.as_ref());
+                }
+            }
+        }
+        let out = workspace.tokenize("8兆", &dict).unwrap();
+        assert_eq!(pronunciation(&out), "ハッチョー");
+    }
+
+    #[test]
+    fn direct_workspace_quantity_phase_keeps_offset_and_prior_output_outside_its_context() {
+        let dict = dictionary();
+        let mut workspace = crate::lattice::LatticeWorkspace::new();
+        let mut out = workspace.tokenize("ISO", &dict).unwrap();
+        let previous = format!("{out:?}");
+        let first = out.len();
+        workspace
+            .tokenize_into("1,000円", &dict, 91, &mut out)
+            .unwrap();
+        assert_eq!(format!("{:?}", &out[..first]), previous);
+        assert_eq!(out[first].surface.as_ref(), "1,000");
+        assert_eq!(out[first].pronunciation.as_ref(), "セン");
+        assert_eq!((out[first].start, out[first].end), (91, 96));
+    }
+}
+
+#[cfg(test)]
+mod distributed_tests {
+    #[test]
+    #[ignore = "配布辞書 3 個が必要（make dict-download）"]
+    fn distributed_ascii_quantity_readings() {
+        for name in ["ipadic", "ipadic-neologd", "ipadic-neologd-sudachi"] {
+            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("dict")
+                .join(format!("{name}.hsd"));
+            let mut analyzer = crate::Analyzer::load(path).unwrap();
+            for (text, expected) in [
+                ("10分", "ジュップン"),
+                ("2031年度", "ニセンサンジューイチネンド"),
+                ("1,000円", "センエン"),
+                ("2.5倍", "ニテンゴバイ"),
+                ("0.5分", "ゼロテンゴフン"),
+                ("1.0分", "イチテンゼロフン"),
+                ("300本", "サンビャッポン"),
+                ("14日", "ジューヨッカ"),
+                ("10万", "ジューマン"),
+                ("1兆", "イッチョー"),
+                ("8兆", "ハッチョー"),
+                ("10兆", "ジュッチョー"),
+                ("一兆", "イッチョー"),
+                ("八兆", "ハッチョー"),
+                ("十兆", "ジュッチョー"),
+                ("1000kg", "センキログラム"),
+            ] {
+                let out = analyzer.try_tokenize(text).unwrap();
+                let actual: String = out.iter().map(|t| t.pronunciation.as_ref()).collect();
+                assert_eq!(actual, expected, "{name}: {text}");
+                for t in &out {
+                    assert_eq!(&text[t.start..t.end], t.surface.as_ref());
+                }
+            }
+            for (text, surface, expected) in [
+                ("ISO 1兆", "1", "イチ"),
+                ("ISO 8兆", "8", "ハチ"),
+                ("−1兆", "1", "イチ"),
+                ("1８兆", "８", "ハチ"),
+                ("1八兆", "八", "ハチ"),
+                ("８兆", "８", "ハチ"),
+                ("１８兆", "８", "ハチ"),
+            ] {
+                let out = analyzer.try_tokenize(text).unwrap();
+                let t = out
+                    .iter()
+                    .rev()
+                    .find(|t| t.surface.ends_with(surface))
+                    .unwrap_or_else(|| panic!("{name}: {text}: {out:?}"));
+                // NEologd は「−1」を既知語として持つので、その辞書読みも保つ。
+                assert!(t.reading.ends_with(expected), "{name}: {text}: {t:?}");
+                assert!(t.pronunciation.ends_with(expected), "{name}: {text}: {t:?}");
+            }
+            for text in [
+                "ISO\n9001円",
+                "ISO 9001円",
+                "03-1234-5678円",
+                "123－4567円",
+                "1.2.3円",
+                "1．23円",
+                "1,23円",
+                "0010円",
+                "10ms",
+                "2031",
+                "1000\n分",
+            ] {
+                let out = analyzer.try_tokenize(text).unwrap();
+                assert!(
+                    !out.iter().any(|t| !t.is_known
+                        && t.surface.len() > 1
+                        && t.surface
+                            .bytes()
+                            .all(|b| b.is_ascii_digit() || matches!(b, b',' | b'.'))
+                        && t.base_form == t.surface
+                        && t.conj_type.is_empty()
+                        && !t.reading.is_empty()),
+                    "{name}: {text}"
+                );
+            }
+        }
+    }
+}

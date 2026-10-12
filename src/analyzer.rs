@@ -119,7 +119,8 @@ impl Analyzer {
     /// テキストを形態素解析する。辞書に不正な参照を見つけたらエラーを返す
     pub fn try_tokenize(&mut self, input: &str) -> Result<Vec<Token>, DictError> {
         let mut tokens = Vec::with_capacity(input.len() / 3);
-        self.tokenize_chunks(input, 0, &mut tokens)?;
+        let plan = crate::numeric::AsciiPlan::new(input, 0);
+        self.tokenize_chunks(input, 0, &mut tokens, &plan, &mut 0)?;
         Ok(tokens)
     }
 
@@ -133,15 +134,22 @@ impl Analyzer {
         input: &str,
         offset: usize,
         out: &mut Vec<Token>,
+        plan: &crate::numeric::AsciiPlan,
+        cursor: &mut usize,
     ) -> Result<(), DictError> {
         let mut ends = std::mem::take(&mut self.chunk_ends);
         self.splitter.chunk_ends_into(input, &mut ends);
         let mut start = 0;
         let mut result = Ok(());
         for &end in &ends {
-            result =
-                self.workspace
-                    .tokenize_into(&input[start..end], &self.dict, offset + start, out);
+            result = self.workspace.tokenize_into_prepared(
+                &input[start..end],
+                &self.dict,
+                offset + start,
+                out,
+                plan,
+                cursor,
+            );
             if result.is_err() {
                 break;
             }
@@ -173,11 +181,19 @@ impl Analyzer {
         options: &SplitOptions<'_>,
     ) -> Result<Vec<(Sentence, Vec<Token>)>, DictError> {
         let splitter = Splitter::new(options);
+        let plan = crate::numeric::AsciiPlan::new(text, 0);
+        let mut cursor = 0;
         let mut out = Vec::new();
         for sentence in splitter.split(text) {
             let mut tokens = Vec::new();
             let range = sentence.range.clone();
-            self.tokenize_chunks(&text[range.clone()], range.start, &mut tokens)?;
+            self.tokenize_chunks(
+                &text[range.clone()],
+                range.start,
+                &mut tokens,
+                &plan,
+                &mut cursor,
+            )?;
             out.push((sentence, tokens));
         }
         Ok(out)
