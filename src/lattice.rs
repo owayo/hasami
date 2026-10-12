@@ -360,19 +360,6 @@ fn apply_contextual_readings(tokens: &mut [Token]) {
                 continue;
             }
         }
-        // TTS の「10分」→「十ぷん」では末尾の十を促音化する。
-        // 「十分(ジュウブン)」や、十年・十番など別の助数詞には適用しない。
-        if &*tokens[i].surface == "十"
-            && tokens[i].pos.starts_with("名詞,数")
-            && tokens
-                .get(i + 1)
-                .is_some_and(|t| &*t.surface == "ぷん" && t.pos.starts_with("名詞,接尾,助数詞"))
-        {
-            let reading: Arc<str> = Arc::from("ジュッ");
-            tokens[i].reading = Arc::clone(&reading);
-            tokens[i].pronunciation = reading;
-            continue;
-        }
         if DECIMAL_COUNTER_OVERRIDES
             .iter()
             .any(|&(surface, _)| &*tokens[i].surface == surface)
@@ -421,6 +408,7 @@ fn apply_contextual_readings(tokens: &mut [Token]) {
             tokens[i].pronunciation = kana;
         }
     }
+    crate::numeric::apply_counter_readings(tokens);
 }
 
 /// 仮名のみからなる表層形をカタカナの読みに変換する。
@@ -1972,23 +1960,6 @@ mod tests {
                     .unwrap();
                 assert_eq!(&*out[1].reading, spelled);
             }
-        }
-    }
-
-    #[test]
-    fn test_ten_minutes_euphony_requires_numeric_ten_and_minute_suffix() {
-        for (ten_pos, counter, counter_pos, expected) in [
-            ("名詞,数,*,*", "ぷん", "名詞,接尾,助数詞,*", "ジュッ"),
-            ("名詞,数,*,*", "ねん", "名詞,接尾,助数詞,*", "ジュウ"),
-            ("名詞,一般,*,*", "ぷん", "名詞,接尾,助数詞,*", "ジュウ"),
-            ("名詞,数,*,*", "ぷん", "名詞,固有名詞,人名,一般", "ジュウ"),
-        ] {
-            let mut tokens = vec![
-                reading_token("十", ten_pos, "ジュウ"),
-                reading_token(counter, counter_pos, "プン"),
-            ];
-            apply_contextual_readings(&mut tokens);
-            assert_eq!(&*tokens[0].reading, expected);
         }
     }
 

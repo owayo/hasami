@@ -1,0 +1,1252 @@
+//! 最良パスの数詞と助数詞の読み。トークンの境界・品詞・辞書由来の情報は変えない。
+//!
+//! 音便は助数詞ごとの対応表で決める。人・日の和語読みだけは数詞列全体を見る。
+//! 一日は日付と期間を区別できないので変更せず、二十日のハツカも分配しない。
+
+use crate::lattice::Token;
+use std::sync::Arc;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Ending {
+    One,
+    Two,
+    Three,
+    Four,
+    Five,
+    Six,
+    Seven,
+    Eight,
+    Nine,
+    Ten,
+    Hundred,
+    Thousand,
+    TenThousand,
+}
+
+#[derive(Clone, Copy)]
+enum Counter {
+    H {
+        plain: &'static str,
+        voiced: &'static str,
+        half: &'static str,
+    },
+    K,
+    Minute,
+    Hundred,
+    Thousand,
+    Person,
+    Day,
+    Hour,
+}
+
+fn pos_has(pos: &str, prefix: &str) -> bool {
+    pos.strip_prefix(prefix)
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with(','))
+}
+
+fn digit(c: char) -> Option<u64> {
+    match c {
+        '0'..='9' => Some(u64::from(c as u32 - '0' as u32)),
+        '０'..='９' => Some(u64::from(c as u32 - '０' as u32)),
+        '〇' | '零' => Some(0),
+        '一' => Some(1),
+        '二' => Some(2),
+        '三' => Some(3),
+        '四' => Some(4),
+        '五' => Some(5),
+        '六' => Some(6),
+        '七' => Some(7),
+        '八' => Some(8),
+        '九' => Some(9),
+        _ => None,
+    }
+}
+
+fn place(c: char) -> Option<u64> {
+    match c {
+        '十' => Some(10),
+        '百' => Some(100),
+        '千' => Some(1_000),
+        '万' => Some(10_000),
+        '億' => Some(100_000_000),
+        '兆' => Some(1_000_000_000_000),
+        _ => None,
+    }
+}
+
+fn is_numeral(token: &Token) -> bool {
+    pos_has(&token.pos, "名詞,数")
+        && !token.surface.is_empty()
+        && token
+            .surface
+            .chars()
+            .all(|c| digit(c).is_some() || place(c).is_some())
+}
+
+/// 位を含む数と、位を省いた数字列を読む。桁あふれ・位の逆転は曖昧な数として拒む。
+fn numeral_value<'a>(surfaces: impl Iterator<Item = &'a str>) -> Option<u64> {
+    let (mut total, mut group, mut digits) = (0u64, 0u64, 0u64);
+    let (mut have_digits, mut seen) = (false, false);
+    let (mut last_small, mut last_large) = (10_000, u64::MAX);
+    for c in surfaces.flat_map(str::chars) {
+        seen = true;
+        if let Some(n) = digit(c) {
+            digits = digits.checked_mul(10)?.checked_add(n)?;
+            have_digits = true;
+            continue;
+        }
+        let unit = place(c)?;
+        if unit < 10_000 {
+            if unit >= last_small {
+                return None;
+            }
+            let coefficient = if have_digits { digits } else { 1 };
+            group = group.checked_add(coefficient.checked_mul(unit)?)?;
+            last_small = unit;
+        } else {
+            if unit >= last_large {
+                return None;
+            }
+            group = group.checked_add(digits)?;
+            let coefficient = if group == 0 && !have_digits { 1 } else { group };
+            total = total.checked_add(coefficient.checked_mul(unit)?)?;
+            group = 0;
+            last_small = 10_000;
+            last_large = unit;
+        }
+        digits = 0;
+        have_digits = false;
+    }
+    seen.then_some(())?;
+    total.checked_add(group)?.checked_add(digits)
+}
+
+fn ending(surface: &str) -> Option<Ending> {
+    let value = numeral_value(std::iter::once(surface))?;
+    Some(match value % 10 {
+        1 => Ending::One,
+        2 => Ending::Two,
+        3 => Ending::Three,
+        4 => Ending::Four,
+        5 => Ending::Five,
+        6 => Ending::Six,
+        7 => Ending::Seven,
+        8 => Ending::Eight,
+        9 => Ending::Nine,
+        _ if value == 0 => return None,
+        _ if value % 100 != 0 => Ending::Ten,
+        _ if value % 1_000 != 0 => Ending::Hundred,
+        _ if value % 10_000 != 0 => Ending::Thousand,
+        _ if value % 100_000_000 != 0 => Ending::TenThousand,
+        _ => return None,
+    })
+}
+
+fn has_reading(token: &Token, allowed: &[&str]) -> bool {
+    allowed.contains(&token.reading.as_ref()) && allowed.contains(&token.pronunciation.as_ref())
+}
+
+fn counter(token: &Token) -> Option<Counter> {
+    if pos_has(&token.pos, "名詞,数") {
+        return match token.surface.as_ref() {
+            "百" if has_reading(token, &["ヒャク", "ビャク", "ピャク"]) => {
+                Some(Counter::Hundred)
+            }
+            "千" if has_reading(token, &["セン", "ゼン"]) => Some(Counter::Thousand),
+            _ => None,
+        };
+    }
+    let suffix = pos_has(&token.pos, "名詞,接尾,助数詞");
+    // IPAdic では「ぷん」が未知の普通名詞になる。仮名補完済みのこの形だけを許す。
+    if !suffix
+        && !(!token.is_known
+            && token.surface.as_ref() == "ぷん"
+            && pos_has(&token.pos, "名詞,一般")
+            && has_reading(token, &["プン"]))
+    {
+        return None;
+    }
+    let h = |plain, voiced, half| {
+        has_reading(token, &[plain, voiced, half]).then_some(Counter::H {
+            plain,
+            voiced,
+            half,
+        })
+    };
+    match token.surface.as_ref() {
+        "本" => h("ホン", "ボン", "ポン"),
+        "杯" => h("ハイ", "バイ", "パイ"),
+        "匹" => h("ヒキ", "ビキ", "ピキ"),
+        "回" if has_reading(token, &["カイ"]) => Some(Counter::K),
+        "個" if has_reading(token, &["コ"]) => Some(Counter::K),
+        "分" | "ぷん" if has_reading(token, &["フン", "プン"]) => Some(Counter::Minute),
+        "人" if has_reading(token, &["ニン", "リ"]) => Some(Counter::Person),
+        "日" if has_reading(token, &["ニチ", "カ"]) => Some(Counter::Day),
+        "時" if has_reading(token, &["ジ"]) => Some(Counter::Hour),
+        "時間" if has_reading(token, &["ジカン"]) => Some(Counter::Hour),
+        _ => None,
+    }
+}
+
+fn set_readings(token: &mut Token, reading: &str, pronunciation: &str) {
+    if token.reading.as_ref() != reading {
+        token.reading = Arc::from(reading);
+    }
+    if token.pronunciation.as_ref() != pronunciation {
+        token.pronunciation = if reading == pronunciation {
+            Arc::clone(&token.reading)
+        } else {
+            Arc::from(pronunciation)
+        };
+    }
+}
+
+fn replace_tail(token: &mut Token, old: &[&str], reading: &str, pronunciation: &str) -> bool {
+    let Some(r) = old.iter().find_map(|tail| token.reading.strip_suffix(tail)) else {
+        return false;
+    };
+    let Some(p) = old
+        .iter()
+        .find_map(|tail| token.pronunciation.strip_suffix(tail))
+    else {
+        return false;
+    };
+    let r = format!("{r}{reading}");
+    let p = format!("{p}{pronunciation}");
+    set_readings(token, &r, &p);
+    true
+}
+
+fn number_tails(e: Ending) -> &'static [&'static str] {
+    match e {
+        Ending::One => &["イチ", "イッ"],
+        Ending::Two => &["ニ"],
+        Ending::Three => &["サン"],
+        Ending::Four => &["ヨン", "シ"],
+        Ending::Five => &["ゴ"],
+        Ending::Six => &["ロク", "ロッ"],
+        Ending::Seven => &["ナナ", "シチ"],
+        Ending::Eight => &["ハチ", "ハッ"],
+        Ending::Nine => &["キュウ", "キュー", "ク"],
+        Ending::Ten => &["ジュウ", "ジュー", "ジュッ", "ジッ"],
+        Ending::Hundred => &["ヒャク", "ビャク", "ピャク", "ヒャッ", "ビャッ", "ピャッ"],
+        Ending::Thousand => &["セン", "ゼン"],
+        Ending::TenThousand => &["マン"],
+    }
+}
+
+/// 漢数字の語全体を検査するための字ごとの標準形。位の直前・直後の音便も含める。
+fn numeral_glyph_readings(
+    previous: Option<char>,
+    c: char,
+    next: Option<char>,
+) -> &'static [&'static str] {
+    match c {
+        '〇' | '零' => &["ゼロ", "レイ"],
+        '一' if matches!(next, Some('千' | '兆')) => &["イッ"],
+        '一' => &["イチ"],
+        '二' => &["ニ"],
+        '三' => &["サン"],
+        '四' => &["ヨン", "シ"],
+        '五' => &["ゴ"],
+        '六' if next == Some('百') => &["ロッ"],
+        '六' => &["ロク"],
+        '七' => &["ナナ", "シチ"],
+        '八' if matches!(next, Some('百' | '千' | '兆')) => &["ハッ"],
+        '八' => &["ハチ"],
+        '九' => &["キュウ", "キュー", "ク"],
+        '十' if matches!(next, Some('千' | '兆')) => &["ジュッ", "ジッ"],
+        '十' => &["ジュウ", "ジュー"],
+        '百' if previous == Some('三') => &["ビャク"],
+        '百' if matches!(previous, Some('六' | '八')) => &["ピャク"],
+        '百' => &["ヒャク"],
+        '千' if previous == Some('三') => &["ゼン"],
+        '千' => &["セン"],
+        '万' => &["マン"],
+        '億' => &["オク"],
+        '兆' => &["チョウ", "チョー"],
+        _ => &[],
+    }
+}
+
+fn standard_number_readings(token: &Token, tails: &[&str]) -> bool {
+    let mut chars = token.surface.chars().peekable();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    if chars.peek().is_none() {
+        return has_reading(token, tails);
+    }
+    // ASCII・全角の複数桁や混在表記は、数全体を読める処理を導入するまで辞書の読みを保つ。
+    let mut chars = std::iter::once(first).chain(chars).peekable();
+    let (mut reading, mut pronunciation) = (token.reading.as_ref(), token.pronunciation.as_ref());
+    let mut previous = None;
+    while let Some(c) = chars.next() {
+        let allowed = numeral_glyph_readings(previous, c, chars.peek().copied());
+        let Some(r) = allowed
+            .iter()
+            .find_map(|prefix| reading.strip_prefix(prefix))
+        else {
+            return false;
+        };
+        let Some(p) = allowed
+            .iter()
+            .find_map(|prefix| pronunciation.strip_prefix(prefix))
+        else {
+            return false;
+        };
+        (reading, pronunciation) = (r, p);
+        previous = Some(c);
+    }
+    reading.is_empty() && pronunciation.is_empty()
+}
+
+fn geminate(token: &mut Token, e: Ending) -> bool {
+    if token.reading.ends_with('ッ') && token.pronunciation.ends_with('ッ') {
+        return true;
+    }
+    let replacement = match e {
+        Ending::One => "イッ",
+        Ending::Six => "ロッ",
+        Ending::Eight => "ハッ",
+        Ending::Ten => "ジュッ",
+        Ending::Hundred => {
+            // 三百本・六百本では、先に補正したビャク・ピャクの頭音を保持する。
+            return replace_tail(token, &["ク"], "ッ", "ッ");
+        }
+        _ => return false,
+    };
+    replace_tail(token, number_tails(e), replacement, replacement)
+}
+
+fn after_decimal(tokens: &[Token], start: usize) -> bool {
+    start >= 2
+        && matches!(tokens[start - 1].surface.as_ref(), "." | "．" | "点")
+        && tokens[start - 2].end == tokens[start - 1].start
+        && tokens[start - 1].end == tokens[start].start
+        && is_numeral(&tokens[start - 2])
+}
+
+/// 和語の対象になる小さい数の標準形。全体と各トークンを照合し、別読みの接頭部も守る。
+fn small_readings(value: u64) -> &'static [&'static str] {
+    match value {
+        0 => &["ゼロ", "レイ"],
+        1 => &["イチ"],
+        2 => &["ニ"],
+        3 => &["サン"],
+        4 => &["ヨン", "シ"],
+        5 => &["ゴ"],
+        6 => &["ロク"],
+        7 => &["ナナ", "シチ"],
+        8 => &["ハチ"],
+        9 => &["キュウ", "キュー", "ク"],
+        10 => &["ジュウ", "ジュー"],
+        14 => &["ジュウヨン", "ジュウシ", "ジューヨン", "ジューシ"],
+        20 => &["ニジュウ", "ニジュー"],
+        24 => &["ニジュウヨン", "ニジュウシ", "ニジューヨン", "ニジューシ"],
+        _ => &[],
+    }
+}
+
+fn standard_native_run(tokens: &[Token], value: u64) -> bool {
+    if !tokens.iter().all(|t| {
+        numeral_value(std::iter::once(t.surface.as_ref()))
+            .is_some_and(|n| has_reading(t, small_readings(n)))
+    }) {
+        return false;
+    }
+    let reading: String = tokens.iter().map(|t| t.reading.as_ref()).collect();
+    let pronunciation: String = tokens.iter().map(|t| t.pronunciation.as_ref()).collect();
+    let allowed = small_readings(value);
+    allowed.contains(&reading.as_str()) && allowed.contains(&pronunciation.as_str())
+}
+
+fn native_day(tokens: &[Token], start: usize, end: usize) -> Option<(&'static str, &'static str)> {
+    let run = &tokens[start..end];
+    let value = numeral_value(run.iter().map(|t| t.surface.as_ref()))?;
+    if !standard_native_run(run, value) {
+        return None;
+    }
+    // 位のない「1 / 4」はまだ位取りの読みではない。十四・二十四は十を含む列に限定する。
+    if run.len() != 1 && !run.iter().any(|t| t.surface.contains('十')) {
+        return None;
+    }
+    if value <= 10 {
+        let last = run.last()?;
+        if !has_reading(last, number_tails(ending(&last.surface)?)) {
+            return None;
+        }
+    }
+    Some(match value {
+        2 => ("フツ", "フツ"),
+        3 => ("ミッ", "ミッ"),
+        4 | 14 | 24 => ("ヨッ", "ヨッ"),
+        5 => ("イツ", "イツ"),
+        6 => ("ムイ", "ムイ"),
+        7 => ("ナノ", "ナノ"),
+        8 => ("ヨウ", "ヨー"),
+        9 => ("ココノ", "ココノ"),
+        10 if run
+            .last()
+            .is_some_and(|t| ending(&t.surface) == Some(Ending::Ten)) =>
+        {
+            ("トオ", "トー")
+        }
+        _ => return None,
+    })
+}
+
+fn ten_minutes(tokens: &mut [Token], i: usize) {
+    if tokens[i].surface.as_ref() == "十分"
+        && pos_has(&tokens[i].pos, "名詞,形容動詞語幹")
+        && has_reading(&tokens[i], &["ジュウブン", "ジューブン"])
+        && tokens.get(i + 1).is_some_and(|next| {
+            tokens[i].end == next.start
+                && matches!(next.surface.as_ref(), "前" | "後")
+                && (pos_has(&next.pos, "名詞,副詞可能") || pos_has(&next.pos, "名詞,接尾,副詞可能"))
+        })
+    {
+        set_readings(&mut tokens[i], "ジュップン", "ジュップン");
+    }
+}
+
+/// 仮名などの読み補完の後に呼ぶ。数詞列をまとめず、読みと発音だけを変更する。
+pub(crate) fn apply_counter_readings(tokens: &mut [Token]) {
+    let mut start = 0;
+    for i in 0..tokens.len() {
+        ten_minutes(tokens, i);
+        if i == 0 || tokens[i - 1].end != tokens[i].start || !is_numeral(&tokens[i - 1]) {
+            start = i;
+            continue;
+        }
+        let Some(counter) = counter(&tokens[i]) else {
+            continue;
+        };
+        if after_decimal(tokens, start) {
+            continue;
+        }
+        let Some(e) = ending(&tokens[i - 1].surface) else {
+            continue;
+        };
+        let tails = number_tails(e);
+        if !standard_number_readings(&tokens[i - 1], tails) {
+            continue;
+        }
+        if !tails.iter().any(|t| tokens[i - 1].reading.ends_with(t))
+            || !tails
+                .iter()
+                .any(|t| tokens[i - 1].pronunciation.ends_with(t))
+        {
+            continue;
+        }
+        let day = if matches!(counter, Counter::Day) {
+            native_day(tokens, start, i)
+        } else {
+            None
+        };
+        let person = matches!(counter, Counter::Person)
+            && i - start == 1
+            && has_reading(&tokens[i - 1], tails)
+            && matches!(
+                numeral_value(std::iter::once(tokens[i - 1].surface.as_ref())),
+                Some(1 | 2)
+            );
+        let (before, after) = tokens.split_at_mut(i);
+        let number = &mut before[i - 1];
+        let suffix = &mut after[0];
+        match counter {
+            Counter::H {
+                plain,
+                voiced,
+                half,
+            } => match e {
+                Ending::One | Ending::Six | Ending::Eight | Ending::Ten | Ending::Hundred => {
+                    if geminate(number, e) {
+                        set_readings(suffix, half, half);
+                    }
+                }
+                Ending::Three | Ending::Thousand | Ending::TenThousand => {
+                    set_readings(suffix, voiced, voiced)
+                }
+                _ => set_readings(suffix, plain, plain),
+            },
+            Counter::K => {
+                geminate(number, e);
+            }
+            Counter::Minute => match e {
+                Ending::One | Ending::Six | Ending::Eight | Ending::Ten | Ending::Hundred => {
+                    if geminate(number, e) {
+                        set_readings(suffix, "プン", "プン");
+                    }
+                }
+                Ending::Three | Ending::Four | Ending::Thousand | Ending::TenThousand => {
+                    set_readings(suffix, "プン", "プン")
+                }
+                _ if suffix.surface.as_ref() == "分" => set_readings(suffix, "フン", "フン"),
+                _ => {}
+            },
+            Counter::Hundred => match e {
+                Ending::Three => set_readings(suffix, "ビャク", "ビャク"),
+                Ending::Six | Ending::Eight if geminate(number, e) => {
+                    set_readings(suffix, "ピャク", "ピャク");
+                }
+                _ => set_readings(suffix, "ヒャク", "ヒャク"),
+            },
+            Counter::Thousand => match e {
+                Ending::Three => set_readings(suffix, "ゼン", "ゼン"),
+                Ending::One | Ending::Eight | Ending::Ten => {
+                    if geminate(number, e) {
+                        set_readings(suffix, "セン", "セン");
+                    }
+                }
+                _ => set_readings(suffix, "セン", "セン"),
+            },
+            Counter::Person => {
+                if person {
+                    let r = if e == Ending::One { "ヒト" } else { "フタ" };
+                    if replace_tail(number, tails, r, r) {
+                        set_readings(suffix, "リ", "リ");
+                    }
+                } else if e == Ending::Four {
+                    replace_tail(number, tails, "ヨ", "ヨ");
+                    set_readings(suffix, "ニン", "ニン");
+                } else {
+                    set_readings(suffix, "ニン", "ニン");
+                }
+            }
+            Counter::Day => {
+                if let Some((r, p)) = day
+                    && replace_tail(number, tails, r, p)
+                {
+                    set_readings(suffix, "カ", "カ");
+                } else {
+                    let ordinary = match e {
+                        Ending::Seven => Some("シチ"),
+                        Ending::Nine => Some("ク"),
+                        _ => None,
+                    };
+                    if let Some(r) = ordinary {
+                        replace_tail(number, tails, r, r);
+                    }
+                    set_readings(suffix, "ニチ", "ニチ");
+                }
+            }
+            Counter::Hour => {
+                let r = match e {
+                    Ending::Four => Some("ヨ"),
+                    Ending::Seven => Some("シチ"),
+                    Ending::Nine => Some("ク"),
+                    _ => None,
+                };
+                if let Some(r) = r {
+                    replace_tail(number, tails, r, r);
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const NUMBER: &str = "名詞,数,*,*";
+    const COUNTER: &str = "名詞,接尾,助数詞,*";
+
+    fn tokens(parts: &[(&str, &str, &str)]) -> Vec<Token> {
+        let mut start = 37;
+        parts
+            .iter()
+            .map(|&(surface, pos, reading)| {
+                let end = start + surface.len();
+                let token = Token {
+                    surface: surface.into(),
+                    start,
+                    end,
+                    pos: pos.into(),
+                    conj_type: "fixture-type".into(),
+                    conj_form: "fixture-form".into(),
+                    base_form: format!("base:{surface}").into(),
+                    reading: reading.into(),
+                    pronunciation: reading.into(),
+                    word_cost: 321,
+                    is_known: true,
+                };
+                start = end;
+                token
+            })
+            .collect()
+    }
+
+    fn non_reading_fields(tokens: &[Token]) -> Vec<String> {
+        tokens
+            .iter()
+            .map(|t| {
+                format!(
+                    "{:?}",
+                    (
+                        &t.surface,
+                        t.start,
+                        t.end,
+                        &t.pos,
+                        &t.conj_type,
+                        &t.conj_form,
+                        &t.base_form,
+                        t.word_cost,
+                        t.is_known,
+                    )
+                )
+            })
+            .collect()
+    }
+
+    fn readings(tokens: &[Token]) -> (String, String) {
+        (
+            tokens.iter().map(|t| t.reading.as_ref()).collect(),
+            tokens.iter().map(|t| t.pronunciation.as_ref()).collect(),
+        )
+    }
+
+    #[test]
+    fn numeral_parser_handles_places_and_rejects_invalid_or_overflowing_numbers() {
+        for (surface, value) in [
+            ("一", 1),
+            ("十四", 14),
+            ("二十四", 24),
+            ("二〇二六", 2026),
+            ("２０２６", 2026),
+            ("二千二十六", 2026),
+            ("一億二万三", 100020003),
+            ("18446744073709551615", u64::MAX),
+        ] {
+            assert_eq!(
+                numeral_value(std::iter::once(surface)),
+                Some(value),
+                "{surface}"
+            );
+        }
+        assert_eq!(numeral_value(["二", "十", "四"].into_iter()), Some(24));
+        for surface in [
+            "",
+            "十百",
+            "百百",
+            "万億",
+            "2.5",
+            "1,000",
+            "18446744073709551616",
+        ] {
+            assert_eq!(numeral_value(std::iter::once(surface)), None, "{surface}");
+        }
+    }
+
+    #[test]
+    fn counter_table_preserves_every_non_reading_field() {
+        for (n, nr, c, cr, expected) in [
+            ("三", "サン", "本", "ホン", "サンボン"),
+            ("一", "イチ", "本", "ホン", "イッポン"),
+            ("六", "ロク", "本", "ホン", "ロッポン"),
+            ("八", "ハチ", "本", "ホン", "ハッポン"),
+            ("一", "イチ", "回", "カイ", "イッカイ"),
+            ("六", "ロク", "分", "フン", "ロップン"),
+            ("三", "サン", "分", "フン", "サンプン"),
+            ("四", "ヨン", "分", "フン", "ヨンプン"),
+            ("八", "ハチ", "個", "コ", "ハッコ"),
+            ("三", "サン", "杯", "ハイ", "サンバイ"),
+            ("一", "イチ", "杯", "ハイ", "イッパイ"),
+            ("六", "ロク", "匹", "ヒキ", "ロッピキ"),
+            ("三", "サン", "匹", "ヒキ", "サンビキ"),
+            ("千", "セン", "本", "ホン", "センボン"),
+            ("万", "マン", "杯", "ハイ", "マンバイ"),
+            ("千", "セン", "分", "フン", "センプン"),
+            ("万", "マン", "分", "フン", "マンプン"),
+            ("1", "イチ", "分", "フン", "イップン"),
+            ("１", "イチ", "分", "フン", "イップン"),
+            ("四", "ヨン", "時", "ジ", "ヨジ"),
+            ("七", "ナナ", "時間", "ジカン", "シチジカン"),
+            ("九", "キュウ", "時", "ジ", "クジ"),
+        ] {
+            let mut out = tokens(&[(n, NUMBER, nr), (c, COUNTER, cr)]);
+            let fields = non_reading_fields(&out);
+            apply_counter_readings(&mut out);
+            assert_eq!(readings(&out), (expected.into(), expected.into()), "{n}{c}");
+            assert_eq!(non_reading_fields(&out), fields, "{n}{c}");
+            apply_counter_readings(&mut out);
+            assert_eq!(
+                readings(&out),
+                (expected.into(), expected.into()),
+                "repeat {n}{c}"
+            );
+        }
+    }
+
+    #[test]
+    fn compound_numerals_require_a_standard_reading_for_the_entire_word() {
+        for (surface, reading, pronunciation, expected_r, expected_p) in [
+            (
+                "十一",
+                "テンイチ",
+                "テンイチ",
+                "テンイチホン",
+                "テンイチホン",
+            ),
+            (
+                "十一",
+                "ジュウイチ",
+                "ジューイチ",
+                "ジュウイッポン",
+                "ジューイッポン",
+            ),
+            (
+                "三百",
+                "サンビャク",
+                "サンビャク",
+                "サンビャッポン",
+                "サンビャッポン",
+            ),
+            (
+                "三百",
+                "サンヒャク",
+                "サンヒャク",
+                "サンヒャクホン",
+                "サンヒャクホン",
+            ),
+            (
+                "六百",
+                "ロッピャク",
+                "ロッピャク",
+                "ロッピャッポン",
+                "ロッピャッポン",
+            ),
+            (
+                "三千",
+                "サンゼン",
+                "サンゼン",
+                "サンゼンボン",
+                "サンゼンボン",
+            ),
+            (
+                "二十四",
+                "ニジュウシ",
+                "ニジューシ",
+                "ニジュウシホン",
+                "ニジューシホン",
+            ),
+            ("11", "テンイチ", "テンイチ", "テンイチホン", "テンイチホン"),
+        ] {
+            let mut out = tokens(&[(surface, NUMBER, reading), ("本", COUNTER, "ホン")]);
+            out[0].pronunciation = pronunciation.into();
+            let fields = non_reading_fields(&out);
+            apply_counter_readings(&mut out);
+            assert_eq!(
+                readings(&out),
+                (expected_r.into(), expected_p.into()),
+                "{surface}: {reading}"
+            );
+            assert_eq!(non_reading_fields(&out), fields);
+        }
+    }
+
+    #[test]
+    fn place_allomorphs_are_selected_from_the_preceding_number() {
+        for (n, nr, place, pr, expected) in [
+            ("二", "ニ", "百", "ピャク", "ニヒャク"),
+            ("二", "ニ", "千", "ゼン", "ニセン"),
+            ("一", "イチ", "千", "ゼン", "イッセン"),
+            ("三", "サン", "百", "ピャク", "サンビャク"),
+            ("八", "ハチ", "千", "ゼン", "ハッセン"),
+            ("二", "ニ", "百", "ハンドレッド", "ニハンドレッド"),
+            ("二", "ニ", "千", "サウザンド", "ニサウザンド"),
+        ] {
+            let mut out = tokens(&[(n, NUMBER, nr), (place, NUMBER, pr)]);
+            let fields = non_reading_fields(&out);
+            apply_counter_readings(&mut out);
+            assert_eq!(readings(&out), (expected.into(), expected.into()));
+            assert_eq!(non_reading_fields(&out), fields);
+        }
+    }
+
+    #[test]
+    fn counter_allomorphs_are_selected_from_the_preceding_number() {
+        for (n, nr, c, cr, expected) in [
+            ("二", "ニ", "本", "ポン", "ニホン"),
+            ("五", "ゴ", "杯", "バイ", "ゴハイ"),
+            ("七", "ナナ", "匹", "ピキ", "ナナヒキ"),
+            ("二", "ニ", "分", "プン", "ニフン"),
+            ("二", "ニ", "ぷん", "プン", "ニプン"),
+            ("三", "サン", "人", "リ", "サンニン"),
+        ] {
+            let mut out = tokens(&[(n, NUMBER, nr), (c, COUNTER, cr)]);
+            let fields = non_reading_fields(&out);
+            apply_counter_readings(&mut out);
+            assert_eq!(readings(&out), (expected.into(), expected.into()));
+            assert_eq!(non_reading_fields(&out), fields);
+        }
+        let mut out = tokens(&[
+            ("十", NUMBER, "ジュウ"),
+            ("三", NUMBER, "サン"),
+            ("日", COUNTER, "カ"),
+        ]);
+        apply_counter_readings(&mut out);
+        assert_eq!(readings(&out).0, "ジュウサンニチ");
+    }
+
+    #[test]
+    fn native_days_require_standard_readings_for_the_entire_numeric_run() {
+        for parts in [
+            vec![
+                ("十", NUMBER, "テン"),
+                ("四", NUMBER, "ヨン"),
+                ("日", COUNTER, "ニチ"),
+            ],
+            vec![("十四", NUMBER, "テンヨン"), ("日", COUNTER, "ニチ")],
+            vec![
+                ("二", NUMBER, "トゥ"),
+                ("十", NUMBER, "ジュウ"),
+                ("四", NUMBER, "ヨン"),
+                ("日", COUNTER, "ニチ"),
+            ],
+        ] {
+            let mut out = tokens(&parts);
+            let before = readings(&out);
+            apply_counter_readings(&mut out);
+            assert_eq!(readings(&out), before);
+        }
+        let mut out = tokens(&[("十四", NUMBER, "ジュウヨン"), ("日", COUNTER, "ニチ")]);
+        out[0].pronunciation = "テンヨン".into();
+        let before = readings(&out);
+        apply_counter_readings(&mut out);
+        assert_eq!(readings(&out), before);
+    }
+
+    #[test]
+    fn ordinary_days_use_shichi_and_ku_after_the_tens() {
+        for (n, nr, expected) in [
+            ("七", "ナナ", "ジュウシチニチ"),
+            ("九", "キュウ", "ジュウクニチ"),
+        ] {
+            let mut out = tokens(&[
+                ("十", NUMBER, "ジュウ"),
+                (n, NUMBER, nr),
+                ("日", COUNTER, "ニチ"),
+            ]);
+            let fields = non_reading_fields(&out);
+            apply_counter_readings(&mut out);
+            assert_eq!(readings(&out), (expected.into(), expected.into()));
+            assert_eq!(non_reading_fields(&out), fields);
+        }
+    }
+
+    #[test]
+    fn place_euphony_composes_with_following_counter() {
+        for (n, nr, place, pr, c, cr, expected) in [
+            ("三", "サン", "百", "ヒャク", "本", "ホン", "サンビャッポン"),
+            ("六", "ロク", "百", "ヒャク", "本", "ホン", "ロッピャッポン"),
+            ("八", "ハチ", "百", "ヒャク", "回", "カイ", "ハッピャッカイ"),
+            ("三", "サン", "千", "セン", "杯", "ハイ", "サンゼンバイ"),
+            ("八", "ハチ", "千", "セン", "本", "ホン", "ハッセンボン"),
+            ("一", "イチ", "千", "セン", "本", "ホン", "イッセンボン"),
+            ("十", "ジュウ", "千", "セン", "本", "ホン", "ジュッセンボン"),
+        ] {
+            let mut out = tokens(&[(n, NUMBER, nr), (place, NUMBER, pr), (c, COUNTER, cr)]);
+            let fields = non_reading_fields(&out);
+            apply_counter_readings(&mut out);
+            assert_eq!(readings(&out), (expected.into(), expected.into()));
+            assert_eq!(non_reading_fields(&out), fields);
+        }
+    }
+
+    #[test]
+    fn native_people_are_split_into_two_nonempty_readings() {
+        for (n, nr, expected_n) in [("一", "イチ", "ヒト"), ("二", "ニ", "フタ")] {
+            let mut out = tokens(&[(n, NUMBER, nr), ("人", COUNTER, "ニン")]);
+            let fields = non_reading_fields(&out);
+            apply_counter_readings(&mut out);
+            assert_eq!(out[0].reading.as_ref(), expected_n);
+            assert_eq!(out[1].reading.as_ref(), "リ");
+            assert_eq!(non_reading_fields(&out), fields);
+            assert!(out.iter().all(|t| t.mora_count() > 0));
+        }
+        let mut out = tokens(&[
+            ("十", NUMBER, "ジュウ"),
+            ("二", NUMBER, "ニ"),
+            ("人", COUNTER, "ニン"),
+        ]);
+        apply_counter_readings(&mut out);
+        assert_eq!(readings(&out).0, "ジュウニニン");
+        let mut out = tokens(&[("02", NUMBER, "ゼロニ"), ("人", COUNTER, "ニン")]);
+        apply_counter_readings(&mut out);
+        assert_eq!(readings(&out).0, "ゼロニニン");
+    }
+
+    #[test]
+    fn native_days_keep_reading_and_pronunciation_distinct() {
+        for (n, nr, r, p) in [
+            ("二", "ニ", "フツ", "フツ"),
+            ("三", "サン", "ミッ", "ミッ"),
+            ("四", "ヨン", "ヨッ", "ヨッ"),
+            ("五", "ゴ", "イツ", "イツ"),
+            ("六", "ロク", "ムイ", "ムイ"),
+            ("七", "ナナ", "ナノ", "ナノ"),
+            ("八", "ハチ", "ヨウ", "ヨー"),
+            ("九", "キュウ", "ココノ", "ココノ"),
+            ("十", "ジュウ", "トオ", "トー"),
+        ] {
+            let mut out = tokens(&[(n, NUMBER, nr), ("日", COUNTER, "ニチ")]);
+            let fields = non_reading_fields(&out);
+            apply_counter_readings(&mut out);
+            assert_eq!(
+                readings(&out),
+                (format!("{r}カ"), format!("{p}カ")),
+                "{n}日"
+            );
+            assert_eq!(non_reading_fields(&out), fields);
+            assert!(
+                out.iter()
+                    .all(|t| !t.reading.is_empty() && !t.pronunciation.is_empty())
+            );
+        }
+        for parts in [
+            vec![
+                ("十", NUMBER, "ジュウ"),
+                ("四", NUMBER, "ヨン"),
+                ("日", COUNTER, "ニチ"),
+            ],
+            vec![
+                ("二", NUMBER, "ニ"),
+                ("十", NUMBER, "ジュウ"),
+                ("四", NUMBER, "ヨン"),
+                ("日", COUNTER, "ニチ"),
+            ],
+        ] {
+            let mut out = tokens(&parts);
+            let prefix: String = out[..out.len() - 2]
+                .iter()
+                .map(|t| t.reading.as_ref())
+                .collect();
+            apply_counter_readings(&mut out);
+            assert_eq!(readings(&out).0, format!("{prefix}ヨッカ"));
+        }
+        for parts in [
+            vec![
+                ("十", NUMBER, "ジュウ"),
+                ("三", NUMBER, "サン"),
+                ("日", COUNTER, "ニチ"),
+            ],
+            vec![
+                ("二", NUMBER, "ニ"),
+                ("十", NUMBER, "ジュウ"),
+                ("日", COUNTER, "ニチ"),
+            ],
+            vec![("一", NUMBER, "イチ"), ("日", COUNTER, "ニチ")],
+            vec![
+                ("1", NUMBER, "イチ"),
+                ("4", NUMBER, "ヨン"),
+                ("日", COUNTER, "ニチ"),
+            ],
+            vec![("03", NUMBER, "ゼロサン"), ("日", COUNTER, "ニチ")],
+        ] {
+            let mut out = tokens(&parts);
+            let before = readings(&out);
+            apply_counter_readings(&mut out);
+            assert_eq!(readings(&out), before);
+        }
+    }
+
+    #[test]
+    fn compound_counters_and_long_vowels_keep_the_numeric_prefix() {
+        let mut out = tokens(&[
+            ("二", NUMBER, "ニ"),
+            ("十", NUMBER, "ジュウ"),
+            ("一", NUMBER, "イチ"),
+            ("本", COUNTER, "ホン"),
+        ]);
+        out[1].pronunciation = "ジュー".into();
+        apply_counter_readings(&mut out);
+        assert_eq!(
+            readings(&out),
+            ("ニジュウイッポン".into(), "ニジューイッポン".into())
+        );
+        let mut out = tokens(&[("十", NUMBER, "ジュウ"), ("分", COUNTER, "フン")]);
+        out[0].pronunciation = "ジュー".into();
+        apply_counter_readings(&mut out);
+        assert_eq!(readings(&out), ("ジュップン".into(), "ジュップン".into()));
+    }
+
+    #[test]
+    fn counter_readings_require_adjacency_pos_and_standard_readings() {
+        for (npos, cpos, nr, cr) in [
+            ("名詞,固有名詞,人名,姓", COUNTER, "イチ", "ホン"),
+            (NUMBER, "名詞,固有名詞,一般,*", "イチ", "ホン"),
+            ("名詞,数詞別読み,*,*", COUNTER, "イチ", "ホン"),
+            (NUMBER, "名詞,接尾,助数詞別読み,*", "イチ", "ホン"),
+            (NUMBER, COUNTER, "ワン", "ホン"),
+            (NUMBER, COUNTER, "オイチ", "ホン"),
+            (NUMBER, COUNTER, "イチ", "モト"),
+        ] {
+            let mut out = tokens(&[("一", npos, nr), ("本", cpos, cr)]);
+            let before = readings(&out);
+            apply_counter_readings(&mut out);
+            assert_eq!(readings(&out), before);
+        }
+        for gap in [1, 2, 3] {
+            let mut out = tokens(&[("一", NUMBER, "イチ"), ("本", COUNTER, "ホン")]);
+            out[1].start += gap;
+            out[1].end += gap;
+            apply_counter_readings(&mut out);
+            assert_eq!(readings(&out).0, "イチホン");
+        }
+        let mut out = tokens(&[("六", NUMBER, "ロク"), ("冊", COUNTER, "サツ")]);
+        apply_counter_readings(&mut out);
+        assert_eq!(readings(&out).0, "ロクサツ");
+    }
+
+    #[test]
+    fn decimal_fractions_are_not_geminated_or_counted_in_native_japanese() {
+        for point in ["点", ".", "．"] {
+            for (n, nr, c, cr) in [
+                ("一", "イチ", "回", "カイ"),
+                ("二", "ニ", "人", "ニン"),
+                ("三", "サン", "日", "ニチ"),
+            ] {
+                let mut out = tokens(&[
+                    ("四", NUMBER, "ヨン"),
+                    (point, "名詞,一般,*,*", "テン"),
+                    (n, NUMBER, nr),
+                    (c, COUNTER, cr),
+                ]);
+                let before = readings(&out);
+                apply_counter_readings(&mut out);
+                assert_eq!(readings(&out), before);
+            }
+        }
+        let mut out = tokens(&[("2.1", NUMBER, "ニテンイチ"), ("回", COUNTER, "カイ")]);
+        let before = readings(&out);
+        apply_counter_readings(&mut out);
+        assert_eq!(readings(&out), before);
+    }
+
+    #[test]
+    fn unknown_pun_is_the_only_ordinary_noun_accepted_as_a_counter() {
+        for known in [false, true] {
+            let mut out = tokens(&[("十", NUMBER, "ジュウ"), ("ぷん", "名詞,一般,*,*", "プン")]);
+            out[1].is_known = known;
+            apply_counter_readings(&mut out);
+            assert_eq!(
+                readings(&out).0,
+                if known {
+                    "ジュウプン"
+                } else {
+                    "ジュップン"
+                }
+            );
+        }
+        let mut out = tokens(&[("十", NUMBER, "ジュウ"), ("ぷん", COUNTER, "プン")]);
+        apply_counter_readings(&mut out);
+        assert_eq!(readings(&out).0, "ジュップン");
+    }
+
+    #[test]
+    fn ten_minutes_only_reinterprets_the_temporal_context() {
+        for (word, pos) in [("前", "名詞,副詞可能,*,*"), ("後", "名詞,接尾,副詞可能,*")]
+        {
+            let mut out = tokens(&[
+                ("十分", "名詞,形容動詞語幹,*,*", "ジュウブン"),
+                (word, pos, "アト"),
+            ]);
+            out[0].pronunciation = "ジューブン".into();
+            let fields = non_reading_fields(&out);
+            apply_counter_readings(&mut out);
+            assert_eq!(out[0].reading.as_ref(), "ジュップン");
+            assert_eq!(out[0].pronunciation.as_ref(), "ジュップン");
+            assert_eq!(non_reading_fields(&out), fields);
+        }
+        for (word, pos) in [
+            ("に", "助詞,副詞化,*,*"),
+            ("な", "助動詞,*,*,*"),
+            ("前", "名詞,固有名詞,人名,姓"),
+        ] {
+            let mut out = tokens(&[
+                ("十分", "名詞,形容動詞語幹,*,*", "ジュウブン"),
+                (word, pos, "ナ"),
+            ]);
+            let before = readings(&out);
+            apply_counter_readings(&mut out);
+            assert_eq!(readings(&out), before);
+        }
+        let mut out = tokens(&[
+            ("十分", "名詞,形容動詞語幹,*,*", "ジュウブン"),
+            ("前", "名詞,副詞可能,*,*", "マエ"),
+        ]);
+        out[1].start += 1;
+        out[1].end += 1;
+        apply_counter_readings(&mut out);
+        assert_eq!(out[0].reading.as_ref(), "ジュウブン");
+    }
+
+    #[test]
+    #[ignore = "配布辞書 3 個が必要（make dict-download）"]
+    fn distributed_numeric_counter_readings() {
+        for name in ["ipadic", "ipadic-neologd", "ipadic-neologd-sudachi"] {
+            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("dict")
+                .join(format!("{name}.hsd"));
+            let mut analyzer = crate::Analyzer::load(path).unwrap();
+            for (text, expected) in [
+                ("三本", "サンボン"),
+                ("一本", "イッポン"),
+                ("一回", "イッカイ"),
+                ("六分", "ロップン"),
+                ("八個", "ハッコ"),
+                ("三杯", "サンバイ"),
+                ("三日", "ミッカ"),
+                ("二人", "フタリ"),
+                ("四時", "ヨジ"),
+                ("三百", "サンビャク"),
+                ("八千", "ハッセン"),
+                ("1分", "イップン"),
+                ("十分前", "ジュップンマエ"),
+                ("十分後", "ジュップンゴ"),
+                ("十ぷん", "ジュップン"),
+                ("三百本", "サンビャッポン"),
+                ("六百本", "ロッピャッポン"),
+                ("二十一本", "ニジューイッポン"),
+                ("十四日", "ジューヨッカ"),
+                ("二十四日", "ニジューヨッカ"),
+                ("十七日", "ジューシチニチ"),
+                ("十九日", "ジュークニチ"),
+            ] {
+                let out = analyzer.try_tokenize(text).unwrap();
+                assert_eq!(readings(&out).1, expected, "{name}: {text}");
+                for t in &out {
+                    assert_eq!(&text[t.start..t.end], t.surface.as_ref());
+                }
+            }
+        }
+    }
+}
+
+#[cfg(all(test, feature = "build"))]
+mod integration_tests {
+    use crate::dict::{DictBuilder, DictEntry};
+    use crate::lattice::{LatticeWorkspace, Token};
+    use crate::{Analyzer, Dictionary};
+
+    const NUMBER: &str = "名詞,数,*,*";
+    const COUNTER: &str = "名詞,接尾,助数詞,*";
+
+    fn dictionary() -> Dictionary {
+        let mut builder = DictBuilder::new();
+        for (surface, pos, reading, pronunciation) in [
+            ("一", NUMBER, "イチ", "イチ"),
+            ("二", NUMBER, "ニ", "ニ"),
+            ("三", NUMBER, "サン", "サン"),
+            ("四", NUMBER, "ヨン", "ヨン"),
+            ("六", NUMBER, "ロク", "ロク"),
+            ("八", NUMBER, "ハチ", "ハチ"),
+            ("十", NUMBER, "ジュウ", "ジュー"),
+            ("百", NUMBER, "ヒャク", "ヒャク"),
+            ("本", COUNTER, "ホン", "ホン"),
+            ("回", COUNTER, "カイ", "カイ"),
+            ("分", COUNTER, "フン", "フン"),
+            ("人", COUNTER, "ニン", "ニン"),
+            ("日", COUNTER, "ニチ", "ニチ"),
+            ("十分", "名詞,形容動詞語幹,*,*", "ジュウブン", "ジューブン"),
+            ("前", "名詞,副詞可能,*,*", "マエ", "マエ"),
+            ("後", "名詞,接尾,副詞可能,*", "ゴ", "ゴ"),
+            ("に", "助詞,格助詞,一般,*", "ニ", "ニ"),
+        ] {
+            builder.add_entry(DictEntry {
+                surface: surface.into(),
+                pos: pos.into(),
+                reading: reading.into(),
+                pronunciation: pronunciation.into(),
+                base_form: format!("base:{surface}").into(),
+                conj_type: "fixture-type".into(),
+                conj_form: "fixture-form".into(),
+                cost: if surface == "十分" { -100 } else { 0 },
+                ..Default::default()
+            });
+        }
+        builder.build().unwrap()
+    }
+
+    fn pronunciation(tokens: &[Token]) -> String {
+        tokens.iter().map(|t| t.pronunciation.as_ref()).collect()
+    }
+
+    #[test]
+    fn analyzer_preserves_dictionary_fields_and_does_not_cache_contextual_readings() {
+        let mut analyzer = Analyzer::from_dict(dictionary());
+        for _ in 0..2 {
+            for (text, expected) in [
+                ("二人", "フタリ"),
+                ("三日", "ミッカ"),
+                ("三百本", "サンビャッポン"),
+                ("六百本", "ロッピャッポン"),
+                ("二十一本", "ニジューイッポン"),
+                ("十二人", "ジューニニン"),
+                ("十三日", "ジューサンニチ"),
+                ("十四日", "ジューヨッカ"),
+                ("二十四日", "ニジューヨッカ"),
+                ("十分前", "ジュップンマエ"),
+                ("十分後", "ジュップンゴ"),
+                ("十分に", "ジューブンニ"),
+                ("一回", "イッカイ"),
+                ("一", "イチ"),
+                ("三 本", "サンホン"),
+                ("三\t本", "サンホン"),
+                ("三\n本", "サンホン"),
+            ] {
+                let out = analyzer.try_tokenize(text).unwrap();
+                assert_eq!(pronunciation(&out), expected, "{text}");
+                for t in &out {
+                    assert_eq!(&text[t.start..t.end], t.surface.as_ref());
+                    assert_eq!(t.base_form.as_ref(), format!("base:{}", t.surface));
+                    assert_eq!(t.conj_type.as_ref(), "fixture-type");
+                    assert_eq!(t.conj_form.as_ref(), "fixture-form");
+                    assert_eq!(
+                        t.word_cost,
+                        if t.surface.as_ref() == "十分" {
+                            -100
+                        } else {
+                            0
+                        }
+                    );
+                    assert!(t.is_known);
+                    assert_eq!(
+                        t.pos.as_ref(),
+                        match t.surface.as_ref() {
+                            "一" | "二" | "三" | "四" | "六" | "八" | "十" | "百" => NUMBER,
+                            "十分" => "名詞,形容動詞語幹,*,*",
+                            "前" => "名詞,副詞可能,*,*",
+                            "後" => "名詞,接尾,副詞可能,*",
+                            "に" => "助詞,格助詞,一般,*",
+                            _ => COUNTER,
+                        }
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn tokenize_into_preserves_offsets_and_does_not_modify_previous_output() {
+        let dict = dictionary();
+        let mut workspace = LatticeWorkspace::new();
+        let mut out = workspace.tokenize("一", &dict).unwrap();
+        let previous = format!("{:?}", out[0]);
+        workspace
+            .tokenize_into("三百本", &dict, 91, &mut out)
+            .unwrap();
+        assert_eq!(format!("{:?}", out[0]), previous);
+        assert_eq!(pronunciation(&out[1..]), "サンビャッポン");
+        for t in &out[1..] {
+            assert_eq!(&"三百本"[t.start - 91..t.end - 91], t.surface.as_ref());
+        }
+        let mut out = workspace.tokenize("一", &dict).unwrap();
+        workspace
+            .tokenize_into("本", &dict, "一".len(), &mut out)
+            .unwrap();
+        assert_eq!(pronunciation(&out), "イチホン");
+    }
+}
