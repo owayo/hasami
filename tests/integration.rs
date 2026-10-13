@@ -4165,3 +4165,88 @@ fn test_cli_tokenize_accepts_empty_and_newline_terminated_input() {
 
     std::fs::remove_file(&tmp).unwrap();
 }
+
+#[test]
+#[ignore = "配布辞書を dict/ に用意して実行する"]
+fn test_distributed_compound_noun_pronunciation_keeps_long_vowels() {
+    for name in ["ipadic-neologd", "ipadic-neologd-sudachi"] {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("dict")
+            .join(format!("{name}.hsd"));
+        let mut analyzer = Analyzer::load(&path).unwrap();
+        for (surface, reading, pronunciation) in [
+            ("初登場", "ハツトウジョウ", "ハツトージョー"),
+            (
+                "匿名流動型犯罪グループ",
+                "トクメイリュウドウガタハンザイグループ",
+                "トクメイリュードーガタハンザイグループ",
+            ),
+            ("透磁率", "トウジリツ", "トージリツ"),
+        ] {
+            let text = format!("{surface}の情報を確認する。");
+            let tokens = analyzer.try_tokenize(&text).unwrap();
+            let word = &tokens[0];
+            assert_eq!(&*word.surface, surface, "{name}: {text}");
+            assert_eq!(&*word.base_form, surface);
+            assert_eq!(&*word.reading, reading);
+            assert_eq!(&*word.pronunciation, pronunciation);
+            assert!(word.is_known && word.pos.starts_with("名詞,"));
+            assert_eq!((word.start, word.end), (0, surface.len()));
+            assert_eq!(&*tokens[1].surface, "の");
+        }
+        for (surface, pronunciation) in [("思う", "オモウ"), ("迷う", "マヨウ")] {
+            let tokens = analyzer.try_tokenize(surface).unwrap();
+            assert_eq!(tokens.len(), 1);
+            assert_eq!(&*tokens[0].pronunciation, pronunciation);
+        }
+    }
+}
+
+#[test]
+#[ignore = "配布辞書を dict/ に用意して実行する"]
+fn test_distributed_modern_terms_preserve_grammar_and_ascii_runs() {
+    for name in ["ipadic-neologd", "ipadic-neologd-sudachi"] {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("dict")
+            .join(format!("{name}.hsd"));
+        let mut analyzer = Analyzer::load(&path).unwrap();
+        for (surface, base, reading, pos) in [
+            ("BUDDiiS", "BUDDiiS", "バディーズ", "名詞,固有名詞,一般,*"),
+            ("ICEx", "ICEx", "アイス", "名詞,固有名詞,一般,*"),
+            ("Lienel", "Lienel", "リエネル", "名詞,固有名詞,一般,*"),
+            ("ABEMA", "ABEMA", "アベマ", "名詞,固有名詞,一般,*"),
+            ("Abema", "ABEMA", "アベマ", "名詞,固有名詞,一般,*"),
+            ("閉区間", "閉区間", "ヘイクカン", "名詞,一般,*,*"),
+        ] {
+            let text = format!("{surface}の情報を確認する。");
+            let tokens = analyzer.try_tokenize(&text).unwrap();
+            assert_eq!(&*tokens[0].surface, surface, "{name}: {text}");
+            assert_eq!(&*tokens[0].base_form, base);
+            assert_eq!(&*tokens[0].reading, reading);
+            assert_eq!(&*tokens[0].pronunciation, reading);
+            assert_eq!(&*tokens[0].pos, pos);
+            assert!(tokens[0].is_known);
+            assert_eq!((tokens[0].start, tokens[0].end), (0, surface.len()));
+            assert_eq!(&*tokens[1].surface, "の");
+        }
+        let tokens = analyzer.try_tokenize("パラメトライズされた関数。").unwrap();
+        assert_eq!(&*tokens[0].surface, "パラメトライズ");
+        assert_eq!(&*tokens[0].pos, "名詞,サ変接続,*,*");
+        assert_eq!(&*tokens[1].surface, "さ");
+        assert!(tokens[1].pos.starts_with("動詞,"));
+
+        let tokens = analyzer.try_tokenize("とはいえ条件を確認する。").unwrap();
+        assert_eq!(&*tokens[0].surface, "とはいえ");
+        assert_eq!(&*tokens[0].pos, "接続詞,*,*,*");
+        assert_eq!(&*tokens[0].reading, "トハイエ");
+        assert_eq!(&*tokens[0].pronunciation, "トワイエ");
+
+        for text in ["ABEMAX", "XABEMA", "Abemas", "ICExamples", "BUDDiiSValue"] {
+            let tokens = analyzer.try_tokenize(text).unwrap();
+            assert_eq!(tokens.len(), 1, "{name}: {text}");
+            assert_eq!(&*tokens[0].surface, text);
+            assert!(!tokens[0].is_known, "{name}: {text}");
+            assert_eq!((tokens[0].start, tokens[0].end), (0, text.len()));
+        }
+    }
+}

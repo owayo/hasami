@@ -1124,6 +1124,7 @@ mod tests {
             "することができる。",
             "示されるものだ。",
             "雨が降りそうだ。",
+            "注意,重要。",
         ];
         let mut expected: Vec<Vec<(String, CoarsePos)>> = Vec::new();
         for (name, mut analyzer) in distributed_dicts() {
@@ -1147,7 +1148,9 @@ mod tests {
         assert!(has(0, "(", CoarsePos::OpenBracket));
         assert!(has(0, "!", CoarsePos::Period));
         assert!(has(0, "！", CoarsePos::Period));
-        assert!(has(0, ",", CoarsePos::Comma));
+        assert!(has(4, ",", CoarsePos::Comma));
+        // 数量の桁区切りは数詞の表層に含まれ、読点にはしない。
+        assert!(has(0, "1,000", CoarsePos::Numeral));
         // 「こと」は形式名詞、受け身の「れる」と助動詞の語幹「そう」は助動詞
         assert!(has(1, "こと", CoarsePos::FormalNoun));
         assert!(has(2, "れる", CoarsePos::AuxVerb));
