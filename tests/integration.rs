@@ -4250,3 +4250,74 @@ fn test_distributed_modern_terms_preserve_grammar_and_ascii_runs() {
         }
     }
 }
+
+#[test]
+#[ignore = "配布辞書を dict/ に用意して実行する"]
+fn test_distributed_reading_repairs_preserve_particles_and_punctuation() {
+    for name in ["ipadic-neologd", "ipadic-neologd-sudachi"] {
+        let mut analyzer = load_distributed_dict(name);
+        let tokens = analyzer.tokenize("地車囃子を練習する。");
+        assert_eq!(&*tokens[0].surface, "地車囃子", "{name}");
+        assert_eq!(&*tokens[0].pos, "名詞,一般,*,*");
+        assert_eq!(&*tokens[0].reading, "ダンジリバヤシ");
+        assert_eq!(&*tokens[0].pronunciation, "ダンジリバヤシ");
+        assert!(tokens[0].is_known);
+        assert_eq!(&*tokens[1].surface, "を");
+
+        for (surface, base, reading) in [
+            ("Bellator", "Bellator", "ベラトール"),
+            ("BELLATOR", "Bellator", "ベラトール"),
+            ("VOCALOID", "VOCALOID", "ボーカロイド"),
+            ("COIAS", "COIAS", "コイアス"),
+        ] {
+            let text = format!("{surface}の情報を確認する。");
+            let tokens = analyzer.tokenize(&text);
+            assert_eq!(&*tokens[0].surface, surface, "{name}");
+            assert_eq!(&*tokens[0].base_form, base);
+            assert_eq!(&*tokens[0].reading, reading);
+            assert_eq!(&*tokens[0].pronunciation, reading);
+            assert!(tokens[0].is_known);
+            assert_eq!(&*tokens[1].surface, "の");
+        }
+        for text in ["Bellators", "BELLATORValue", "VOCALOIDEngine", "COIASValue"] {
+            let tokens = analyzer.tokenize(text);
+            assert_eq!(tokens.len(), 1, "{name}: {text}");
+            assert_eq!(&*tokens[0].surface, text);
+            assert!(!tokens[0].is_known);
+        }
+
+        let tokens = analyzer.tokenize("はじまり、道は続く。");
+        assert_eq!(&*tokens[0].surface, "はじまり", "{name}");
+        assert_eq!(&*tokens[1].surface, "、");
+        assert_eq!(&*tokens[1].pos, "記号,読点,*,*");
+        assert_eq!(tokens[0].end, tokens[1].start);
+
+        let tokens = analyzer.tokenize("遺憾の意を表明した。");
+        assert_eq!(
+            tokens
+                .iter()
+                .take(5)
+                .map(|t| &*t.surface)
+                .collect::<Vec<_>>(),
+            ["遺憾", "の", "意", "を", "表明"],
+            "{name}"
+        );
+        assert_eq!(&*tokens[1].pos, "助詞,連体化,*,*");
+        assert_eq!(&*tokens[3].pos, "助詞,格助詞,一般,*");
+
+        for (year, bad_reading) in [
+            ("1936年", "センキュウヒャクサンジュウロクネ"),
+            ("1937年", "センキュウヒャクサンジュウナナネ"),
+        ] {
+            let text = format!("{year}の図面。");
+            let tokens = analyzer.tokenize(&text);
+            assert!(tokens.iter().all(|t| &*t.reading != bad_reading), "{name}");
+            let reading: String = tokens
+                .iter()
+                .take_while(|t| t.end <= year.len())
+                .map(|t| &*t.reading)
+                .collect();
+            assert!(reading.ends_with("ネン"), "{name}: {reading}");
+        }
+    }
+}
