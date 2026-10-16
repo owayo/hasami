@@ -4321,3 +4321,99 @@ fn test_distributed_reading_repairs_preserve_particles_and_punctuation() {
         }
     }
 }
+
+#[test]
+#[ignore = "配布辞書を dict/ に用意して実行する"]
+fn test_distributed_prose_repairs_preserve_compounds_and_function_words() {
+    for name in ["ipadic-neologd", "ipadic-neologd-sudachi"] {
+        let mut analyzer = load_distributed_dict(name);
+        for (surface, reading, pronunciation, pos) in [
+            (
+                "スキルセット",
+                "スキルセット",
+                "スキルセット",
+                "名詞,一般,*,*",
+            ),
+            (
+                "メンターシップ",
+                "メンターシップ",
+                "メンターシップ",
+                "名詞,一般,*,*",
+            ),
+            (
+                "インクルージョン",
+                "インクルージョン",
+                "インクルージョン",
+                "名詞,一般,*,*",
+            ),
+            (
+                "根本原因",
+                "コンポンゲンイン",
+                "コンポンゲンイン",
+                "名詞,一般,*,*",
+            ),
+            (
+                "必要十分",
+                "ヒツヨウジュウブン",
+                "ヒツヨージューブン",
+                "名詞,形容動詞語幹,*,*",
+            ),
+        ] {
+            let text = format!("{surface}の確認。");
+            let tokens = analyzer.tokenize(&text);
+            assert_eq!(&*tokens[0].surface, surface, "{name}: {text}");
+            assert_eq!(&*tokens[0].reading, reading);
+            assert_eq!(&*tokens[0].pronunciation, pronunciation);
+            assert_eq!(&*tokens[0].pos, pos);
+            assert!(tokens[0].is_known);
+            assert_eq!(&*tokens[1].surface, "の");
+        }
+        for text in ["必要十分な条件。", "必要十分である。", "必要十分です。"]
+        {
+            let tokens = analyzer.tokenize(text);
+            assert_eq!(&*tokens[0].surface, "必要十分", "{name}: {text}");
+            assert_eq!(&*tokens[0].pronunciation, "ヒツヨージューブン");
+        }
+        for text in ["これは普通の箱だ。", "それはひどい仕打ちだ。"] {
+            let tokens = analyzer.tokenize(text);
+            let particle = tokens.iter().find(|token| &*token.surface == "は").unwrap();
+            assert_eq!(&*particle.pos, "助詞,係助詞,*,*", "{name}: {text}");
+            assert_eq!(&*particle.pronunciation, "ワ");
+            assert!(
+                tokens
+                    .iter()
+                    .all(|token| !token.pos.starts_with("名詞,固有名詞"))
+            );
+        }
+        let tokens = analyzer.tokenize("事前連絡を済ませた。");
+        assert_eq!(&*tokens[0].surface, "事前", "{name}");
+        assert_eq!(&*tokens[0].pronunciation, "ジゼン");
+        assert_eq!(&*tokens[1].surface, "連絡");
+
+        let tokens = analyzer.tokenize("じゃあまたね。");
+        assert_eq!(&*tokens[0].surface, "じゃあ", "{name}");
+        assert_eq!(&*tokens[0].pronunciation, "ジャー");
+        assert_eq!(&*tokens[1].surface, "また");
+        let particle = tokens.iter().find(|token| &*token.surface == "ね").unwrap();
+        assert!(particle.pos.starts_with("助詞,"), "{name}");
+
+        let tokens = analyzer.tokenize("根本さんに電話する。");
+        assert_eq!(&*tokens[0].surface, "根本", "{name}");
+        assert_eq!(&*tokens[0].reading, "ネモト");
+
+        let tokens = analyzer.tokenize("沈黙は金と教わった。");
+        assert_eq!(&*tokens[0].surface, "沈黙", "{name}");
+        assert_eq!(&*tokens[1].surface, "は");
+        assert_eq!(&*tokens[1].pronunciation, "ワ");
+        assert_eq!(&*tokens[2].reading, "キン");
+
+        let tokens = analyzer.tokenize("netkeibaの情報。");
+        assert_eq!(&*tokens[0].surface, "netkeiba", "{name}");
+        assert_eq!(&*tokens[0].reading, "ネットケイバ");
+        assert!(tokens[0].is_known);
+        let tokens = analyzer.tokenize("netkeibaValue");
+        assert_eq!(tokens.len(), 1, "{name}");
+        assert_eq!(&*tokens[0].surface, "netkeibaValue");
+        assert!(!tokens[0].is_known);
+    }
+}
