@@ -233,6 +233,47 @@ fn zstd_frames_are_decoded_in_sequence() {
     assert!(decode_zstd(&b"not zstd data"[..], &mut sink).is_err());
 }
 
+#[test]
+fn truncated_zstd_frames_and_trailing_bytes_are_rejected() {
+    let frame = zstd(b"dictionary contents");
+    // フレームの途中で切れた入力は、ヘッダ・本体のどの位置でも受け入れない。
+    for end in 1..frame.len() {
+        let mut sink = Sink::new(Vec::new(), 100);
+        assert!(
+            decode_zstd(&frame[..end], &mut sink).is_err(),
+            "切り詰めたフレームを受け入れた: {end} / {}",
+            frame.len()
+        );
+    }
+    // 正しいフレームの後ろに、不完全な次のフレームや余分なバイトがあっても失敗する。
+    for tail in [&frame[..1], &frame[..frame.len() - 1], b"extra".as_slice()] {
+        let mut data = frame.clone();
+        data.extend_from_slice(tail);
+        let mut sink = Sink::new(Vec::new(), 100);
+        assert!(decode_zstd(data.as_slice(), &mut sink).is_err());
+    }
+}
+
+#[test]
+fn skippable_zstd_frames_require_the_entire_header_and_payload() {
+    // zstd のスキップ可能なマジックは下位 4 ビットが異なる 16 種類ある。
+    for magic in 0x184D_2A50u32..=0x184D_2A5F {
+        let mut frame = magic.to_le_bytes().to_vec();
+        frame.extend_from_slice(&3u32.to_le_bytes());
+        frame.extend_from_slice(b"xyz");
+        for end in 1..frame.len() {
+            let mut sink = Sink::new(Vec::new(), 100);
+            assert!(
+                decode_zstd(&frame[..end], &mut sink).is_err(),
+                "切り詰めたスキップ可能フレームを受け入れた: {magic:#x}, {end}"
+            );
+        }
+        let mut sink = Sink::new(Vec::new(), 100);
+        assert!(decode_zstd(frame.as_slice(), &mut sink).is_ok());
+        assert!(sink.out.is_empty());
+    }
+}
+
 #[cfg(feature = "build")]
 mod with_dictionaries {
     //! 本物の（小さな）辞書を使うテスト。辞書を作るので `build` feature が要る
