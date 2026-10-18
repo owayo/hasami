@@ -6,6 +6,7 @@
 #   配布物を作れることは ci.yml の build で確かめる
 # - dictionaries: タグのソースから配布辞書を作る（dict-build.yml を呼ぶ。build と並列に走る）
 # - release: 添付を集めて SHA256SUMS を作り、Release を作って、公開した添付を照らし合わせる
+# - notify-kotonoha: HSD の公開・検証が成功したタグを Kotonoha に通知し、KNM の Release を起動する
 # - release-summary: 結果を Summary に書く（dry_run を含め、途中のジョブが落ちても書く）
 #
 # Homebrew の tap と winget には配らない（配るなら update-homebrew / publish-winget のジョブを足す）
@@ -387,10 +388,37 @@ jobs:
             echo "::warning::GitHub returned no asset digests; skipped the SHA-256 comparison"
           fi
 
+  notify-kotonoha:
+    name: Rebuild Kotonoha KNM for the published HSD
+    needs: [prepare-release, release]
+    if: ${{ !inputs.dry_run && needs.release.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Create a token scoped to Kotonoha Actions
+        id: kotonoha-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.KOTONOHA_APP_CLIENT_ID }}
+          private-key: ${{ secrets.KOTONOHA_APP_PRIVATE_KEY }}
+          owner: owayo
+          repositories: kotonoha
+          permission-actions: write
+      - name: Dispatch the Kotonoha release
+        env:
+          GH_TOKEN: ${{ steps.kotonoha-token.outputs.token }}
+          HASAMI_TAG: ${{ needs.prepare-release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          gh workflow run release.yml --repo owayo/kotonoha --ref main \
+            -f dry_run=false -f check_hsd_changes=true -f "hasami_tag=$HASAMI_TAG"
+          printf 'Requested Kotonoha KNM release for hasami `%s`.\n' "$HASAMI_TAG" >> "$GITHUB_STEP_SUMMARY"
+
   # 途中のジョブが落ちても、飛ばされても（dry_run を含む）結果を書く
   release-summary:
     name: Release summary
-    needs: [update-dictionary-sources, prepare-release, build, dictionaries, release]
+    needs: [update-dictionary-sources, prepare-release, build, dictionaries, release, notify-kotonoha]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
@@ -403,6 +431,7 @@ jobs:
           BUILD_RESULT: ${{ needs.build.result }}
           DICTIONARIES_RESULT: ${{ needs.dictionaries.result }}
           RELEASE_RESULT: ${{ needs.release.result }}
+          NOTIFY_RESULT: ${{ needs.notify-kotonoha.result }}
           ASSETS: ${{ needs.release.outputs.assets }}
         run: |
           set -euo pipefail
@@ -422,6 +451,7 @@ jobs:
             echo "| build | ${BUILD_RESULT} |"
             echo "| dictionaries | ${DICTIONARIES_RESULT} |"
             echo "| release | ${RELEASE_RESULT} |"
+            echo "| notify-kotonoha | ${NOTIFY_RESULT} |"
             if [ -n "${ASSETS:-}" ]; then
               echo
               echo "Assets of ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/tag/${TAG}:"

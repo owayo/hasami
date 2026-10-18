@@ -85,5 +85,23 @@ GitHub Actions の Release（`.github/workflows/release.yml`）を手で動か�
 
 `dry_run` にチェックを入れて動かすと、次の版を計算して表示するだけで、コミット・タグ・ビルド・リリースはしない。
 
+### HSD 公開後の Kotonoha 連携
+
+Release の `notify-kotonoha` ジョブは、HSD の公開と添付の検証が成功した後に
+`owayo/kotonoha` の `release.yml` を起動する。公開した hasami のタグを固定して渡し、
+Kotonoha 側で変更の判定・13 KNM のビルド・HSD との結合検証・Release への添付まで行う。
+`dry_run`、辞書だけの試作ビルド、公開・検証に失敗した実行では通知しない。定期チェックは使わない。
+
+専用 GitHub App に **Actions: Read and write** だけを許可し、`owayo/kotonoha` のみにインストールする。
+hasami の Actions variable **`KOTONOHA_APP_CLIENT_ID`** に Client ID、
+Actions secret **`KOTONOHA_APP_PRIVATE_KEY`** に秘密鍵を登録する。
+通知ジョブは Kotonoha の Actions だけに絞った短命の installation token を生成し、ジョブ終了時に失効させる。
+Kotonoha の受信側を先に既定ブランチへ反映する。
+リポジトリが同じ所有者でも、このリポジトリの `GITHUB_TOKEN` は Kotonoha の Actions を起動できない。
+
+未設定・App の削除やインストール解除・通知失敗は `notify-kotonoha` を失敗にする。HSD は公開済みなので、
+設定を直して失敗ジョブだけを再実行する。Kotonoha はキューで処理し、同じ HSD の重複通知や古い通知では再公開しない。
+通知の成功は Kotonoha の実行開始要求を受け付けたことを示す。ビルド・公開の結果は Kotonoha 側の Actions で確認する。
+
 辞書を変える PR では、Build Dictionaries（`.github/workflows/dict-build.yml`）をブランチで動かす。リリースと同じ手順で
 作った辞書を artifact で受け取れる（手順は [dictionaries.md](dictionaries.md) の「辞書のローカルビルド」）。
