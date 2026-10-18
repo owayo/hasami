@@ -1,4 +1,4 @@
-//! v4 形式の往復・再現性・検証のテスト
+//! v5 形式の往復・再現性・検証のテスト
 
 use super::container::{self, SectionId};
 use super::meta::{self, Meta, PosScheme};
@@ -287,6 +287,49 @@ fn file_roundtrip_keeps_metadata() {
         .map(|e| e.unwrap().file_name())
         .collect();
     assert_eq!(leftovers.len(), 1, "{leftovers:?}");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn an_existing_temporary_file_and_destination_are_not_overwritten() {
+    let dir = temp_dir();
+    let path = dir.join("sample.hsd");
+    let temporary = dir.join(format!(".sample.hsd.tmp-{}", std::process::id()));
+    std::fs::write(&path, b"existing dictionary").unwrap();
+    std::fs::write(&temporary, b"another writer's temporary file").unwrap();
+
+    let builder = sample_builder();
+    let error = builder
+        .write_hsd(&path, &builder.write_options(), |_, _| {})
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        DictError::Io(ref source) if source.kind() == std::io::ErrorKind::AlreadyExists
+    ));
+    assert_eq!(std::fs::read(&path).unwrap(), b"existing dictionary");
+    assert_eq!(
+        std::fs::read(&temporary).unwrap(),
+        b"another writer's temporary file"
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn a_failed_replacement_preserves_the_destination_and_removes_its_temporary_file() {
+    let dir = temp_dir();
+    let path = dir.join("sample.hsd");
+    std::fs::create_dir(&path).unwrap();
+    let sentinel = path.join("keep.txt");
+    std::fs::write(&sentinel, b"existing contents").unwrap();
+
+    let builder = sample_builder();
+    assert!(
+        builder
+            .write_hsd(&path, &builder.write_options(), |_, _| {})
+            .is_err()
+    );
+    assert_eq!(std::fs::read(&sentinel).unwrap(), b"existing contents");
+    assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
     std::fs::remove_dir_all(&dir).unwrap();
 }
 

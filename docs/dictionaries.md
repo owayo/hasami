@@ -239,7 +239,9 @@ hasami export --dict dict.hsd --output lex.csv
 - 辞書の中身はメタデータ（`hasami info` で表示）に名前・品詞体系・上流の版・掛けた repair が残る
 - 壊れたファイルはロード時・解析時に `DictError` になる（panic しない）。全件の検査は `hasami info --verify`
 - 形式の版が違う `.hsd` は読めない（作り直しを案内するエラーになる）。`scripts/build-dict.sh`（または `hasami build`）で作り直す
-- 書き出しは一時ファイルに書いてから rename で差し替える。読み込み中の辞書ファイルを直接書き換えてはいけない
+- 書き出しは一時ファイルに書いてから rename で差し替える。読み込み中の辞書ファイルを直接書き換えてはいけない。
+  build / merge / repair の一時ファイルは排他的に新規作成し、同名がすでにある場合はエラーにする。
+  その場合、既存の一時ファイルと出力先は変更しない
 
 `--prune-dominated`（build / merge / repair）は、同じ表層形・同じ文脈 ID の中でコストが最小でないエントリを除いた
 最終辞書を作る。解析結果（1-best）は変わらないが、除いた辞書は merge・repair の入力にできない。配布辞書には掛けていない。

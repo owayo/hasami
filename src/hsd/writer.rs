@@ -108,8 +108,9 @@ impl Sections {
     /// 書き出し中に失敗しても元のファイルは壊れず、mmap で読んでいる他のプロセスにも影響しない
     pub fn write_file(&mut self, path: &Path) -> io::Result<u64> {
         let tmp = temp_path(path);
+        // 同じ出力への並行書き出しや残存ファイルを上書きしない。作成できなければ削除も行わない。
+        let file = std::fs::File::create_new(&tmp)?;
         let result: io::Result<u64> = (|| {
-            let file = std::fs::File::create(&tmp)?;
             let mut out = BufWriter::with_capacity(1 << 20, file);
             let len = container::write(&mut out, self.flags, &self.refs())?;
             out.flush()?;

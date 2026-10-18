@@ -176,7 +176,8 @@ hasami/
   - 接続行列は転置して持つ: `costs[left_id * num_right + right_id]`（matrix.def の 1 行目は「right_id の数 left_id の数」）
   - matrix.def なしで作った辞書は、使われている文脈 ID を覆うゼロ行列を置き、メタデータに `zero_matrix=true` を書く
   - `--prune-dominated` を付けた最終辞書は flags とメタデータに記録し、`merge`・`repair` の入力にできない
-  - 書き出しは同じディレクトリの一時ファイル → rename（mmap 中の他プロセスを壊さない）
+  - 書き出しは同じディレクトリの一時ファイル → rename（mmap 中の他プロセスを壊さない）。一時ファイルは
+    排他的に新規作成し、同名があれば `AlreadyExists` で止める。作成できなかったファイルは削除しない
 - **拡張子**: `.hsd` (hasami dictionary)
 
 ## CLI コマンド
