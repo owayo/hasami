@@ -32,6 +32,83 @@ fn test_distributed_symbolic_words_and_parenthetical_annotations() {
     }
 }
 
+#[test]
+#[ignore = "配布辞書が必要"]
+fn test_distributed_kana_counters_and_reading_boundaries() {
+    for name in ["ipadic-neologd", "ipadic-neologd-sudachi"] {
+        let mut analyzer = load_distributed_dict(name);
+        for (text, surfaces) in [
+            ("もうすでに氷が溶けた。", vec!["もう", "すでに", "氷"]),
+            (
+                "出発はくがつよっかです。",
+                vec!["出発", "は", "くがつ", "よっか", "です"],
+            ),
+            (
+                "月にいっかい餌を替える。",
+                vec!["月", "に", "いっかい", "餌"],
+            ),
+            (
+                "黄色い箱を十二こ積む。",
+                vec!["黄色い", "箱", "を", "十", "二", "こ"],
+            ),
+            ("もうしまってある。", vec!["もう", "しまっ", "て"]),
+            ("くがつはつかの予定。", vec!["くがつ", "はつか", "の"]),
+            (
+                "三がつついたちからくがつはつかまで。",
+                vec!["三", "がつ", "ついたち", "から", "くがつ", "はつか"],
+            ),
+            ("気がつく。", vec!["気", "が", "つく"]),
+            ("塩はつかわない。", vec!["塩", "は", "つかわ", "ない"]),
+            ("がつがつ食べる。", vec!["がつがつ", "食べる"]),
+        ] {
+            let tokens = analyzer.try_tokenize(text).unwrap();
+            assert_eq!(
+                tokens
+                    .iter()
+                    .take(surfaces.len())
+                    .map(|t| t.surface.as_ref())
+                    .collect::<Vec<_>>(),
+                surfaces,
+                "{name}: {text}"
+            );
+            for token in &tokens {
+                assert_eq!(&text[token.start..token.end], token.surface.as_ref());
+            }
+        }
+        for (word, reading) in [
+            ("髙", "タカ"),
+            ("進化形", "シンカケイ"),
+            ("仲良しこよし", "ナカヨシコヨシ"),
+        ] {
+            let tokens = analyzer.try_tokenize(word).unwrap();
+            assert_eq!(tokens.len(), 1, "{name}: {word}");
+            assert!(tokens[0].is_known);
+            assert_eq!(tokens[0].reading.as_ref(), reading);
+            assert_eq!(tokens[0].pronunciation.as_ref(), reading);
+        }
+        for word in ["説明責任", "職務記述書", "リマインダー", "キャパシティ"]
+        {
+            let tokens = analyzer.try_tokenize(word).unwrap();
+            assert_eq!(tokens.len(), 1, "{name}: {word}");
+            assert_eq!(tokens[0].pos.as_ref(), "名詞,一般,*,*");
+        }
+        for (text, surface, pos) in [
+            ("くじを引く。", "くじ", "名詞,一般"),
+            ("ロープをよじ登る。", "よじ登る", "動詞,自立"),
+            ("薄手の紙を切る。", "薄手", "名詞"),
+        ] {
+            let tokens = analyzer.try_tokenize(text).unwrap();
+            let token = tokens
+                .iter()
+                .find(|t| t.surface.as_ref() == surface)
+                .unwrap();
+            assert!(token.pos.starts_with(pos), "{name}: {text}");
+        }
+        let tokens = analyzer.try_tokenize("ひどく冷えた。").unwrap();
+        assert!(tokens[0].pos.starts_with("形容詞") || tokens[0].pos.starts_with("副詞"));
+    }
+}
+
 /// ビルダーを .hsd に書き出す
 fn write_hsd(builder: &DictBuilder, path: &std::path::Path) {
     builder
