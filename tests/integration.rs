@@ -6,6 +6,32 @@ use hasami::Dictionary;
 use hasami::analyzer::{Analyzer, format_mecab, format_wakachi};
 use hasami::dict::{DictBuilder, DictEntry};
 
+#[test]
+#[ignore = "配布辞書が必要"]
+fn test_distributed_symbolic_words_and_parenthetical_annotations() {
+    for name in ["ipadic-neologd", "ipadic-neologd-sudachi"] {
+        let mut analyzer = Analyzer::load(format!("dict/{name}.hsd")).unwrap();
+        for (text, surface, pronunciation) in [
+            ("C++を調べる", "C++", "シープラスプラス"),
+            ("C#を調べる", "C#", "シーシャープ"),
+            ("(笑)", "(笑)", "ワライ"),
+            ("（笑）", "（笑）", "ワライ"),
+            ("(笑)で終わる。", "(笑)", "ワライ"),
+            ("（笑）と書く。", "（笑）", "ワライ"),
+            ("笑さん", "笑", "エミ"),
+        ] {
+            let tokens = analyzer.try_tokenize(text).unwrap();
+            let token = tokens
+                .iter()
+                .find(|token| &*token.surface == surface)
+                .unwrap();
+            assert!(token.is_known, "{name}: {text}");
+            assert_eq!(&*token.pronunciation, pronunciation, "{name}: {text}");
+            assert_eq!(&text[token.start..token.end], surface);
+        }
+    }
+}
+
 /// ビルダーを .hsd に書き出す
 fn write_hsd(builder: &DictBuilder, path: &std::path::Path) {
     builder
