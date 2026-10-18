@@ -79,7 +79,8 @@ MISE_GITHUB_TOKEN=$(gh auth token) mise lock --platform linux-x64,linux-arm64,ma
 
 GitHub Actions の Release（`.github/workflows/release.yml`）を手で動かす（Actions > Release > Run workflow）。
 版は `yy.m.counter`（例: `26.9.104`）で、同じ月のうちは counter を 1 つずつ上げ、月が変わると 100 から数え直す
-（月は日本時間で切る）。Release は版を上げた Cargo.toml と Cargo.lock をコミットし、タグを切る。その後、5 ターゲットの
+（月は日本時間で切る）。Release はタグを切る前に、上流版に変更がなくても独自辞書を含めて辞書と例外表を構築・検証し、
+例外表の差分があればコミットする。その後、版を上げた Cargo.toml と Cargo.lock をコミットし、タグを切る。5 ターゲットの
 バイナリと、タグのソースから作った配布辞書（`dict-build.yml` を呼ぶ）をリリースに添付する。
 
 `dry_run` にチェックを入れて動かすと、次の版を計算して表示するだけで、コミット・タグ・ビルド・リリースはしない。

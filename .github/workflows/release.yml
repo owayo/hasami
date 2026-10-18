@@ -1,6 +1,6 @@
 # Run workflow 1 回で、版の更新からコミットとタグ、5 ターゲットのバイナリ、配布辞書、Release の作成までを行う。
 #
-# - update-dictionary-sources: 上流の最新版と SHA-256 を解決し、変更があれば辞書・例外表を検証して自動コミット
+# - update-dictionary-sources: 上流の最新版と SHA-256 を解決し、独自辞書を含む辞書・例外表を毎回検証して差分を自動コミット
 # - prepare-release: 版を JST の yy.m.counter で決め、Cargo.toml と Cargo.lock をコミットしてタグを切る
 # - build: ci.yml の build と同じ組（os / target）でバイナリを作る。dry_run では走らないので、
 #   配布物を作れることは ci.yml の build で確かめる
@@ -43,6 +43,8 @@ jobs:
     uses: ./.github/workflows/dict-update.yml
     secrets:
       HASAMI_DICTIONARIES_READ_KEY: ${{ secrets.HASAMI_DICTIONARIES_READ_KEY }}
+    with:
+      validate_unchanged: true
 
   prepare-release:
     name: Prepare release
@@ -131,7 +133,13 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add Cargo.toml Cargo.lock
-          git commit -m "Release ${TAG}"
+          printf '%s\n' \
+            "chore(release): ${TAG} を公開" \
+            '' \
+            '日本時間の年月と現在の連番から次の版を採番し、Cargo.toml と Cargo.lock のワークスペースの版をそろえる。' \
+            'タグ作成前に配布辞書と文分割例外表の検証を完了し、このコミットから全ターゲットの配布物を構築する。' \
+            > "$RUNNER_TEMP/release-commit.txt"
+          git commit --file "$RUNNER_TEMP/release-commit.txt"
           git tag -a "${TAG}" -m "Release ${TAG}"
           # ブランチとタグを 1 回で送る。--atomic で、ブランチが先に進んでいて片方だけが通ることを防ぐ
           git push --atomic origin "HEAD:refs/heads/${DEFAULT_BRANCH}" "refs/tags/${TAG}"

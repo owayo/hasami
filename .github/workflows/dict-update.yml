@@ -10,6 +10,10 @@ on:
         description: 検証と artifact の保存まで実行し、コミット・push はしない
         type: boolean
         default: false
+      validate_unchanged:
+        description: 上流版に変更がなくても独自辞書と例外表を検証する
+        type: boolean
+        default: false
   workflow_call:
     secrets:
       HASAMI_DICTIONARIES_READ_KEY:
@@ -18,6 +22,10 @@ on:
     inputs:
       dry_run:
         description: 検証と artifact の保存まで実行し、コミット・push はしない
+        type: boolean
+        default: false
+      validate_unchanged:
+        description: 上流版に変更がなくても独自辞書と例外表を検証する
         type: boolean
         default: false
     outputs:
@@ -78,7 +86,7 @@ jobs:
           fi
 
       - name: Upload candidate source versions
-        if: ${{ steps.resolve.outputs.changed == 'true' || inputs.dry_run }}
+        if: ${{ steps.resolve.outputs.changed == 'true' || inputs.dry_run || inputs.validate_unchanged }}
         uses: actions/upload-artifact@v7
         with:
           name: dictionary-sources
@@ -90,8 +98,8 @@ jobs:
   validate:
     name: Build and validate updated dictionaries
     needs: resolve
-    # dry_run では差分がなくても全手順を検証し、辞書と取得版を artifact に残す。
-    if: ${{ needs.resolve.outputs.changed == 'true' || inputs.dry_run }}
+    # リリース前は独自辞書だけが変わった場合も検証し、タグに例外表をそろえる。
+    if: ${{ needs.resolve.outputs.changed == 'true' || inputs.dry_run || inputs.validate_unchanged }}
     uses: ./.github/workflows/dict-build.yml
     secrets:
       HASAMI_DICTIONARIES_READ_KEY: ${{ secrets.HASAMI_DICTIONARIES_READ_KEY }}
@@ -103,7 +111,7 @@ jobs:
   commit:
     name: Commit validated dictionary sources
     needs: [resolve, validate]
-    if: ${{ !inputs.dry_run && needs.resolve.outputs.changed == 'true' }}
+    if: ${{ !inputs.dry_run && (needs.resolve.outputs.changed == 'true' || inputs.validate_unchanged) }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -132,7 +140,13 @@ jobs:
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add scripts/dictionary-sources.json src/sentence/builtin_exceptions.txt
           if ! git diff --cached --quiet; then
-            git commit -m 'Update dictionary sources'
+            printf '%s\n' \
+              'chore(dict): 検証済みの辞書ソースと例外表を更新' \
+              '' \
+              '上流版または独自辞書の変更に合わせ、同じ入力から生成した文分割例外表を記録する。' \
+              '配布辞書の構築・全件検証・受け入れテスト・例外表の照合と通常の CI を通過した内容だけを反映する。' \
+              > "$RUNNER_TEMP/dictionary-commit.txt"
+            git commit --file "$RUNNER_TEMP/dictionary-commit.txt"
             # 検証中にブランチが進んだ場合は失敗させる。検証していない状態へ rebase / force push しない。
             git push origin "HEAD:refs/heads/$DEFAULT_BRANCH"
           fi
