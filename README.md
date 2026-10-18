@@ -43,6 +43,11 @@ hasami は、MeCab などの外部の解析エンジンを使わずに Rust で�
 - **辞書の要らない文分割**: `hasami::sentence` は辞書を読み込まずに文の境界を求めます（feature なしで使え、依存もありません）。`Yahoo!ニュース`・`モーニング娘。` のように文末記号を含む語の内側では切りません
 - **Rust・Python・C から使える**: Rust のライブラリ、Python バインディング（PyO3）、C FFI があります
 
+## hasami を使ったツール
+
+- [kotonoha](https://github.com/owayo/kotonoha): 音声合成に使うラベル・音素とトーン・韻律記号を生成する日本語韻律エンジンです。hasami をテキストの形態素解析に使っています。
+- [noslop](https://github.com/owayo/noslop): 日本語の文章やコード内の文言から「AI 臭さ」や読みづらさを指摘する Linter です。hasami の文分割と形態素解析を使い、「の」の連鎖や連続漢字などを検査します。
+
 ## インストール
 
 <!-- standard:install:start -->
