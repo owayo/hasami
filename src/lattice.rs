@@ -1276,6 +1276,7 @@ impl LatticeWorkspace {
             |surface| unit_reading(surface).is_some_and(is_katakana_str),
         );
         apply_contextual_readings_with_protection(&mut out[first..], &protected);
+        crate::numeric::apply_spaced_months(input, offset, out, first, plan);
         Ok(())
     }
 }

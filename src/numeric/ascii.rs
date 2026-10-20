@@ -150,6 +150,7 @@ struct Candidate {
 #[derive(Default, Debug)]
 pub(crate) struct AsciiPlan {
     candidates: Vec<Candidate>,
+    month_starts: Vec<usize>,
 }
 
 fn envelope_byte(b: u8) -> bool {
@@ -157,14 +158,36 @@ fn envelope_byte(b: u8) -> bool {
 }
 
 impl AsciiPlan {
+    pub(super) fn has_month_in(&self, start: usize, end: usize) -> bool {
+        let i = self.month_starts.partition_point(|&s| s < start);
+        self.month_starts.get(i).is_some_and(|&s| s < end)
+    }
+
+    pub(super) fn month_number_start(&self, start: usize) -> bool {
+        self.month_starts.binary_search(&start).is_ok()
+    }
+
+    /// 識別子・小数・単位を含まない、独立した整数候補との完全一致。
+    pub(super) fn bare_integer(&self, start: usize, end: usize) -> bool {
+        let i = self.candidates.partition_point(|c| c.number.start < start);
+        self.candidates.get(i).is_some_and(|c| {
+            c.number == (start..end)
+                && c.envelope == c.number
+                && c.parsed.is_some_and(|n| n.dot.is_none())
+        })
+    }
+
     /// 位置は offset を加えた入力全体の位置。空白越しの英字・裸の数字も識別子の前置とみなす。
     pub(crate) fn new(input: &str, offset: usize) -> Self {
+        let mut plan = Self {
+            month_starts: super::month::number_starts(input, offset),
+            ..Self::default()
+        };
         if !input.bytes().any(|b| b.is_ascii_digit()) {
-            return Self::default();
+            return plan;
         }
         let bytes = input.as_bytes();
         let (mut pos, mut prefix) = (0, false);
-        let mut plan = Self::default();
         while pos < bytes.len() {
             if envelope_byte(bytes[pos]) {
                 let start = pos;

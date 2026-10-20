@@ -8,7 +8,9 @@ use std::ops::Range;
 use std::sync::Arc;
 
 mod ascii;
+mod month;
 pub(crate) use ascii::{AsciiPlan, apply as apply_ascii_quantities};
+pub(crate) use month::apply as apply_spaced_months;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Ending {
