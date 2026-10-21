@@ -8,6 +8,131 @@ use hasami::dict::{DictBuilder, DictEntry};
 
 #[test]
 #[ignore = "配布辞書が必要"]
+fn test_distributed_roles_and_academic_terms_keep_readings_and_common_pos() {
+    for name in ["ipadic-neologd", "ipadic-neologd-sudachi"] {
+        let mut analyzer = load_distributed_dict(name);
+        for (word, reading, pronunciation, pos) in [
+            ("理事長", "リジチョウ", "リジチョー", "名詞,一般"),
+            (
+                "活動拠点",
+                "カツドウキョテン",
+                "カツドーキョテン",
+                "名詞,一般",
+            ),
+            ("修正案", "シュウセイアン", "シューセイアン", "名詞,一般"),
+            (
+                "非常勤講師",
+                "ヒジョウキンコウシ",
+                "ヒジョーキンコーシ",
+                "名詞,一般",
+            ),
+            (
+                "教育機関",
+                "キョウイクキカン",
+                "キョーイクキカン",
+                "名詞,一般",
+            ),
+            ("通信社", "ツウシンシャ", "ツーシンシャ", "名詞"),
+            ("研究科", "ケンキュウカ", "ケンキューカ", "名詞"),
+            ("課長補佐", "カチョウホサ", "カチョーホサ", "名詞,一般"),
+            ("事務局", "ジムキョク", "ジムキョク", "名詞,一般"),
+            ("社会科学", "シャカイカガク", "シャカイカガク", "名詞,一般"),
+            ("応用科学", "オウヨウカガク", "オーヨーカガク", "名詞,一般"),
+            ("公式戦", "コウシキセン", "コーシキセン", "名詞,一般"),
+            ("土木工学", "ドボクコウガク", "ドボクコーガク", "名詞,一般"),
+            ("英文学", "エイブンガク", "エイブンガク", "名詞,一般"),
+            ("回転面", "カイテンメン", "カイテンメン", "名詞,一般"),
+            (
+                "公職追放",
+                "コウショクツイホウ",
+                "コーショクツイホー",
+                "名詞,サ変接続",
+            ),
+            (
+                "立教女学院",
+                "リッキョウジョガクイン",
+                "リッキョージョガクイン",
+                "名詞,固有名詞,組織",
+            ),
+        ] {
+            for text in [
+                word.to_string(),
+                format!("{word}の資料を読む。"),
+                format!("{word}を調べる。"),
+            ] {
+                let tokens = analyzer.try_tokenize(&text).unwrap();
+                let word_tokens = tokens
+                    .iter()
+                    .take_while(|t| t.end <= word.len())
+                    .collect::<Vec<_>>();
+                assert_eq!(
+                    word_tokens.last().map(|t| t.end),
+                    Some(word.len()),
+                    "{name}: {text}: {tokens:?}"
+                );
+                assert!(word_tokens.iter().all(|t| t.is_known), "{name}: {text}");
+                assert_eq!(
+                    word_tokens
+                        .iter()
+                        .map(|t| t.reading.as_ref())
+                        .collect::<String>(),
+                    reading,
+                    "{name}: {text}"
+                );
+                assert_eq!(
+                    word_tokens
+                        .iter()
+                        .map(|t| t.pronunciation.as_ref())
+                        .collect::<String>(),
+                    pronunciation,
+                    "{name}: {text}"
+                );
+                assert!(
+                    word_tokens.iter().any(|t| t.pos.starts_with(pos)),
+                    "{name}: {text}: {tokens:?}"
+                );
+                if word != "立教女学院" {
+                    assert!(
+                        word_tokens
+                            .iter()
+                            .all(|t| !t.pos.starts_with("名詞,固有名詞")),
+                        "{name}: {text}: {tokens:?}"
+                    );
+                }
+                for token in &tokens {
+                    assert_eq!(&text[token.start..token.end], token.surface.as_ref());
+                }
+            }
+        }
+        for text in [
+            "通信社調べによると、参加者は十人です。",
+            "興行通信社調べ、資料を読む。",
+        ] {
+            let tokens = analyzer.try_tokenize(text).unwrap();
+            let token = tokens
+                .iter()
+                .find(|t| t.surface.as_ref() == "調べ")
+                .unwrap();
+            assert!(token.pos.starts_with("名詞"), "{name}: {text}: {tokens:?}");
+        }
+        let tokens = analyzer
+            .try_tokenize("回転曲面と二酸化硫黄を調べる。")
+            .unwrap();
+        for (surface, reading) in [
+            ("回転曲面", "カイテンキョクメン"),
+            ("二酸化硫黄", "ニサンカイオウ"),
+        ] {
+            let token = tokens
+                .iter()
+                .find(|t| t.surface.as_ref() == surface)
+                .unwrap();
+            assert_eq!(token.reading.as_ref(), reading, "{name}: {tokens:?}");
+        }
+    }
+}
+
+#[test]
+#[ignore = "配布辞書が必要"]
 fn test_distributed_symbolic_words_and_parenthetical_annotations() {
     for name in ["ipadic-neologd", "ipadic-neologd-sudachi"] {
         let mut analyzer = Analyzer::load(format!("dict/{name}.hsd")).unwrap();
