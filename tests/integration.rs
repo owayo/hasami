@@ -12,6 +12,10 @@ fn test_distributed_general_reading_repairs_preserve_grammar_and_names() {
     for name in ["ipadic-neologd", "ipadic-neologd-sudachi"] {
         let mut analyzer = load_distributed_dict(name);
         for (word, reading, pronunciation) in [
+            ("電動機", "デンドウキ", "デンドーキ"),
+            ("ローター", "ローター", "ローター"),
+            ("大隊長", "ダイタイチョウ", "ダイタイチョー"),
+            ("中隊長", "チュウタイチョウ", "チュータイチョー"),
             ("役どころ", "ヤクドコロ", "ヤクドコロ"),
             ("鶏ささみ", "トリササミ", "トリササミ"),
             ("文字起こし", "モジオコシ", "モジオコシ"),
@@ -70,7 +74,13 @@ fn test_distributed_general_reading_repairs_preserve_grammar_and_names() {
                     "{name}: {text}: {tokens:?}"
                 );
                 assert!(prefix.iter().all(|t| t.is_known));
-                assert!(prefix.iter().all(|t| !t.pos.starts_with("名詞,固有名詞")));
+                // 同音の人名もあるため、ローター単独では品詞を限定しない。
+                if word != "ローター" || text != word {
+                    assert!(
+                        prefix.iter().all(|t| !t.pos.starts_with("名詞,固有名詞")),
+                        "{name}: {text}: {tokens:?}"
+                    );
+                }
                 for token in &tokens {
                     assert_eq!(&text[token.start..token.end], token.surface.as_ref());
                 }
@@ -101,6 +111,10 @@ fn test_distributed_general_reading_repairs_preserve_grammar_and_names() {
         }
         let tokens = analyzer.tokenize("役所で手続きをする。");
         assert_eq!(tokens[0].reading.as_ref(), "ヤクショ");
+        let tokens = analyzer.tokenize("御冥福をお祈りする旨を伝えた。");
+        let particle = tokens.iter().find(|t| t.surface.as_ref() == "を").unwrap();
+        assert!(particle.pos.starts_with("助詞,格助詞"));
+        assert_eq!(particle.reading.as_ref(), "ヲ");
     }
 }
 
