@@ -1,0 +1,150 @@
+{
+  "date_jst": "2026-10-22",
+  "baseline_commit": "16a42ddcd0eb0ce3d616c155620583a02133b5f9",
+  "format": {
+    "v5": 5,
+    "patch": 5008
+  },
+  "variant_labels": {
+    "v5": "v5 UTF-8 TAIL",
+    "patch": "shared UTF-8 TAIL"
+  },
+  "platform": {
+    "os": "Windows-11-10.0.26300-SP0",
+    "cpu": "AMD Ryzen 7 5700X",
+    "physical_cores": 8,
+    "logical_processors": 16,
+    "ram_gib": 32
+  },
+  "toolchain": {
+    "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)\nbinary: rustc\ncommit-hash: 48a229ceaefd4985c50990b14116b6d856af0985\ncommit-date: 2026-09-01\nhost: x86_64-pc-windows-msvc\nrelease: 1.98.1\nLLVM version: 22.1.8",
+    "python": "3.13.15",
+    "library": "cargo build --release --locked --lib --no-default-features --features build",
+    "eval_flags": "--edition=2024 -O -C lto=fat -C codegen-units=1"
+  },
+  "release": "v26.9.107",
+  "dictionaries": {
+    "ipadic": {
+      "v5": {
+        "bytes": 16493282,
+        "sha256": "f4c26a641c835c196ee78e49fd846952ba3fcd107ac9811b4e0edb85e1358b8a"
+      },
+      "patch": {
+        "bytes": 16498914,
+        "sha256": "e89472dce2b0e17dda9d9eef44f698f7461ff2b543daf3aa6d1c692df56fb4df"
+      }
+    },
+    "ipadic-neologd": {
+      "v5": {
+        "bytes": 206570094,
+        "sha256": "c93cbc611ff0696696c9efef793906c4a004e2f53428ba589f563a2743aaf122"
+      },
+      "patch": {
+        "bytes": 201647278,
+        "sha256": "97a00432ed2cf3b04dc84ef1c716daca23f647a4f6a6a4da0b07ac99f8de9335"
+      }
+    },
+    "ipadic-neologd-sudachi": {
+      "v5": {
+        "bytes": 220974766,
+        "sha256": "a06e69d1c12959eca3e0e2a383acc9824c89858f9ebc1f5bbdbf4d374ba47819"
+      },
+      "patch": {
+        "bytes": 215976366,
+        "sha256": "cab94447d93f796f99cc7229e35b581479f86ef43e16b16bb3120e9e59f54656"
+      }
+    }
+  },
+  "corpora": {
+    "mixed": {
+      "bytes": 25632719,
+      "sha256": "24bd9e77b0de539d8cd58ff34c49c208dd1ad702bcab13884dd10db16a18abfc",
+      "lines": 143874
+    },
+    "short": {
+      "bytes": 5500000,
+      "sha256": "1697a3e63e0bb680170b07916d9fe2d6d6307b333d291de13d51947ef7aa1d32",
+      "lines": 100000,
+      "text": "東京都に住んでいる人々が増えている。"
+    },
+    "literature": {
+      "bytes": 26528100,
+      "sha256": "d55f37a8682791183cbdb683421a120f5a3d15be4d5a95ca59ac3b0cd759ff47",
+      "lines": 48200
+    }
+  },
+  "executables": {
+    "v5": {
+      "bytes": 1330688,
+      "sha256": "0bab2a1ff69eb51505fb61b46e2f1a9c1a28f98cf7ae73d5958a5a0cbafeb390"
+    },
+    "pool": {
+      "bytes": 1331200,
+      "sha256": "2026860a6e9ff9cfa6fdcd15da2017e284d774daea63bdd8ce68d2c74faf3488"
+    }
+  },
+  "sources": {
+    "scripts/hsd-format-eval.rs": {
+      "bytes": 7384,
+      "sha256": "72f344c157b3cd9b26be15ba9c1a44411e9f46de865847f7b228529858d9b0a6"
+    },
+    "scripts/hsd-format-compare.py": {
+      "bytes": 1269,
+      "sha256": "0447afac37d6fc4d635a11c5134f7bce66c39cd2afb9ffa03685e99061e7b247"
+    },
+    "scripts/hsd-pronunciation-remeasure.py": {
+      "bytes": 10274,
+      "sha256": "ee154c3016128b3e09af5d5b34f02a5a7d2bb05d203befa5bf5457b3632314ce"
+    },
+    "scripts/hsd-tail-pool-probe.py": {
+      "bytes": 6090,
+      "sha256": "289799702a83dbc437623b8746b2de860c3c32514ac68df792d9e62470a05764"
+    },
+    "docs/measurements/hsd-tail-pool-20261022/reader.patch": {
+      "bytes": 7765,
+      "sha256": "63f93b5ea64736491d67ef2f2145ac6713a2475bf192b5ade2a70f132d34677e"
+    },
+    "docs/measurements/hsd-tail-pool-20261022/design.md": {
+      "bytes": 5068,
+      "sha256": "b4ada433cc377652699b10f30007c8652723c9e23db3b5de1342a4879a782cd8"
+    },
+    "docs/measurements/hsd-tail-pool-20261022/audit.py": {
+      "bytes": 8209,
+      "sha256": "c129d12c1e90bc3b787e94081d44010df5e3b8867c780337798c787a6fee9215"
+    },
+    "docs/measurements/hsd-tail-pool-20261022/compress.py": {
+      "bytes": 2808,
+      "sha256": "c27b2b7153278f0e060bd8e1ea33860c3c487cb15d203ae369ebf24a5d3f3fed"
+    },
+    "docs/measurements/hsd-tail-pool-20261022/run.py": {
+      "bytes": 9057,
+      "sha256": "4b1ad1b20027a680af7b5f317c3467ceeba53e93734b087a6e4f57436532b658"
+    },
+    "v5-source/trie.rs": {
+      "bytes": 95539,
+      "sha256": "7f33d25a8d9d30b42a4bd94e3a816ede5231da1f7159e252aea6821bc6744b94"
+    },
+    "v5-source/container.rs": {
+      "bytes": 19244,
+      "sha256": "e53378e8ca853f61736c7c47c3009adc98e986ea7dd9892dc36afcbb42ee87f7"
+    },
+    "pool-source/trie.rs": {
+      "bytes": 95636,
+      "sha256": "d1996ef1f80ec13fa4b341bd0acd442c59f482b3d3d46a12331c30535ae1f3e9"
+    },
+    "pool-source/container.rs": {
+      "bytes": 19538,
+      "sha256": "a64dfe3982bfd9037ac2e179fb3b832afdda1af986eb0f327f656597dd2ef4a5"
+    }
+  },
+  "conditions": {
+    "rounds": 12,
+    "affinity_mask_decimal": 4,
+    "primary_clock": "Rust Instant wall",
+    "cpu_clock": "GetProcessTimes kernel+user; coarse supplementary value",
+    "cache": "warm OS pages; one warmup pass per analysis process",
+    "memory": "Windows PeakWorkingSetSize, entire process",
+    "order": "AB/BA alternating, dictionary order rotates",
+    "single_load": "12 new processes per dictionary and variant, one load+sentence"
+  }
+}

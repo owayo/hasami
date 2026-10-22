@@ -1,0 +1,364 @@
+{
+  "analysis_rows": 216,
+  "load_rows": 2232,
+  "load_once_rows": 72,
+  "run_order_and_tokens_valid": true,
+  "all_summary_statistics_recomputed": true,
+  "measured_source_hashes_verified": true,
+  "samples_excluded": 0,
+  "tokens_per_input": {
+    "mixed": [
+      5174017,
+      4855971,
+      4848784
+    ],
+    "short": [
+      1200000,
+      1100000,
+      1100000
+    ],
+    "literature": [
+      5711900,
+      5622300,
+      5579900
+    ]
+  },
+  "all_field_comparisons": {
+    "mixed": {
+      "ipadic": {
+        "equal_bytes": 637587115,
+        "sha256": "483f4711cc3326a57eb9cf156dfb18ae97bb643b98194848f751ba8321b3b6d9"
+      },
+      "ipadic-neologd": {
+        "equal_bytes": 606740901,
+        "sha256": "3c88a552e2bc33ddb0d25bb771c92c838df7ad7bcc5d8bb838b3fb87dcb97f24"
+      },
+      "ipadic-neologd-sudachi": {
+        "equal_bytes": 605461341,
+        "sha256": "28f97abb1e615ea0ad36cee86abd6a251dfbea5d2709ef0b30e18c6768008d4c"
+      }
+    },
+    "short": {
+      "ipadic": {
+        "equal_bytes": 149100008,
+        "sha256": "ffb27c11dfc9e602c6cba5d4e99cca8faf359641da4ceeeb75470c3c4dc2ed3c"
+      },
+      "ipadic-neologd": {
+        "equal_bytes": 139400008,
+        "sha256": "d851d7c7c5d32c055fd4180989fadf76f63395dc66919f2edd3c52afbac66f6c"
+      },
+      "ipadic-neologd-sudachi": {
+        "equal_bytes": 139400008,
+        "sha256": "d851d7c7c5d32c055fd4180989fadf76f63395dc66919f2edd3c52afbac66f6c"
+      }
+    },
+    "literature": {
+      "ipadic": {
+        "equal_bytes": 700240708,
+        "sha256": "61d7e609ae7a4367654f546352ae50918e33fe15be5b115a94efe77a4a6b9359"
+      },
+      "ipadic-neologd": {
+        "equal_bytes": 691370708,
+        "sha256": "95d6f2debddcd5463db84461b51f32299073c38336242afac90125cc44b16c1c"
+      },
+      "ipadic-neologd-sudachi": {
+        "equal_bytes": 687057408,
+        "sha256": "1680a39e59163e37cdbd510cfa110194f7e4fb5cfb5d6d78455bccdc6458a27a"
+      }
+    }
+  },
+  "system_cpu_percent_during_analysis_process": {
+    "n": 216,
+    "median": 8.676122354046871,
+    "min": 6.311637080867849,
+    "max": 57.84023668639053,
+    "iqr": 6.778480110633442,
+    "cv": 0.6424385543990734
+  },
+  "paired_medians_by_order": {
+    "mixed": {
+      "ipadic": {
+        "wall": {
+          "AB_median": 0.017867765648143297,
+          "BA_median": 0.012671573816424364
+        },
+        "cpu": {
+          "AB_median": 0.011145423919146524,
+          "BA_median": 0.011392986282500184
+        }
+      },
+      "ipadic-neologd": {
+        "wall": {
+          "AB_median": 0.012629008025691557,
+          "BA_median": 0.010329240242483717
+        },
+        "cpu": {
+          "AB_median": 0.015578236512930665,
+          "BA_median": 0.009635799444716597
+        }
+      },
+      "ipadic-neologd-sudachi": {
+        "wall": {
+          "AB_median": 0.02904400786296424,
+          "BA_median": 0.008351827490659436
+        },
+        "cpu": {
+          "AB_median": 0.03176650810287829,
+          "BA_median": 0.012499999999999956
+        }
+      }
+    },
+    "short": {
+      "ipadic": {
+        "wall": {
+          "AB_median": 0.013610221321255112,
+          "BA_median": -0.006359571266020214
+        },
+        "cpu": {
+          "AB_median": 0.06666666666666665,
+          "BA_median": 0.0
+        }
+      },
+      "ipadic-neologd": {
+        "wall": {
+          "AB_median": 0.0074197767630446165,
+          "BA_median": 0.022973801827616214
+        },
+        "cpu": {
+          "AB_median": 0.0357142857142857,
+          "BA_median": 0.0
+        }
+      },
+      "ipadic-neologd-sudachi": {
+        "wall": {
+          "AB_median": 0.014694017614175103,
+          "BA_median": 0.013093992677731148
+        },
+        "cpu": {
+          "AB_median": 0.0,
+          "BA_median": 0.0
+        }
+      }
+    },
+    "literature": {
+      "ipadic": {
+        "wall": {
+          "AB_median": 0.00015729553839094468,
+          "BA_median": -0.027320111392943824
+        },
+        "cpu": {
+          "AB_median": -0.008733790999237212,
+          "BA_median": -0.02517507002801117
+        }
+      },
+      "ipadic-neologd": {
+        "wall": {
+          "AB_median": 0.020471324228296006,
+          "BA_median": 0.025678601975728466
+        },
+        "cpu": {
+          "AB_median": 0.022869565217391363,
+          "BA_median": 0.02775693923480871
+        }
+      },
+      "ipadic-neologd-sudachi": {
+        "wall": {
+          "AB_median": 0.00263842137020176,
+          "BA_median": -0.010040928739103394
+        },
+        "cpu": {
+          "AB_median": 0.0039663461538461675,
+          "BA_median": -0.011538461538461553
+        }
+      }
+    }
+  },
+  "load_once": {
+    "ipadic": {
+      "v5": {
+        "wall_us": {
+          "n": 12,
+          "median": 571.1,
+          "min": 534.1,
+          "max": 626.8,
+          "iqr": 34.950000000000045,
+          "cv": 0.047703101393928825
+        },
+        "cpu_us": {
+          "n": 12,
+          "median": 0.0,
+          "min": 0.0,
+          "max": 0.0,
+          "iqr": 0.0,
+          "cv": null
+        },
+        "peak_working_set_bytes": {
+          "n": 12,
+          "median": 5996544.0,
+          "min": 5988352,
+          "max": 6000640,
+          "iqr": 1024.0,
+          "cv": 0.0004930403665154789
+        }
+      },
+      "pool": {
+        "wall_us": {
+          "n": 12,
+          "median": 551.45,
+          "min": 446.1,
+          "max": 599.6,
+          "iqr": 16.600000000000023,
+          "cv": 0.06473425693839502
+        },
+        "cpu_us": {
+          "n": 12,
+          "median": 0.0,
+          "min": 0.0,
+          "max": 0.0,
+          "iqr": 0.0,
+          "cv": null
+        },
+        "peak_working_set_bytes": {
+          "n": 12,
+          "median": 5990400.0,
+          "min": 5988352,
+          "max": 5996544,
+          "iqr": 4096.0,
+          "cv": 0.0004376471852241245
+        }
+      },
+      "paired_wall_relative_change": {
+        "n": 12,
+        "median": -0.0407834937555166,
+        "min": -0.19170139518028617,
+        "max": 0.018910316420146067,
+        "iqr": 0.054364700589975556,
+        "cv": -1.0474522084430062
+      }
+    },
+    "ipadic-neologd": {
+      "v5": {
+        "wall_us": {
+          "n": 12,
+          "median": 600.65,
+          "min": 558.1,
+          "max": 642.6,
+          "iqr": 34.22500000000002,
+          "cv": 0.03884828082182112
+        },
+        "cpu_us": {
+          "n": 12,
+          "median": 0.0,
+          "min": 0.0,
+          "max": 0.0,
+          "iqr": 0.0,
+          "cv": null
+        },
+        "peak_working_set_bytes": {
+          "n": 12,
+          "median": 6086656.0,
+          "min": 6082560,
+          "max": 6090752,
+          "iqr": 4096.0,
+          "cv": 0.00040055126078539737
+        }
+      },
+      "pool": {
+        "wall_us": {
+          "n": 12,
+          "median": 606.65,
+          "min": 507.6,
+          "max": 699.1,
+          "iqr": 44.200000000000045,
+          "cv": 0.0728498774835144
+        },
+        "cpu_us": {
+          "n": 12,
+          "median": 0.0,
+          "min": 0.0,
+          "max": 0.0,
+          "iqr": 0.0,
+          "cv": null
+        },
+        "peak_working_set_bytes": {
+          "n": 12,
+          "median": 6078464.0,
+          "min": 6070272,
+          "max": 6082560,
+          "iqr": 4096.0,
+          "cv": 0.0005588247330000674
+        }
+      },
+      "paired_wall_relative_change": {
+        "n": 12,
+        "median": -0.0056112292886817405,
+        "min": -0.19696250593260556,
+        "max": 0.19749914354230924,
+        "iqr": 0.056197473901451855,
+        "cv": -16.464296028814648
+      }
+    },
+    "ipadic-neologd-sudachi": {
+      "v5": {
+        "wall_us": {
+          "n": 12,
+          "median": 599.4,
+          "min": 494.3,
+          "max": 832.2,
+          "iqr": 33.64999999999998,
+          "cv": 0.1214319582775371
+        },
+        "cpu_us": {
+          "n": 12,
+          "median": 0.0,
+          "min": 0.0,
+          "max": 0.0,
+          "iqr": 0.0,
+          "cv": null
+        },
+        "peak_working_set_bytes": {
+          "n": 12,
+          "median": 6080512.0,
+          "min": 6078464,
+          "max": 6090752,
+          "iqr": 5120.0,
+          "cv": 0.000664056547659627
+        }
+      },
+      "pool": {
+        "wall_us": {
+          "n": 12,
+          "median": 597.8499999999999,
+          "min": 564.0,
+          "max": 633.3,
+          "iqr": 28.575000000000045,
+          "cv": 0.03552780775140753
+        },
+        "cpu_us": {
+          "n": 12,
+          "median": 0.0,
+          "min": 0.0,
+          "max": 0.0,
+          "iqr": 0.0,
+          "cv": null
+        },
+        "peak_working_set_bytes": {
+          "n": 12,
+          "median": 6086656.0,
+          "min": 6078464,
+          "max": 6094848,
+          "iqr": 5120.0,
+          "cv": 0.0006982165665407846
+        }
+      },
+      "paired_wall_relative_change": {
+        "n": 12,
+        "median": -0.009455682363827433,
+        "min": -0.2390050468637348,
+        "max": 0.14100748533279384,
+        "iqr": 0.09015071820685772,
+        "cv": -8.502054117736222
+      }
+    }
+  }
+}

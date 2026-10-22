@@ -1,0 +1,60 @@
+   Compiling proc-macro2 v1.0.107
+   Compiling unicode-ident v1.0.26
+   Compiling quote v1.0.47
+   Compiling rustversion v1.0.23
+   Compiling serde_core v1.0.229
+   Compiling memchr v2.8.3
+   Compiling simdutf8 v0.1.5
+   Compiling scopeguard v1.2.0
+   Compiling multiversion_no_op v1.0.0
+   Compiling itoa v1.0.18
+   Compiling cfg-if v1.0.5
+   Compiling hasami v26.10.105 (C:\GitHub\hasami\target\hsd-tail-pool-20261022\pool-source)
+   Compiling ryu v1.0.23
+   Compiling core_detect v1.0.0
+   Compiling glob v0.3.4
+   Compiling memmap2 v0.9.11
+   Compiling csv-core v0.1.13
+   Compiling encoding_rs v0.8.42
+   Compiling syn v3.0.6
+   Compiling csv v1.4.0
+   Compiling bytemuck_derive v1.12.1
+   Compiling bytemuck v1.25.2
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 9.83s
+     Running unittests src\lib.rs (target\hsd-tail-pool-20261022\pool-source\target\debug\deps\hasami-48187dfd64a954a1.exe)
+
+running 31 tests
+test hsd::trie::tests::test_build_errors ... ok
+test hsd::trie::tests::test_char_not_in_dictionary_stops_search ... ok
+test hsd::trie::tests::test_four_byte_utf8 ... ok
+test hsd::trie::tests::test_char_codes_follow_frequency_then_char_order ... ok
+test hsd::trie::tests::test_long_tail_uses_multibyte_varint ... ok
+test hsd::trie::tests::test_layout_invariants ... ok
+test hsd::trie::tests::test_node_with_end_and_children ... ok
+test hsd::trie::tests::test_prefix_keys_are_all_reported ... ok
+test hsd::trie::tests::test_from_validated_matches_new ... ok
+test hsd::trie::tests::test_start_is_absolute_and_must_be_char_boundary ... ok
+test hsd::trie::tests::test_build_is_deterministic ... ok
+test hsd::trie::tests::test_canonical_shared_tail_pool ... ok
+test hsd::trie::tests::test_verify_accepts_fixture ... ok
+test hsd::trie::tests::test_verify_detects_base_out_of_range ... ok
+test hsd::trie::tests::test_verify_detects_bad_end_child ... ok
+test hsd::trie::tests::test_verify_detects_bad_root ... ok
+test hsd::trie::tests::test_single_key ... ok
+test hsd::trie::tests::test_verify_detects_kind_01 ... ok
+test hsd::trie::tests::test_many_keys_with_same_prefix ... ok
+test hsd::trie::tests::test_from_validated_with_garbage_does_not_panic ... ok
+test hsd::trie::tests::test_verify_detects_internal_with_one_key ... ok
+test hsd::trie::tests::test_verify_detects_unused_slot_with_base ... ok
+test hsd::trie::tests::test_keys_of_prefix_heavy_set ... ok
+test hsd::trie::tests::test_verify_detects_value_limit ... ok
+test hsd::trie::tests::test_verify_detects_char_map_errors ... ok
+test hsd::trie::tests::test_verify_detects_broken_tail ... ok
+test hsd::trie::tests::test_verify_detects_cycle_and_detached_nodes ... ok
+test hsd::trie::tests::test_too_many_distinct_chars ... ok
+test hsd::trie::tests::test_progress_reports ... ok
+test hsd::trie::tests::test_random_search_matches_brute_force ... ok
+test hsd::trie::tests::test_corrupted_tries_never_panic ... ok
+
+test result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 308 filtered out; finished in 2.28s
+

@@ -1,0 +1,176 @@
+--- a/src/hsd/container.rs
++++ b/src/hsd/container.rs
+@@ -20,7 +20,7 @@
+ use std::io::{self, Write};
+ 
+ pub const MAGIC: [u8; 8] = *b"HSMDICT\0";
+-pub const VERSION: u32 = 5;
++pub const VERSION: u32 = 5008;
+ pub const HEADER_LEN: usize = 64;
+ pub const SECTION_ENTRY_LEN: usize = 24;
+ pub const MAX_SECTIONS: usize = 64;
+@@ -406,11 +406,16 @@
+     #[test]
+     fn rejects_old_versions_with_rebuild_hint() {
+         let mut buf = write_to_vec(0, &all_sections());
+-        for version in 1..VERSION {
++        // The experimental version is not a contiguous released format bump.
++        for version in 1u32..5 {
+             buf[8..12].copy_from_slice(&version.to_le_bytes());
+             let err = parse(&buf).unwrap_err();
+             assert!(matches!(err, DictError::UnsupportedVersion(v) if v == version));
+             assert!(err.to_string().contains("build-dict.sh"));
++        }
++        for version in [5u32, 5007] {
++            buf[8..12].copy_from_slice(&version.to_le_bytes());
++            assert!(matches!(parse(&buf), Err(DictError::UnsupportedVersion(v)) if v == version));
+         }
+     }
+ 
+--- a/src/hsd/trie.rs
++++ b/src/hsd/trie.rs
+@@ -597,6 +597,8 @@
+         } else {
+             let offset = self.tails.len() as u32;
+             self.tails.extend_from_slice(&value.to_le_bytes());
++            // The small-fixture builder uses an unshared inline pool record.
++            self.tails.extend_from_slice(&(offset + 8).to_le_bytes());
+             push_varint(&mut self.tails, rest.len() as u32);
+             self.tails.extend_from_slice(rest);
+             if self.tails.len() >= TAILS_LIMIT {
+@@ -974,22 +976,30 @@
+     /// 検索のたびに通るので、Result を値のまま扱えるよう呼び出し側に展開する（エラーの組み立ては cold）
+     #[inline(always)]
+     fn tail_record(&self, slot: usize, offset: u32) -> Result<(u32, &'a [u8]), TrieError> {
+-        let tails = self.tails;
+         let off = offset as usize;
+-        let Some(&[b0, b1, b2, b3]) = tails.get(off..off + 4) else {
++        let Some(record) = self.tails.get(off..).and_then(|rest| rest.get(..8)) else {
+             return Err(bad_tail(
+                 slot,
+                 off,
+                 "the record runs past the end of the tails",
+             ));
+         };
+-        let value = u32::from_le_bytes([b0, b1, b2, b3]);
++        let value = u32::from_le_bytes(record[..4].try_into().unwrap());
+         if value >= VALUE_LIMIT {
+             return Err(bad_tail(slot, off, "the value is not below 2^30"));
+         }
+-        let (len, body) = match tails.get(off + 4) {
+-            Some(&byte) if byte < 0x80 => (byte as usize, off + 5),
+-            _ => match read_varint(tails, off + 4) {
++        let pointer = u32::from_le_bytes(record[4..8].try_into().unwrap()) as usize;
++        // Slice before adding to the new untrusted pointer (including on 32 bit).
++        let Some(tails) = self.tails.get(pointer..) else {
++            return Err(bad_tail(
++                slot,
++                off,
++                "the string pointer runs past the end of the tails",
++            ));
++        };
++        let (len, body) = match tails.first() {
++            Some(&byte) if byte < 0x80 => (byte as usize, 1),
++            _ => match read_varint(tails, 0) {
+                 Some((len, body)) => (len as usize, body),
+                 None => {
+                     return Err(bad_tail(
+@@ -1519,6 +1529,48 @@
+     }
+ 
+     #[test]
++    fn test_canonical_shared_tail_pool() {
++        let keys = ["a共通", "b共通"];
++        let mut parts = build_indexed(&keys);
++        let (left, _) = node_at(&parts, "a");
++        let (right, _) = node_at(&parts, "b");
++        // Two different values, one physical UTF-8 string after both records.
++        parts.tails = [0u32, 16, 1, 16]
++            .into_iter()
++            .flat_map(u32::to_le_bytes)
++            .collect();
++        push_varint(&mut parts.tails, 6);
++        parts.tails.extend_from_slice("共通".as_bytes());
++        parts.nodes[left].base = KIND_TAIL << KIND_SHIFT;
++        parts.nodes[right].base = (KIND_TAIL << KIND_SHIFT) | 8;
++        assert_round_trip(&keys, &[0, 1], &parts);
++        let trie = parts.as_trie().unwrap();
++        assert_eq!(search(&trie, "a共通です", 0), vec![(7, 0)]);
++        assert_eq!(search(&trie, "b共通です", 0), vec![(7, 1)]);
++        let (coded, result) = search_codes(&trie, "b共通です", 0);
++        result.unwrap();
++        assert_eq!(coded, search(&trie, "b共通です", 0));
++
++        for pointer in [u32::MAX, parts.tails.len() as u32] {
++            let mut broken = parts.clone();
++            broken.tails[4..8].copy_from_slice(&pointer.to_le_bytes());
++            assert!(broken.as_trie().unwrap().verify(2).is_err());
++            for text in ["a", "a違う", "a共通"] {
++                assert!(
++                    broken
++                        .as_trie()
++                        .unwrap()
++                        .common_prefix_search(text, 0, |_, _| {})
++                        .is_err()
++                );
++            }
++        }
++        let mut truncated = parts;
++        truncated.tails.truncate(7);
++        assert!(truncated.as_trie().unwrap().get("a共通").is_err());
++    }
++
++    #[test]
+     fn test_long_tail_uses_multibyte_varint() {
+         let long = format!("x{}", "あ".repeat(100));
+         let keys = [long.as_str(), "y"];
+@@ -1529,8 +1581,12 @@
+         assert_eq!(kind(node.base), KIND_TAIL);
+         let off = (node.base & PAYLOAD_MASK) as usize;
+         assert_eq!(&parts.tails[off..off + 4], &0u32.to_le_bytes());
+-        assert_eq!(&parts.tails[off + 4..off + 6], &[0xAC, 0x02]);
+-        assert_eq!(parts.tails.len(), 4 + 2 + 300);
++        assert_eq!(
++            &parts.tails[off + 4..off + 8],
++            &((off + 8) as u32).to_le_bytes()
++        );
++        assert_eq!(&parts.tails[off + 8..off + 10], &[0xAC, 0x02]);
++        assert_eq!(parts.tails.len(), 8 + 2 + 300);
+ 
+         let text = format!("{long}です");
+         assert_eq!(search(&trie, &text, 0), vec![(long.len(), 0)]);
+@@ -1941,29 +1997,29 @@
+ 
+         // varint が 5 バイトを超える
+         let mut broken = parts.clone();
+-        broken.tails[off + 4..off + 9].fill(0x80);
++        broken.tails[off + 8..off + 13].fill(0x80);
+         assert!(verify_err(&broken).contains("varint"));
+         assert!(search_err(&broken, &long).contains("varint"));
+ 
+         // 長さが tails を越える
+         let mut broken = parts.clone();
+-        broken.tails[off + 4..off + 7].copy_from_slice(&[0xFF, 0xFF, 0x03]);
++        broken.tails[off + 8..off + 11].copy_from_slice(&[0xFF, 0xFF, 0x03]);
+         assert!(verify_err(&broken).contains("past the end"));
+ 
+         // 長さ 0
+         let mut broken = parts.clone();
+-        broken.tails[off + 4] = 0;
++        broken.tails[off + 8] = 0;
+         assert!(verify_err(&broken).contains("length is 0"));
+ 
+         // UTF-8 として不正（検索は一致しなければ気づかない）
+         let mut broken = parts.clone();
+-        let last = off + 4 + 2 + (long.len() - 1) - 1;
++        let last = off + 8 + 2 + (long.len() - 1) - 1;
+         broken.tails[last] = 0xFF;
+         assert!(verify_err(&broken).contains("UTF-8"));
+         // 文字の途中で切れた suffix は、一致したときに検索が検出する
+         let mut broken = parts.clone();
+         let len = long.len() - 1 - 1;
+-        broken.tails[off + 4..off + 6]
++        broken.tails[off + 8..off + 10]
+             .copy_from_slice(&[(len as u8 & 0x7F) | 0x80, (len >> 7) as u8]);
+         assert!(verify_err(&broken).contains("UTF-8"));
+         assert!(search_err(&broken, &long).contains("UTF-8"));
