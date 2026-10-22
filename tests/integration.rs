@@ -8,6 +8,104 @@ use hasami::dict::{DictBuilder, DictEntry};
 
 #[test]
 #[ignore = "配布辞書が必要"]
+fn test_distributed_general_reading_repairs_preserve_grammar_and_names() {
+    for name in ["ipadic-neologd", "ipadic-neologd-sudachi"] {
+        let mut analyzer = load_distributed_dict(name);
+        for (word, reading, pronunciation) in [
+            ("役どころ", "ヤクドコロ", "ヤクドコロ"),
+            ("鶏ささみ", "トリササミ", "トリササミ"),
+            ("文字起こし", "モジオコシ", "モジオコシ"),
+            ("即戦力", "ソクセンリョク", "ソクセンリョク"),
+            ("議事録", "ギジロク", "ギジロク"),
+            ("自社", "ジシャ", "ジシャ"),
+            ("日焼け止め", "ヒヤケドメ", "ヒヤケドメ"),
+            ("拡張機能", "カクチョウキノウ", "カクチョーキノー"),
+            ("文字化け", "モジバケ", "モジバケ"),
+            ("編集長", "ヘンシュウチョウ", "ヘンシューチョー"),
+            ("目的語", "モクテキゴ", "モクテキゴ"),
+            ("無添加", "ムテンカ", "ムテンカ"),
+            ("国産車", "コクサンシャ", "コクサンシャ"),
+            ("電子書籍", "デンシショセキ", "デンシショセキ"),
+            ("古民家", "コミンカ", "コミンカ"),
+            ("情報源", "ジョウホウゲン", "ジョーホーゲン"),
+            ("マイページ", "マイページ", "マイページ"),
+            ("個人情報", "コジンジョウホウ", "コジンジョーホー"),
+            ("フォルダー", "フォルダー", "フォルダー"),
+            (
+                "インフォグラフィック",
+                "インフォグラフィック",
+                "インフォグラフィック",
+            ),
+            ("商品開発", "ショウヒンカイハツ", "ショーヒンカイハツ"),
+            ("日常生活", "ニチジョウセイカツ", "ニチジョーセイカツ"),
+            ("調査結果", "チョウサケッカ", "チョーサケッカ"),
+            ("著作権侵害", "チョサクケンシンガイ", "チョサクケンシンガイ"),
+            (
+                "AIアシスタント",
+                "エーアイアシスタント",
+                "エーアイアシスタント",
+            ),
+        ] {
+            for text in [word.to_owned(), format!("{word}の説明を確認する。")] {
+                let tokens = analyzer.try_tokenize(&text).unwrap();
+                let prefix = tokens
+                    .iter()
+                    .take_while(|token| token.end <= word.len())
+                    .collect::<Vec<_>>();
+                assert_eq!(prefix.last().map(|token| token.end), Some(word.len()));
+                assert_eq!(
+                    prefix
+                        .iter()
+                        .map(|t| t.reading.as_ref())
+                        .collect::<String>(),
+                    reading,
+                    "{name}: {text}: {tokens:?}"
+                );
+                assert_eq!(
+                    prefix
+                        .iter()
+                        .map(|t| t.pronunciation.as_ref())
+                        .collect::<String>(),
+                    pronunciation,
+                    "{name}: {text}: {tokens:?}"
+                );
+                assert!(prefix.iter().all(|t| t.is_known));
+                assert!(prefix.iter().all(|t| !t.pos.starts_with("名詞,固有名詞")));
+                for token in &tokens {
+                    assert_eq!(&text[token.start..token.end], token.surface.as_ref());
+                }
+            }
+        }
+        let tokens = analyzer.tokenize("高さが低そうだ。");
+        let index = tokens
+            .iter()
+            .position(|t| t.surface.as_ref() == "低")
+            .unwrap();
+        assert_eq!(tokens[index].base_form.as_ref(), "低い");
+        assert_eq!(tokens[index].reading.as_ref(), "ヒク");
+        assert!(tokens[index].pos.starts_with("形容詞,"));
+        assert_eq!(tokens[index + 1].surface.as_ref(), "そう");
+        let tokens = analyzer.tokenize("低層の建物。");
+        assert_eq!(tokens[0].surface.as_ref(), "低層");
+        assert_eq!(tokens[0].reading.as_ref(), "テイソウ");
+        for text in ["三大方式を比較する。", "三大モデルを調べる。"] {
+            let tokens = analyzer.tokenize(text);
+            assert_eq!(tokens[0].surface.as_ref(), "三大", "{name}: {text}");
+            assert_eq!(tokens[0].reading.as_ref(), "サンダイ", "{name}: {text}");
+            assert!(tokens[0].pos.starts_with("名詞,一般"));
+        }
+        for text in ["三大さんに聞く。", "三大君が来る。"] {
+            let tokens = analyzer.tokenize(text);
+            assert_eq!(tokens[0].reading.as_ref(), "ミオウ", "{name}: {text}");
+            assert!(tokens[0].pos.starts_with("名詞,固有名詞,人名,姓"));
+        }
+        let tokens = analyzer.tokenize("役所で手続きをする。");
+        assert_eq!(tokens[0].reading.as_ref(), "ヤクショ");
+    }
+}
+
+#[test]
+#[ignore = "配布辞書が必要"]
 fn test_distributed_roles_and_academic_terms_keep_readings_and_common_pos() {
     for name in ["ipadic-neologd", "ipadic-neologd-sudachi"] {
         let mut analyzer = load_distributed_dict(name);
