@@ -35,6 +35,17 @@ mise exec -- cargo build --workspace
 mise exec -- cargo test --locked --workspace --exclude hasami-python -- --ignored distributed
 ```
 
+## CLI の実装
+
+`src/main.rs` がコマンドを振り分け、配布辞書を扱う `dict` の引数と実行は `src/cli/dict.rs`、
+`tokenize` の入出力・並列処理・書式化は `src/cli/tokenize.rs` に置く。
+`src/cli/` はバイナリ専用で、ライブラリの公開 API には含めない。
+
+標準入力の処理は `process_input` が `Read` と `Write` を受け、実際の標準入力・標準出力への接続は
+`run` が行う。入力の分割位置や割り込み、壊れた UTF-8、読み書きと flush の失敗は、
+読み書き先を差し替える単体テストで確かめる。読み込む前に出力を flush すること、壊れた行の手前にある
+完結した行だけを出すこと、並列でも入力順に出すことを保つ。
+
 ## 辞書
 
 辞書の衝突や未知語をコーパスで調べるには `scripts/audit_morphology.py` を使う。
