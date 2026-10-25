@@ -4,6 +4,7 @@ import copy
 import hashlib
 import io
 import json
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -67,10 +68,13 @@ class DictionarySourcesTests(unittest.TestCase):
         )
 
     def test_shell_settings_work_in_bash(self):
+        # Windows のプロセス起動は PATH より System32 を先に探すため、選んだ Bash を絶対パスで渡す。
+        bash = shutil.which("bash")
+        self.assertIsNotNone(bash, "シェル設定の検証には Bash が必要")
         command = sources.shell_settings(sources.load_sources(self.path))
         command += '\nprintf "%s\\n" "$IPADIC_COMMIT" "$NEOLOGD_COMMIT" "$SUDACHI_VERSION" "${SUDACHI_FILES[@]}"'
         result = subprocess.run(
-            ["bash", "-eu", "-c", command], check=True, capture_output=True, text=True
+            [bash, "-eu", "-c", command], check=True, capture_output=True, text=True
         )
         self.assertEqual(
             result.stdout.splitlines(),
