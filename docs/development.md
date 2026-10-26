@@ -37,8 +37,10 @@ mise exec -- cargo test --locked --workspace --exclude hasami-python -- --ignore
 
 ## CLI の実装
 
-`src/main.rs` がコマンドを振り分け、配布辞書を扱う `dict` の引数と実行は `src/cli/dict.rs`、
-`tokenize` の入出力・並列処理・書式化は `src/cli/tokenize.rs` に置く。
+`src/main.rs` がコマンドを振り分け、`build`・`merge` の引数と実行は `src/cli/build.rs`、
+`repair` は `src/cli/repair.rs`、配布辞書を扱う `dict` は `src/cli/dict.rs` に置く。
+`build`・`merge`・`repair` 共通の CSV 入力・メタデータ・辞書の書き出しは `src/cli/write.rs`、
+`tokenize` の入出力・並列処理・書式化は `src/cli/tokenize.rs` が受け持つ。
 `src/cli/` はバイナリ専用で、ライブラリの公開 API には含めない。
 
 標準入力の処理は `process_input` が `Read` と `Write` を受け、実際の標準入力・標準出力への接続は

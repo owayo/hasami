@@ -32,10 +32,13 @@ Rust製の日本語形態素解析エンジン。外部エンジン（MeCab等�
 hasami/
 ├── src/
 │   ├── lib.rs          # ライブラリエントリポイント（sentence 以外のモジュールは `analyzer` feature）、include_hsd! マクロ
-│   ├── main.rs         # CLI のコマンド振り分けと、構築・修復・書き出し・ベンチマーク・情報表示
+│   ├── main.rs         # CLI のコマンド振り分けと、書き出し・ベンチマーク・情報表示
 │   ├── cli/            # バイナリ専用。ライブラリの feature や公開 API には含めない
+│   │   ├── build.rs    # build・merge の引数と実行
 │   │   ├── dict.rs     # dict の引数と実行（配布辞書の取得・配置・状態確認）
-│   │   └── tokenize.rs # tokenize の入出力・並列処理・書式化（process_input は Read / Write を受ける）
+│   │   ├── repair.rs   # repair の引数と実行（修復・削除・降格・追加マージ）
+│   │   ├── tokenize.rs # tokenize の入出力・並列処理・書式化（process_input は Read / Write を受ける）
+│   │   └── write.rs    # build・merge・repair 共通の CSV 入力・メタデータ・辞書の書き出し
 │   ├── dict/
 │   │   ├── mod.rs      # DictEntry, UnkEntry, ConnectionMatrix（解析側でも使う型）
 │   │   ├── builder.rs  # DictBuilder（CSV 読み込み・repair・書き出し）。`build` feature

@@ -3,17 +3,15 @@
 mod cli;
 
 use clap::{Parser, Subcommand};
+use cli::build::{BuildArgs, MergeArgs};
 use cli::dict::DictCommand;
+use cli::repair::RepairArgs;
 use cli::tokenize::{self, OutputFormat};
 use hasami::analyzer::Analyzer;
-use hasami::dict::DictBuilder;
-use hasami::hsd::meta;
-use hasami::hsd::{Dictionary, Meta, PosScheme, WriteOptions};
-use indicatif::{ProgressBar, ProgressStyle};
+use hasami::hsd::Dictionary;
 use std::io::{self, Write};
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::time::Instant;
 
 #[derive(Parser)]
@@ -26,36 +24,10 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     /// 辞書を構築（MeCab形式のCSVから）
-    Build {
-        /// 辞書CSVファイルのディレクトリ
-        #[arg(short, long)]
-        input: PathBuf,
-
-        /// 出力辞書ファイル (.hsd)
-        #[arg(short, long)]
-        output: PathBuf,
-
-        #[command(flatten)]
-        write: WriteArgs,
-    },
+    Build(BuildArgs),
 
     /// 既存辞書にMeCab形式CSVを追加（マージ）
-    Merge {
-        /// 既存の .hsd 辞書ファイル
-        #[arg(short, long)]
-        dict: PathBuf,
-
-        /// 追加するCSVファイルまたはディレクトリ
-        #[arg(short, long)]
-        input: PathBuf,
-
-        /// 出力辞書ファイル (.hsd)。省略時は既存辞書を上書き
-        #[arg(short, long)]
-        output: Option<PathBuf>,
-
-        #[command(flatten)]
-        write: WriteArgs,
-    },
+    Merge(MergeArgs),
 
     /// 配布辞書（リリースの添付ファイル）の取得と、置き場所の辞書の確認
     ///
@@ -145,84 +117,7 @@ enum Commands {
     },
 
     /// 辞書の壊れた読み・誤読エントリを修復
-    Repair {
-        /// 辞書ファイルのパス (.hsd)
-        #[arg(short, long)]
-        dict: PathBuf,
-
-        /// 出力辞書ファイル (.hsd)。省略時は既存辞書を上書き
-        #[arg(short, long)]
-        output: Option<PathBuf>,
-
-        /// 接続行列の範囲外の文脈 ID を持つエントリを削除する
-        /// (解析時に接続コスト 0 として扱われ、不当に有利になるエントリ)
-        #[arg(long)]
-        drop_invalid_context_ids: bool,
-
-        /// 壊れた発音の修復 (常時) を行わない。削除リストだけを適用したいときに使う
-        /// (発音の修復は、読みも発音もカタカナでない語 (ラテン文字の読み等) の読みを空にする。記号は変えない)
-        #[arg(long)]
-        no_pronunciation_repair: bool,
-
-        /// 活用語・機能語と衝突する異表記エントリを削除する
-        /// (「高い」→「高位(コウイ)」等の表記ゆれ正規化エントリ)
-        #[arg(long)]
-        drop_ortho_variants: bool,
-
-        /// 漢数字を数以外に読ませるエントリを削除する
-        /// (「十五(トウゴ)」「二十八(ツチヤ)」等の人名・地名エントリ)
-        #[arg(long)]
-        drop_numeral_misreadings: bool,
-
-        /// 削除するエントリを列挙した CSV (`表層形,読み[,品詞]`)。複数指定可。
-        /// 3 列目の品詞 (例 "名詞,固有名詞,人名") を書くと、その品詞で始まるエントリだけを削除する
-        #[arg(long, value_name = "CSV")]
-        remove: Vec<PathBuf>,
-
-        /// 文や句を 1 語にした名詞を削除する。値は IPAdic 単体の辞書 (.hsd)。
-        /// ひらがなか文末記号を含む名詞の表層形をこの辞書で解析し、文法に合う文や句
-        /// (述語・助詞で終わる並び「どうでしょう」「一緒に」、内容語 1 つ以下の文 + 文末記号「好きだ。」、
-        /// 機能語だけの並び「なのか」、感動詞「こんにちは。」、記号 + 文末記号「…。」、表記ゆれの副詞・用言
-        /// 「および」=お呼び) になるエントリを削除する。この辞書自身の語は削除しない
-        #[arg(long, value_name = "IPADIC_HSD")]
-        drop_sentence_like_nouns: Option<PathBuf>,
-
-        /// 数と単位の記号だけの表層形を 1 語にした固有名詞 (「50%」「0.1℃」「30℃」) を削除する。
-        /// 値は IPAdic 単体の辞書 (.hsd)。「名詞,固有名詞,一般」の表層形をこの辞書で解析し、数 (名詞,数) と
-        /// 単位 (名詞,接尾) だけに分かれるものを削除する。人名・組織 (「100%ORANGE」「4℃」) は残す
-        #[arg(long, value_name = "IPADIC_HSD")]
-        drop_quantity_nouns: Option<PathBuf>,
-
-        /// 一般語に付いた「名詞,固有名詞,一般」を一般名詞に降格する。値は IPAdic 単体の辞書 (.hsd)。
-        /// 表層形をこの辞書で解析して「一般名詞・サ変接続・形容動詞語幹 + 一般名詞を作る接尾辞」に
-        /// 分かれ、読みがその接尾辞の読みで終わる語 (成果物・多角的・可視化・安全性・担当者 等) を、
-        /// 名詞,一般 (語末が「化」なら名詞,サ変接続、「的」なら名詞,形容動詞語幹) にし、文脈 ID も
-        /// その品詞のものにする。参照辞書は修復する辞書と同じ接続行列を持つこと
-        #[arg(long, value_name = "IPADIC_HSD")]
-        demote_common_proper_nouns: Option<PathBuf>,
-
-        /// 修復後に追加マージする MeCab 形式 CSV またはそのディレクトリ。複数指定可
-        #[arg(long, value_name = "PATH")]
-        merge: Vec<PathBuf>,
-
-        #[command(flatten)]
-        write: WriteArgs,
-    },
-}
-
-/// 辞書を書き出すコマンド共通の設定
-#[derive(clap::Args)]
-struct WriteArgs {
-    /// メタデータを設定する（`key=value`、複数指定可）。`name`・`pos_scheme`（ipadic / unidic）・
-    /// `sources` など。build では `name` の既定は出力ファイル名、`pos_scheme` の既定は ipadic。
-    /// merge・repair は入力辞書のメタデータを引き継いで上書きする
-    #[arg(long = "meta", value_name = "KEY=VALUE")]
-    meta: Vec<String>,
-
-    /// 同じ表層形・同じ文脈 ID の中でコストが最小でないエントリを除く（配布用の最終辞書向け）。
-    /// 1-best の解析結果は変わらない。除いた辞書は merge・repair の入力にできない
-    #[arg(long)]
-    prune_dominated: bool,
+    Repair(RepairArgs),
 }
 
 fn main() {
@@ -237,17 +132,8 @@ fn run() -> io::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Build {
-            input,
-            output,
-            write,
-        } => cmd_build(&input, &output, &write),
-        Commands::Merge {
-            dict,
-            input,
-            output,
-            write,
-        } => cmd_merge(&dict, &input, output.as_deref(), &write),
+        Commands::Build(args) => args.run(),
+        Commands::Merge(args) => args.run(),
         Commands::Dict { command } => command.run(),
         Commands::Tokenize {
             dict,
@@ -279,202 +165,8 @@ fn run() -> io::Result<()> {
         },
         Commands::Info { dict, verify } => cmd_info(&dict, verify),
         Commands::Export { dict, output } => cmd_export(&dict, output.as_deref()),
-        Commands::Repair {
-            dict,
-            output,
-            drop_invalid_context_ids,
-            no_pronunciation_repair,
-            drop_ortho_variants,
-            drop_numeral_misreadings,
-            remove,
-            drop_sentence_like_nouns,
-            drop_quantity_nouns,
-            demote_common_proper_nouns,
-            merge,
-            write,
-        } => cmd_repair(
-            &dict,
-            output.as_deref(),
-            &write,
-            RepairOptions {
-                drop_invalid_context_ids,
-                repair_pronunciation: !no_pronunciation_repair,
-                drop_ortho_variants,
-                drop_numeral_misreadings,
-                remove: &remove,
-                drop_sentence_like_nouns: drop_sentence_like_nouns.as_deref(),
-                drop_quantity_nouns: drop_quantity_nouns.as_deref(),
-                demote_common_proper_nouns: demote_common_proper_nouns.as_deref(),
-                merge: &merge,
-            },
-        ),
+        Commands::Repair(args) => args.run(),
     }
-}
-
-fn ensure_hsd_extension(path: &Path) -> PathBuf {
-    if path.extension().is_none_or(|ext| ext != "hsd") {
-        path.with_extension("hsd")
-    } else {
-        path.to_path_buf()
-    }
-}
-
-fn make_trie_progress_bar() -> ProgressBar {
-    let pb = ProgressBar::new(0);
-    pb.set_style(
-        ProgressStyle::with_template(
-            "{spinner:.green} Building trie [{bar:40.cyan/blue}] {pos}/{len} keys ({percent}%) [{elapsed_precise}<{eta_precise}, {per_sec}]"
-        )
-        .unwrap()
-        .progress_chars("█▉▊▋▌▍▎▏  "),
-    );
-    pb
-}
-
-/// `--meta KEY=VALUE` をメタデータに反映する
-fn apply_meta_args(meta: &mut Meta, args: &[String]) -> io::Result<()> {
-    for kv in args {
-        let (key, value) = kv.split_once('=').ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!("--meta expects KEY=VALUE, got `{kv}`"),
-            )
-        })?;
-        meta.set(key, value)?;
-    }
-    Ok(())
-}
-
-/// メタデータの `repairs` に今回の操作を書き足す（これまでの操作の後ろにカンマでつなぐ）
-fn append_repairs(meta: &mut Meta, ops: &[String]) -> io::Result<()> {
-    if ops.is_empty() {
-        return Ok(());
-    }
-    let mut all: Vec<String> = meta
-        .get(meta::KEY_REPAIRS)
-        .filter(|v| !v.is_empty())
-        .map(|v| v.split(',').map(String::from).collect())
-        .unwrap_or_default();
-    all.extend(ops.iter().cloned());
-    meta.set(meta::KEY_REPAIRS, &all.join(","))?;
-    Ok(())
-}
-
-fn file_name(path: &Path) -> String {
-    path.file_name().map_or_else(
-        || path.display().to_string(),
-        |n| n.to_string_lossy().into_owned(),
-    )
-}
-
-/// 辞書を書き出して概要を表示する
-fn write_dict(
-    builder: &DictBuilder,
-    output: &Path,
-    mut meta: Meta,
-    args: &WriteArgs,
-    verb: &str,
-    start: Instant,
-) -> io::Result<()> {
-    apply_meta_args(&mut meta, &args.meta)?;
-    let opts = WriteOptions {
-        meta,
-        prune_dominated: args.prune_dominated,
-    };
-    eprintln!("Building trie with {} entries...", builder.entry_count());
-    let pb = make_trie_progress_bar();
-    let stats = builder.write_hsd(output, &opts, |done, total| {
-        pb.set_length(total as u64);
-        pb.set_position(done as u64);
-    });
-    pb.finish_and_clear();
-    let stats = stats?;
-    let pruned = if args.prune_dominated {
-        format!(", {} dominated entries pruned", stats.pruned)
-    } else {
-        String::new()
-    };
-    eprintln!(
-        "{verb} in {:.2}s: {} entries ({} surfaces, {} feature records{pruned}), {:.1} MB -> {}",
-        start.elapsed().as_secs_f64(),
-        stats.entries,
-        stats.surfaces,
-        stats.features,
-        stats.bytes as f64 / 1024.0 / 1024.0,
-        output.display()
-    );
-    Ok(())
-}
-
-fn cmd_build(input: &Path, output: &Path, write: &WriteArgs) -> io::Result<()> {
-    eprintln!("Building dictionary from: {}", input.display());
-    let start = Instant::now();
-
-    let mut builder = DictBuilder::new();
-
-    // matrix.def があれば読み込み。CSV より先に読むと、範囲外の文脈 ID を持つ行を
-    // 行番号付きで検出できる
-    let matrix_path = input.join("matrix.def");
-    if matrix_path.exists() {
-        builder.load_matrix(&matrix_path)?;
-    } else {
-        eprintln!("Warning: matrix.def not found, all connection costs are 0");
-    }
-
-    // CSVファイルを読み込み
-    builder.add_csv_dir(input)?;
-
-    // char.def があれば読み込み
-    let char_def_path = input.join("char.def");
-    if char_def_path.exists() {
-        builder.load_char_def(&char_def_path)?;
-    }
-
-    // unk.def があれば読み込み
-    let unk_path = input.join("unk.def");
-    if unk_path.exists() {
-        builder.load_unk(&unk_path)?;
-    }
-    builder.check_context_ids()?;
-
-    let output = ensure_hsd_extension(output);
-    let name = output
-        .file_stem()
-        .map_or_else(|| "hasami".into(), |s| s.to_string_lossy().into_owned());
-    let meta = Meta::new(&name, PosScheme::Ipadic);
-    write_dict(&builder, &output, meta, write, "Dictionary built", start)
-}
-
-fn cmd_merge(
-    dict_path: &Path,
-    input: &Path,
-    output: Option<&Path>,
-    write: &WriteArgs,
-) -> io::Result<()> {
-    eprintln!("Loading existing dictionary: {}", dict_path.display());
-    let start = Instant::now();
-
-    let mut builder = DictBuilder::new();
-
-    // 既存辞書をインポート
-    builder.load_hsd(dict_path)?;
-    let old_count = builder.entry_count();
-
-    // CSVを追加
-    if input.is_dir() {
-        builder.add_csv_dir(input)?;
-    } else {
-        builder.add_csv(input)?;
-    }
-    let new_count = builder.entry_count() - old_count;
-    eprintln!("Added {} new entries", new_count);
-    builder.check_context_ids()?;
-
-    let output_path = output.map_or_else(|| dict_path.to_path_buf(), |p| p.to_path_buf());
-    let output_path = ensure_hsd_extension(&output_path);
-    let mut meta = builder.write_options().meta;
-    append_repairs(&mut meta, &[format!("merge:{}", file_name(input))])?;
-    write_dict(&builder, &output_path, meta, write, "Merged", start)
 }
 
 fn cmd_bench(dict_path: &Path, text: &str, iterations: usize) -> io::Result<()> {
@@ -544,204 +236,6 @@ fn cmd_bench_file(dict_path: &Path, file: &Path, passes: usize) -> io::Result<()
     );
 
     Ok(())
-}
-
-/// `hasami repair` のオプション
-struct RepairOptions<'a> {
-    drop_invalid_context_ids: bool,
-    repair_pronunciation: bool,
-    drop_ortho_variants: bool,
-    drop_numeral_misreadings: bool,
-    remove: &'a [PathBuf],
-    drop_sentence_like_nouns: Option<&'a Path>,
-    drop_quantity_nouns: Option<&'a Path>,
-    demote_common_proper_nouns: Option<&'a Path>,
-    merge: &'a [PathBuf],
-}
-
-/// 参照辞書（IPAdic 単体）を読み込む。`--drop-sentence-like-nouns`・`--drop-quantity-nouns`・
-/// `--demote-common-proper-nouns` に同じ辞書を渡したときは 1 回だけ読み込む
-fn load_reference(
-    cache: &mut Option<(PathBuf, Arc<Dictionary>)>,
-    path: &Path,
-) -> io::Result<Arc<Dictionary>> {
-    if let Some((cached, dict)) = cache.as_ref()
-        && cached == path
-    {
-        return Ok(Arc::clone(dict));
-    }
-    eprintln!("Loading reference dictionary: {}", path.display());
-    let dict = Arc::new(Dictionary::load(path)?);
-    *cache = Some((path.to_path_buf(), Arc::clone(&dict)));
-    Ok(dict)
-}
-
-/// 辞書を読み込み、次の順で修復して書き出す
-///
-/// 1. 範囲外の文脈 ID を持つエントリの除去（`--drop-invalid-context-ids`）。発音の修復が
-///    これらを借用元に使わないよう、最初に落とす
-/// 2. 壊れた発音の修復（`--no-pronunciation-repair` を付けなければ常に行う）
-/// 3. 汎用フィルタによる除去（`--drop-ortho-variants` / `--drop-numeral-misreadings`）
-/// 4. 削除リスト CSV の適用（`--remove`）。削除リストは上流の辞書の品詞で書くので、降格より先に適用する
-/// 5. 文や句を 1 語にした名詞の除去（`--drop-sentence-like-nouns`）と、数と単位の組の固有名詞の除去
-///    （`--drop-quantity-nouns`）
-/// 6. 一般語の固有名詞の降格（`--demote-common-proper-nouns`）
-/// 7. CSV の追加マージ（`--merge`）。追加する語は削除・降格の対象にしない
-///
-/// 行った操作はメタデータの `repairs` に書き足す。
-fn cmd_repair(
-    dict_path: &Path,
-    output: Option<&Path>,
-    write: &WriteArgs,
-    opts: RepairOptions<'_>,
-) -> io::Result<()> {
-    eprintln!("Loading dictionary: {}", dict_path.display());
-    let start = Instant::now();
-
-    let mut builder = DictBuilder::new();
-    builder.load_hsd(dict_path)?;
-    let mut ops: Vec<String> = Vec::new();
-
-    let mut dropped = 0;
-    if opts.drop_invalid_context_ids {
-        let n = builder.drop_invalid_context_ids();
-        eprintln!("Dropped {} entries with out-of-range context IDs", n);
-        dropped += n;
-        ops.push("drop-invalid-context-ids".into());
-    }
-    // 範囲外の ID が残っていると書き出しで失敗するので、時間のかかる処理の前に止める
-    builder.check_context_ids()?;
-
-    let fixed = if opts.repair_pronunciation {
-        let n = builder.repair_pronunciation();
-        eprintln!("Fixed {} entries with non-katakana pronunciation", n);
-        ops.push("pronunciation".into());
-        n
-    } else {
-        0
-    };
-
-    if opts.drop_ortho_variants {
-        let n = builder.drop_conflicting_ortho_variants();
-        eprintln!("Dropped {} conflicting ortho-variant entries", n);
-        dropped += n;
-        ops.push("drop-ortho-variants".into());
-    }
-    if opts.drop_numeral_misreadings {
-        let n = builder.drop_numeral_misreadings();
-        eprintln!("Dropped {} numeral misreading entries", n);
-        dropped += n;
-        ops.push("drop-numeral-misreadings".into());
-    }
-    for path in opts.remove {
-        let stats = builder.drop_entries_from_csv(path)?;
-        eprintln!(
-            "Dropped {} entries listed in {} ({} rows, {} rows matched nothing)",
-            stats.dropped,
-            path.display(),
-            stats.rows,
-            stats.unmatched_rows
-        );
-        for sample in &stats.unmatched_samples {
-            eprintln!("  unmatched: line {}", sample);
-        }
-        dropped += stats.dropped;
-        ops.push(format!("remove:{}", file_name(path)));
-    }
-
-    let mut reference_cache: Option<(PathBuf, Arc<Dictionary>)> = None;
-    if let Some(reference_path) = opts.drop_sentence_like_nouns {
-        let reference = load_reference(&mut reference_cache, reference_path)?;
-        let stats = builder.drop_sentence_like_nouns(&reference)?;
-        eprintln!(
-            "Dropped {} of {} noun entries that {} parses as sentences or phrases",
-            stats.dropped,
-            stats.examined,
-            file_name(reference_path)
-        );
-        let reasons: Vec<String> = stats
-            .by_reason
-            .iter()
-            .map(|(r, n)| format!("{}:{n}", r.name()))
-            .collect();
-        eprintln!("  by reason: {}", reasons.join(" "));
-        for (reason, sample) in &stats.samples {
-            eprintln!("  drop [{}]: {sample}", reason.name());
-        }
-        dropped += stats.dropped;
-        ops.push("drop-sentence-like-nouns".into());
-    }
-    if let Some(reference_path) = opts.drop_quantity_nouns {
-        let reference = load_reference(&mut reference_cache, reference_path)?;
-        let stats = builder.drop_quantity_nouns(&reference)?;
-        eprintln!(
-            "Dropped {} of {} number-and-unit proper nouns that {} parses as a number and a suffix",
-            stats.dropped,
-            stats.examined,
-            file_name(reference_path)
-        );
-        for sample in &stats.samples {
-            eprintln!("  drop: {sample}");
-        }
-        dropped += stats.dropped;
-        ops.push("drop-quantity-nouns".into());
-    }
-
-    let mut demoted = 0;
-    if let Some(reference_path) = opts.demote_common_proper_nouns {
-        let reference = load_reference(&mut reference_cache, reference_path)?;
-        let stats = builder.demote_common_proper_nouns(&reference)?;
-        eprintln!(
-            "Demoted {} of {} 名詞,固有名詞,一般 entries that {} splits into common nouns + a suffix",
-            stats.demoted,
-            stats.examined,
-            file_name(reference_path)
-        );
-        for p in &stats.by_pos {
-            eprintln!(
-                "  -> {}: {} entries (left_id={}, right_id={})",
-                p.pos, p.entries, p.left_id, p.right_id
-            );
-        }
-        let suffixes: Vec<String> = stats
-            .by_suffix
-            .iter()
-            .map(|(s, n)| format!("{s}:{n}"))
-            .collect();
-        eprintln!("  by suffix: {}", suffixes.join(" "));
-        for sample in &stats.samples {
-            eprintln!("  demote: {sample}");
-        }
-        demoted = stats.demoted;
-        ops.push("demote-common-proper-nouns".into());
-    }
-
-    let mut added = 0;
-    for path in opts.merge {
-        let before = builder.entry_count();
-        if path.is_dir() {
-            builder.add_csv_dir(path)?;
-        } else {
-            builder.add_csv(path)?;
-        }
-        let n = builder.entry_count() - before;
-        eprintln!("Merged {} entries from {}", n, path.display());
-        added += n;
-        ops.push(format!("merge:{}", file_name(path)));
-    }
-
-    let output_path = output.map_or_else(|| dict_path.to_path_buf(), |p| p.to_path_buf());
-    let output_path = ensure_hsd_extension(&output_path);
-    let unchanged = fixed == 0 && dropped == 0 && demoted == 0 && added == 0;
-    if unchanged && output_path == dict_path && !write.prune_dominated && write.meta.is_empty() {
-        eprintln!("No entries to fix. Skipping rebuild.");
-        return Ok(());
-    }
-    builder.check_context_ids()?;
-
-    let mut meta = builder.write_options().meta;
-    append_repairs(&mut meta, &ops)?;
-    write_dict(&builder, &output_path, meta, write, "Repaired", start)
 }
 
 fn cmd_export_sentence_exceptions(dict_path: &Path, output: Option<&Path>) -> io::Result<()> {
@@ -898,18 +392,6 @@ fn cmd_info(dict_path: &Path, verify: bool) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_ensure_hsd_extension_adds_missing_extension() {
-        let path = ensure_hsd_extension(Path::new("dict"));
-        assert_eq!(path, PathBuf::from("dict.hsd"));
-    }
-
-    #[test]
-    fn test_ensure_hsd_extension_preserves_existing_extension() {
-        let path = ensure_hsd_extension(Path::new("dict.hsd"));
-        assert_eq!(path, PathBuf::from("dict.hsd"));
-    }
 
     #[test]
     fn test_bench_rejects_zero_iterations() {
