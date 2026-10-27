@@ -195,7 +195,7 @@ for token in tokens:
 ## 辞書
 
 配布辞書は 3 つあり、リリースに添付しています（リポジトリには置いていません）。
-下表は 2026-10-13 のベンチマークで使った正式版 26.10.102 の配布辞書の大きさです（非圧縮 `.hsd`、MB は 1,000,000B）。
+下表は 2026-10-27 のベンチマークで使った正式版 26.10.107 の配布辞書の大きさです（非圧縮 `.hsd`、MB は 1,000,000B）。
 
 | 辞書 | 内容 | 大きさ | 推奨用途 |
 |------|------|------:|---------|
@@ -232,13 +232,13 @@ flowchart TD
 
 ## ベンチマーク
 
-2026-10-13、正式版 **26.10.102** を測定しました。AMD Ryzen 7 5700X（8 コア・16 論理 CPU）・RAM 32 GiB、Windows 11 10.0.26300 x64。
-入力は青空文庫の夏目漱石『坊っちゃん』482 行・265,281 B。Rust 1.99.0、Python 3.14.8、Temurin Java 27+35、uv 0.13.0、Gradle 9.8.1、hyperfine 2.0.0 を使いました。
-Python 3.15 では mecab-python3 1.0.12 をビルドできなかったため、全 Python 構成を 3.14 系の最新版 3.14.8 にそろえています。
+2026-10-27、正式版 **26.10.107** を測定しました。AMD Ryzen 7 5700X（8 コア・16 論理 CPU）・RAM 32 GiB、Windows 11 10.0.26300 x64。
+入力は青空文庫の夏目漱石『坊っちゃん』482 行・265,281 B。Rust 1.99.1、Python 3.14.10、Temurin Java 27+35、uv 0.13.5、Gradle 9.8.2、hyperfine 2.0.0 を使いました。
+Python 3.15 では mecab-python3 1.0.12 をビルドできなかったため、全 Python 構成を 3.14 系の最新版 3.14.10 にそろえています。
 
 | 実装 | 版 | 辞書 |
 | --- | --- | --- |
-| hasami Rust / 公式 PyO3 | 26.10.102、同じ [commit c352a60](https://github.com/owayo/hasami/commit/c352a60b97e53056bb5c763e9c0777d429ca2937) | [v26.10.102 の配布辞書](https://github.com/owayo/hasami/releases/tag/v26.10.102) 3 種、形式 v5、公開サイズ・SHA-256 と全件検証を確認 |
+| hasami Rust / 公式 PyO3 | 26.10.107、同じ [commit 2ef769e](https://github.com/owayo/hasami/commit/2ef769ea807669652e2b36fc7189bc104f74789a) | [v26.10.107 の配布辞書](https://github.com/owayo/hasami/releases/tag/v26.10.107) 3 種、形式 v5、公開サイズ・SHA-256 と全件検証を確認 |
 | MeCab C / mecab-python3 | 0.996 / 1.0.12、同じ同梱 DLL | IPAdic 2.7.0-20070801（ipadic 1.0.0 のコンパイル済み UTF-8 辞書） |
 | Sudachi Java | 0.8.2 | SudachiDict 20260723.1 core / V1、A モード |
 | sudachi.rs / SudachiPy | 0.7.0 | Java 版と同じ辞書・A モード |
@@ -260,12 +260,12 @@ Java は `-Xms256m -Xmx1g`、GC/JIT の補助スレッドも通常動作のま�
 
 | 実装・辞書 | ロード ms | ロード＋初回 ms | 全行解析 ms | IQR ms | CV |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| hasami / IPAdic | 0.211 | 0.281 | 19.096 | 1.082 | 0.05 |
-| hasami / IPAdic + NEologd | 0.212 | 0.277 | 21.634 | 1.162 | 0.04 |
-| hasami / IPAdic + NEologd + SudachiDict | 0.233 | 0.302 | 21.897 | 0.910 | 0.04 |
-| MeCab C / IPAdic | 0.456 | 0.489 | 14.760 | 0.490 | 0.02 |
-| Sudachi Java / core A | 98.470 | 106.800 | 91.784 | 5.189 | 0.13 |
-| sudachi.rs / core A | 32.868 | 32.927 | 67.658 | 1.619 | 0.02 |
+| hasami / IPAdic | 0.226 | 0.298 | 20.931 | 0.785 | 0.04 |
+| hasami / IPAdic + NEologd | 0.221 | 0.316 | 23.385 | 0.832 | 0.03 |
+| hasami / IPAdic + NEologd + SudachiDict | 0.217 | 0.288 | 22.742 | 1.152 | 0.04 |
+| MeCab C / IPAdic | 0.476 | 0.507 | 14.912 | 0.579 | 0.04 |
+| Sudachi Java / core A | 97.438 | 105.151 | 93.515 | 4.202 | 0.15 |
+| sudachi.rs / core A | 35.069 | 35.137 | 68.236 | 2.119 | 0.04 |
 
 ### Python API
 
@@ -273,11 +273,11 @@ Java は `-Xms256m -Xmx1g`、GC/JIT の補助スレッドも通常動作のま�
 
 | 実装・辞書 | ロード ms | ロード＋初回 ms | 全行解析 ms | IQR ms | CV |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| hasami Python / IPAdic | 0.196 | 0.271 | 210.627 | 3.361 | 0.01 |
-| hasami Python / IPAdic + NEologd | 0.214 | 0.292 | 213.673 | 4.689 | 0.01 |
-| hasami Python / IPAdic + NEologd + SudachiDict | 0.214 | 0.286 | 213.805 | 6.165 | 0.02 |
-| mecab-python3 / IPAdic | 2.240 | 2.289 | 199.831 | 3.689 | 0.02 |
-| SudachiPy / core A | 47.466 | 47.605 | 263.104 | 6.003 | 0.02 |
+| hasami Python / IPAdic | 0.196 | 0.274 | 218.928 | 3.965 | 0.01 |
+| hasami Python / IPAdic + NEologd | 0.215 | 0.296 | 222.373 | 8.276 | 0.02 |
+| hasami Python / IPAdic + NEologd + SudachiDict | 0.225 | 0.321 | 220.887 | 6.567 | 0.02 |
+| mecab-python3 / IPAdic | 2.208 | 2.257 | 206.911 | 6.304 | 0.04 |
+| SudachiPy / core A | 48.456 | 48.593 | 266.036 | 5.384 | 0.01 |
 
 ### プロセス全体の時間と最大メモリ
 
@@ -287,21 +287,21 @@ hyperfine は専用アダプタの起動・入力・ロード・全行解析・�
 
 | 実装・辞書 | プロセス全体 ms | IQR ms | 最大 Working Set MiB |
 | --- | ---: | ---: | ---: |
-| hasami / IPAdic | 36.499 | 1.722 | 19.979 |
-| hasami / IPAdic + NEologd | 55.879 | 1.196 | 59.438 |
-| hasami / IPAdic + NEologd + SudachiDict | 59.432 | 1.636 | 64.939 |
-| hasami Python / IPAdic | 355.343 | 1.245 | 34.268 |
-| hasami Python / IPAdic + NEologd | 374.307 | 6.118 | 73.713 |
-| hasami Python / IPAdic + NEologd + SudachiDict | 374.303 | 4.983 | 79.039 |
-| MeCab C / IPAdic | 34.488 | 1.127 | 24.943 |
-| mecab-python3 / IPAdic | 407.511 | 5.956 | 39.838 |
-| Sudachi Java / core A | 548.962 | 28.799 | 295.170 |
-| sudachi.rs / core A | 136.527 | 3.464 | 127.217 |
-| SudachiPy / core A | 528.980 | 3.453 | 143.121 |
+| hasami / IPAdic | 38.949 | 1.161 | 20.055 |
+| hasami / IPAdic + NEologd | 59.164 | 1.523 | 59.484 |
+| hasami / IPAdic + NEologd + SudachiDict | 61.148 | 1.203 | 64.963 |
+| hasami Python / IPAdic | 384.416 | 3.630 | 34.369 |
+| hasami Python / IPAdic + NEologd | 401.360 | 5.062 | 73.908 |
+| hasami Python / IPAdic + NEologd + SudachiDict | 407.153 | 7.111 | 79.342 |
+| MeCab C / IPAdic | 36.799 | 4.975 | 24.957 |
+| mecab-python3 / IPAdic | 441.885 | 19.484 | 39.893 |
+| Sudachi Java / core A | 551.198 | 7.924 | 295.418 |
+| sudachi.rs / core A | 143.733 | 1.876 | 127.314 |
+| SudachiPy / core A | 574.811 | 6.710 | 143.215 |
 
 全 11 構成・5,302 行で、表層・UTF-8 位置・文字の欠落がないこと・件数・checksum の整合性を確認しました。ネイティブ/Python の 5 組では、表層・位置・品詞・読み・原形が全行一致しました。
-キャッシュは検証と warmup で温まった条件です。計測プロセスを含む期間平均の全体 CPU 使用率は、中央値 8.5%、範囲 7.2〜19.2% でした。
-外れ値は削除していません。Java の API の CV は 0.13 で変動が残っています。
+キャッシュは検証と warmup で温まった条件です。計測プロセスを含む期間平均の全体 CPU 使用率は、中央値 8.9%、範囲 6.7〜21.9% でした。
+外れ値は削除していません。Java の API の CV は 0.15 で変動が残っています。
 hasami 独自の語彙追加を含め、辞書の語彙・修復・分割単位が異なるため、数値を辞書から切り離したエンジン単独の優劣には換算しません。
 精度は自作の 6 文・25 トークンの fixture による回帰確認のみです。境界/span F1・品詞・原形は全構成で 100%、読みは hasami・MeCab で 100%、Sudachi で 89.5%（fixture で選んだ読みとの差）でした。品詞の分母は 25、読み・原形は句点を除く 19 トークンで、本文や一般文章の精度は未計測です。
 
