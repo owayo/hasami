@@ -6,16 +6,20 @@ import hashlib
 import http.server
 import json
 import os
-from pathlib import Path
 import statistics
 import subprocess
 import tempfile
 import threading
 import time
+from pathlib import Path
 
 
 def process_metrics(process):
-    """Windows の子プロセスの CPU 時間と最大 Working Set を取得する。"""
+    """Windows の子プロセスの CPU 時間と最大 Working Set を取得する。
+
+    Returns:
+        dict: CPU 時間と最大 Working Set。Windows 以外では空の辞書。
+    """
     if os.name != "nt":
         return {}
 
@@ -163,7 +167,7 @@ def main():
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(
-        "".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8"
+        "".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8", newline="\n"
     )
     for name in dict.fromkeys(row["dictionary"] for row in rows):
         for variant in binaries:
