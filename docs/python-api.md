@@ -5,7 +5,8 @@
 
 ## インストール
 
-maturin と Python は `mise.toml` で固定している（`mise install` で入る）。`maturin develop` は有効にした仮想環境に入れる。
+Python 3.9 以上が必要。PyO3 0.30 の対応範囲に合わせている。
+maturin と開発用の Python は `mise.toml` で固定している（`mise install` で入る）。`maturin develop` は有効にした仮想環境に入れる。
 
 ```bash
 cd hasami-python

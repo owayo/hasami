@@ -77,6 +77,16 @@ Windows では make を使わない。代わりに Build ジョブの Windows �
 リリースと同じ 5 つのターゲット（Linux の x86_64・ARM64、macOS の Apple Silicon・Intel、Windows の x86_64）を
 それぞれの OS のランナーでビルドする。
 
+Windows のローカルで `make ci` を実行するときは、Git for Windows のシェルを明示する。
+辞書ソースの Python テストも Bash を使うので、Git for Windows の `bin` を PATH の先頭に置く。
+System32 の `bash.exe`（WSL の起動用）では、この Windows 向けのテストを実行できない。
+
+```powershell
+make SHELL=C:/PROGRA~1/Git/bin/sh.exe ci
+$env:PATH = "C:\Program Files\Git\bin;" + $env:PATH
+mise exec -- python -m unittest discover -s scripts -p 'test_dictionary_*.py'
+```
+
 どのジョブも `.github/actions/setup-mise`（jdx/mise-action）で mise.toml の版のツールを入れる。mise 自身は、公開から
 14 日たった最新の版になる。`mise.toml` の版を変えたら `mise.lock` を作り直す（CI は lock の URL と SHA-256 で取る。
 トークンが無いと GitHub API の制限で記録が黙って欠ける）。

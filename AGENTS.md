@@ -221,6 +221,12 @@ make dict-clean           # ダウンロードした辞書ソースを削除（b
 target/release/hasami bench --dict dict/ipadic.hsd --file corpus.txt  # 1 行 1 文のファイルの全行を解析する時間
 ```
 
+Windows のローカルでは `make SHELL=C:/PROGRA~1/Git/bin/sh.exe ci` で Git for Windows のシェルを指定する。
+`scripts/test_dictionary_*.py` も Bash を使うため、実行前に Git for Windows の `bin` を PATH の先頭へ置く
+（System32 の `bash.exe` は WSL の起動用）。手順は `docs/development.md`。
+辞書取得の性能比較には `scripts/bench-dictionary-download.py` を使う。ローカル HTTP から同じ辞書を取得し、
+変更前後を交互に測る。Windows では CPU 時間と最大 Working Set も記録する。
+
 独自 CSV は非公開の `owayo/hasami-dictionaries` で管理し、公開側では `dict/` 全体を追跡しない。
 辞書用 CI は `scripts/dictionary-inputs.json` の取得ブランチ（main）の HEAD を毎回 `dict/` に取得する。
 取得が無い・入力が欠けている場合は止める。CI は未コミット変更も拒否する。

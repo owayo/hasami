@@ -6,7 +6,7 @@ build-backend = "maturin"
 name = "hasami"
 version = "0.1.0"
 description = "High-performance Japanese morphological analyzer"
-requires-python = ">=3.8"
+requires-python = ">=3.9"
 
 [tool.maturin]
 features = ["pyo3/extension-module"]

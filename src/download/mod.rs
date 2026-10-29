@@ -883,7 +883,6 @@ fn receive(
     let mut response = get(agent, url)?;
     check_content_length(&response, url, dict.size)?;
     let mut input = Tee::new(response.body_mut().as_reader(), dict.size, progress);
-    let mut sink = Sink::new(out, dict.size);
     let mut buffer = vec![0u8; BUFFER_BYTES];
     loop {
         let n = match input.read(&mut buffer) {
@@ -892,34 +891,12 @@ fn receive(
             Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
             Err(e) => return Err(input.fail(url, Decode::Input(e), url, dict.size).into()),
         };
-        // 受け取った量は Tee が確かめるので、書き込みで上限を超えることはない
-        sink.write(&buffer[..n]).map_err(|e| match e {
-            SinkError::Write(e) => Failure::Write(e),
-            SinkError::Over => Failure::Other(DownloadError::Oversized {
-                from: url.to_string(),
-                expected: dict.size,
-            }),
-        })?;
+        // 生の辞書では受信したものと書くものが同じなので、量と SHA-256 は Tee で一度だけ数える。
+        out.write_all(&buffer[..n]).map_err(Failure::Write)?;
     }
     let received = input.received;
     let sha256 = input.finish();
-    if received != dict.size {
-        return Err(DownloadError::Truncated {
-            from: url.to_string(),
-            expected: dict.size,
-            received,
-        }
-        .into());
-    }
-    if sha256 != dict.sha256 {
-        return Err(DownloadError::Checksum {
-            from: url.to_string(),
-            expected: dict.sha256.clone(),
-            actual: sha256,
-        }
-        .into());
-    }
-    Ok(())
+    check_integrity(url, received, &sha256, dict.size, &dict.sha256).map_err(Failure::Other)
 }
 
 /// `url` の圧縮版を受け取りながら展開して `out` に書く。受け取ったものと展開したものの両方を、
@@ -944,44 +921,31 @@ fn receive_compressed(
     })?;
     let received = input.received;
     let sha256 = input.finish();
-    if received != compressed.size {
-        return Err(DownloadError::Truncated {
-            from: url.to_string(),
-            expected: compressed.size,
-            received,
-        }
-        .into());
-    }
-    if sha256 != compressed.sha256 {
-        return Err(DownloadError::Checksum {
-            from: url.to_string(),
-            expected: compressed.sha256.clone(),
-            actual: sha256,
-        }
-        .into());
-    }
-    finish_decoded(sink, &decoded, dict).map_err(Failure::Other)
+    check_integrity(url, received, &sha256, compressed.size, &compressed.sha256)?;
+    let (written, sha256) = sink.finish();
+    check_integrity(&decoded, written, &sha256, dict.size, &dict.sha256).map_err(Failure::Other)
 }
 
-/// 展開したものの大きさと SHA-256 を確かめる
-fn finish_decoded<W: Write>(
-    sink: Sink<W>,
+/// 取得・展開・持ち込みで数えた大きさと SHA-256 を、同じ順序で確かめる。
+fn check_integrity(
     from: &str,
-    dict: &DistributedDict,
+    received: u64,
+    sha256: &str,
+    expected_size: u64,
+    expected_sha256: &str,
 ) -> Result<(), DownloadError> {
-    let (written, sha256) = sink.finish();
-    if written != dict.size {
+    if received != expected_size {
         return Err(DownloadError::Truncated {
             from: from.to_string(),
-            expected: dict.size,
-            received: written,
+            expected: expected_size,
+            received,
         });
     }
-    if sha256 != dict.sha256 {
+    if sha256 != expected_sha256 {
         return Err(DownloadError::Checksum {
             from: from.to_string(),
-            expected: dict.sha256.clone(),
-            actual: sha256,
+            expected: expected_sha256.to_string(),
+            actual: sha256.to_string(),
         });
     }
     Ok(())
@@ -1297,20 +1261,7 @@ pub fn install(
             })?;
             let (written, sha256) = sink.finish();
             if let Some(dict) = dict {
-                if written != dict.size {
-                    return Err(Failure::Other(DownloadError::Truncated {
-                        from: from.clone(),
-                        expected: dict.size,
-                        received: written,
-                    }));
-                }
-                if sha256 != dict.sha256 {
-                    return Err(Failure::Other(DownloadError::Checksum {
-                        from: from.clone(),
-                        expected: dict.sha256.clone(),
-                        actual: sha256,
-                    }));
-                }
+                check_integrity(&from, written, &sha256, dict.size, &dict.sha256)?;
             }
             Ok(sha256)
         },

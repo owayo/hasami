@@ -838,6 +838,56 @@ mod with_dictionaries {
     }
 
     #[test]
+    fn raw_transfer_checks_all_chunks_and_reports_progress() {
+        let bytes: Vec<u8> = (0..3 * BUFFER_BYTES + 17).map(|i| i as u8).collect();
+        let dict = distributed("test", &bytes);
+        let server = serve(vec![("/test.hsd", Reply::Body(bytes.clone()))]);
+        let mut out = tempfile::tempfile().unwrap();
+        let mut calls = Vec::new();
+        let result = receive(
+            &test_agent(),
+            &format!("{}/test.hsd", server.url),
+            &dict,
+            &mut out,
+            &mut |received, total| calls.push((received, total)),
+        );
+        assert!(result.is_ok());
+        assert_eq!(out.metadata().unwrap().len(), dict.size);
+        assert_eq!(calls.first(), Some(&(0, dict.size)));
+        assert_eq!(calls.last(), Some(&(dict.size, dict.size)));
+        assert!(calls.windows(2).all(|pair| pair[0].0 < pair[1].0));
+        assert!(
+            calls
+                .iter()
+                .all(|&(received, total)| received <= total && total == dict.size)
+        );
+
+        let mut other = bytes.clone();
+        *other.last_mut().unwrap() ^= 0xff;
+        assert_fails_and_leaves_nothing(&dict, "/test.hsd", Reply::Body(other), |e| {
+            matches!(e, DownloadError::Checksum { .. })
+        });
+    }
+
+    #[test]
+    fn raw_transfer_preserves_output_errors() {
+        let bytes = sample_bytes();
+        let dict = distributed("test", &bytes);
+        let server = serve(vec![("/test.hsd", Reply::Body(bytes))]);
+        let file = tempfile::NamedTempFile::new().unwrap();
+        let mut read_only = File::open(file.path()).unwrap();
+        let result = receive(
+            &test_agent(),
+            &format!("{}/test.hsd", server.url),
+            &dict,
+            &mut read_only,
+            &mut |_, _| {},
+        );
+        assert!(matches!(result, Err(Failure::Write(_))));
+        assert_eq!(file.as_file().metadata().unwrap().len(), 0);
+    }
+
+    #[test]
     fn a_compressed_file_is_checked_before_and_after_decompression() {
         let bytes = sample_bytes();
         let compressed = zstd(&bytes);

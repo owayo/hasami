@@ -176,7 +176,7 @@ feature の選び方と版の固定、辞書の取得と埋め込み、文分割
 
 ### Python と C
 
-Python バインディング（`hasami-python/`）は PyPI に公開していないので、このリポジトリから maturin で入れます。
+Python バインディング（`hasami-python/`）は Python 3.9 以上に対応しています。PyPI に公開していないので、このリポジトリから maturin で入れます。
 
 ```python
 import hasami
