@@ -313,13 +313,15 @@ pub(crate) fn apply(
                 .iter()
                 .all(|t| number_pos(t) || matches!(t.surface.as_ref(), "," | "."))
             && out[start..limit].windows(2).all(|p| p[0].end == p[1].start)
-            && out.get(limit).is_some_and(|t| {
-                t.start == candidate.number.end
-                    && quantity(t, &unit)
-                    && (candidate.envelope.end == candidate.number.end
-                        || t.end == candidate.envelope.end)
-                    && (!unit(&t.surface) || unit_boundary(input, offset, t))
-            });
+            && ((candidate.envelope == candidate.number
+                && candidate.parsed.is_some_and(|number| number.dot.is_some()))
+                || out.get(limit).is_some_and(|t| {
+                    t.start == candidate.number.end
+                        && quantity(t, &unit)
+                        && (candidate.envelope.end == candidate.number.end
+                            || t.end == candidate.envelope.end)
+                        && (!unit(&t.surface) || unit_boundary(input, offset, t))
+                }));
         if !eligible {
             protected.push(candidate.envelope.clone());
             continue;
@@ -486,6 +488,43 @@ mod tests {
         assert_eq!(out[3].pronunciation.as_ref(), "ニテンゴ");
         for t in &out[1..] {
             assert_eq!(&text[t.start - 91..t.end - 91], t.surface.as_ref());
+        }
+    }
+
+    #[test]
+    fn bare_decimals_keep_the_point_but_identifiers_and_integers_stay_unchanged() {
+        for (text, expected) in [("9.2", "キューテンニ"), ("2.50", "ニテンゴゼロ")] {
+            let mut out = input_tokens(text, 91);
+            let protected = apply(
+                text,
+                91,
+                &mut out,
+                0,
+                &AsciiPlan::new(text, 91),
+                &mut 0,
+                |_| false,
+            );
+            assert!(protected.is_empty());
+            assert_eq!(out.len(), 1);
+            assert_eq!(out[0].surface.as_ref(), text);
+            assert_eq!(out[0].pronunciation.as_ref(), expected);
+            assert_eq!(out[0].start, 91);
+            assert_eq!(out[0].end, 91 + text.len());
+            assert_eq!(out[0].word_cost, 100 * text.len() as i16);
+        }
+        for text in ["2031", "v9.2", "ISO 9.2", "9.2.1", "09.2", "9.", "-9.2"] {
+            let mut out = input_tokens(text, 91);
+            let before = format!("{out:?}");
+            apply(
+                text,
+                91,
+                &mut out,
+                0,
+                &AsciiPlan::new(text, 91),
+                &mut 0,
+                |_| false,
+            );
+            assert_eq!(format!("{out:?}"), before, "{text}");
         }
     }
 
@@ -725,6 +764,24 @@ mod analyzer_tests {
             assert_eq!(t.word_cost, -100);
             assert!(t.is_known);
             assert_eq!(t.pronunciation.as_ref(), expected);
+        }
+    }
+
+    #[test]
+    fn analyzer_bare_decimals_keep_readings_and_utf8_spans() {
+        let mut analyzer = Analyzer::from_dict(dictionary());
+        for (text, surface, reading, pronunciation) in [
+            ("図9.2", "9.2", "キュウテンニ", "キューテンニ"),
+            ("値は2.50", "2.50", "ニテンゴゼロ", "ニテンゴゼロ"),
+            ("0.5の値", "0.5", "ゼロテンゴ", "ゼロテンゴ"),
+        ] {
+            let out = analyzer.try_tokenize(text).unwrap();
+            let token = out.iter().find(|t| t.surface.as_ref() == surface).unwrap();
+            assert_eq!(token.reading.as_ref(), reading, "{text}: {out:?}");
+            assert_eq!(token.pronunciation.as_ref(), pronunciation, "{text}");
+            for token in &out {
+                assert_eq!(&text[token.start..token.end], token.surface.as_ref());
+            }
         }
     }
 
