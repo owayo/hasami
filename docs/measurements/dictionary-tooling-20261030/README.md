@@ -137,6 +137,17 @@ IPAdic の CPU は量子化の 1〜5 個分なので、11〜14% という比を�
 - `astro-sight impact --dir . --git` は 0 件。`review --dir . --git` の `api_changes` は空
   （`Trie::for_each_key` の追加だけで、既存の公開シグネチャは変えていない）。
 
+## 点検中に起票した Issue
+
+リファクタリングの影響分析で astro-sight の誤検出を見つけ、
+[astro-sight #186](https://github.com/owayo/astro-sight/issues/186) へ起票した。
+Rust で private struct の追加と、同じファイルの別関数の署名変更が同じ差分にあると、
+1 文字も変えていない関数の中の `Vec` / slice の `len`・`iter`・`push` の呼び出しが
+`review --git` の `impacted_callers` に出る（この点検では `src/hsd/reader.rs` で 36 件、
+`src/hsd/trie.rs` で 7 件）。`impact --dir . --git` は同一ファイル内なので終了コード 0 で、
+この点検の判断には影響していない。最小再現と codex のセカンドオピニオンを添えて報告し、
+[astro-sight #187](https://github.com/owayo/astro-sight/pull/187) で修正した。
+
 ## 依存とドキュメントの扱い
 
 `depup --install --include-pinned` は Cargo（ルート・hasami-python）と `eval/pyproject.toml` で
