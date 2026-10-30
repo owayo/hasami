@@ -433,173 +433,254 @@ pub(crate) fn apply_counter_readings(tokens: &mut [Token]) {
     apply_counter_readings_with_protection(tokens, &[]);
 }
 
-pub(crate) fn apply_counter_readings_with_protection(
-    tokens: &mut [Token],
-    protected: &[Range<usize>],
-) {
-    let mut start = 0;
-    let mut protection = 0;
-    let (mut run_ascii, mut run_kanji, mut run_protected) = (true, true, false);
-    for i in 0..tokens.len() {
-        ten_minutes(tokens, i);
-        if i == 0 || tokens[i - 1].end != tokens[i].start || !is_numeral(&tokens[i - 1]) {
-            start = i;
-            (run_ascii, run_kanji, run_protected) = (true, true, false);
-            continue;
+/// 連続する数詞列の走査状態。列の先頭と、列全体の字種・保護の有無を持つ
+struct NumeralRun {
+    /// 数詞列の先頭のトークンの位置
+    start: usize,
+    /// `protected` の走査位置。これより前の範囲は数詞列の手前で終わっている
+    protection: usize,
+    /// 列の数詞がすべて ASCII か
+    ascii: bool,
+    /// 列の数詞がすべて漢数字（位の字を含む）か
+    kanji: bool,
+    /// 列の数詞のどれかが保護された範囲に重なるか
+    protected: bool,
+}
+
+impl NumeralRun {
+    fn new() -> Self {
+        Self {
+            start: 0,
+            protection: 0,
+            ascii: true,
+            kanji: true,
+            protected: false,
         }
-        let previous = &tokens[i - 1];
-        run_ascii &= previous.surface.is_ascii();
-        run_kanji &= previous.surface.chars().all(|c| {
+    }
+
+    /// 位置 `start` から数詞列をやり直す（`protected` の走査位置は戻さない）
+    fn restart(&mut self, start: usize) {
+        self.start = start;
+        (self.ascii, self.kanji, self.protected) = (true, true, false);
+    }
+
+    /// 数詞 `previous` を列に取り込み、その語が保護された範囲に重なるかを返す
+    ///
+    /// `protected` は位置の昇順に並んでいるので、走査位置は戻さずに進めるだけでよい。
+    fn extend(&mut self, previous: &Token, protected: &[Range<usize>]) -> bool {
+        self.ascii &= previous.surface.is_ascii();
+        self.kanji &= previous.surface.chars().all(|c| {
             matches!(
                 c,
                 '〇' | '零' | '一' | '二' | '三' | '四' | '五' | '六' | '七' | '八' | '九'
             ) || place(c).is_some()
         });
-        while protection < protected.len() && protected[protection].end <= previous.start {
-            protection += 1;
+        while self.protection < protected.len() && protected[self.protection].end <= previous.start
+        {
+            self.protection += 1;
         }
         let previous_protected = protected
-            .get(protection)
+            .get(self.protection)
             .is_some_and(|range| range.start < previous.end && previous.start < range.end);
-        run_protected |= previous_protected;
-        let Some(counter) = counter(&tokens[i]) else {
-            continue;
-        };
-        // 兆の新しい促音化は、保護されていない純ASCIIまたは純漢数字の列だけに適用する。
-        if matches!(counter, Counter::Trillion) && (run_protected || !(run_ascii || run_kanji)) {
-            continue;
-        }
-        if after_decimal(tokens, start) {
-            continue;
-        }
-        let Some(e) = ending(&tokens[i - 1].surface) else {
-            continue;
-        };
-        let tails = number_tails(e);
-        // 既存の1桁数字の音便は保ち、新たな複数字の補正だけを保護する。
-        if tokens[i - 1].surface.is_ascii() && tokens[i - 1].surface.len() > 1 && previous_protected
-        {
-            continue;
-        }
-        if !standard_number_readings(&tokens[i - 1], tails) {
-            continue;
-        }
-        if !tails.iter().any(|t| tokens[i - 1].reading.ends_with(t))
-            || !tails
-                .iter()
-                .any(|t| tokens[i - 1].pronunciation.ends_with(t))
-        {
-            continue;
-        }
-        let day = if matches!(counter, Counter::Day) {
-            native_day(tokens, start, i)
-        } else {
-            None
-        };
-        let person = matches!(counter, Counter::Person)
-            && i - start == 1
-            && has_reading(&tokens[i - 1], tails)
-            && matches!(
-                numeral_value(std::iter::once(tokens[i - 1].surface.as_ref())),
-                Some(1 | 2)
-            );
-        let (before, after) = tokens.split_at_mut(i);
-        let number = &mut before[i - 1];
-        let suffix = &mut after[0];
-        match counter {
-            Counter::H {
-                plain,
-                voiced,
-                half,
-            } => match e {
-                Ending::One | Ending::Six | Ending::Eight | Ending::Ten | Ending::Hundred => {
-                    if geminate(number, e) {
-                        set_readings(suffix, half, half);
-                    }
+        self.protected |= previous_protected;
+        previous_protected
+    }
+}
+
+/// 音便を決めるために、助数詞の直前の数詞から取り出した情報
+struct Numeral {
+    /// 数詞の語形
+    ending: Ending,
+    /// その語形が取り得る読みの語尾
+    tails: &'static [&'static str],
+    /// 日の和語読み（読み, 発音）。和語読みにしないときは `None`
+    day: Option<(&'static str, &'static str)>,
+    /// 人の和語読み（一人・二人）にできるか
+    person: bool,
+}
+
+/// 助数詞 `tokens[i]` の読みを直せる数詞列かを判定し、音便に使う情報を返す
+///
+/// 小数部の数詞、読みが IPAdic の標準形でない数詞、ASCII の複数桁で保護された数詞は直さない。
+fn numeral_before_counter(
+    tokens: &[Token],
+    run: &NumeralRun,
+    i: usize,
+    counter: Counter,
+    previous_protected: bool,
+) -> Option<Numeral> {
+    // 兆の新しい促音化は、保護されていない純ASCIIまたは純漢数字の列だけに適用する。
+    if matches!(counter, Counter::Trillion) && (run.protected || !(run.ascii || run.kanji)) {
+        return None;
+    }
+    if after_decimal(tokens, run.start) {
+        return None;
+    }
+    let number = &tokens[i - 1];
+    let ending = ending(&number.surface)?;
+    let tails = number_tails(ending);
+    // 既存の1桁数字の音便は保ち、新たな複数字の補正だけを保護する。
+    if number.surface.is_ascii() && number.surface.len() > 1 && previous_protected {
+        return None;
+    }
+    if !standard_number_readings(number, tails) {
+        return None;
+    }
+    if !tails.iter().any(|t| number.reading.ends_with(t))
+        || !tails.iter().any(|t| number.pronunciation.ends_with(t))
+    {
+        return None;
+    }
+    let day = if matches!(counter, Counter::Day) {
+        native_day(tokens, run.start, i)
+    } else {
+        None
+    };
+    let person = matches!(counter, Counter::Person)
+        && i - run.start == 1
+        && has_reading(number, tails)
+        && matches!(
+            numeral_value(std::iter::once(number.surface.as_ref())),
+            Some(1 | 2)
+        );
+    Some(Numeral {
+        ending,
+        tails,
+        day,
+        person,
+    })
+}
+
+/// 数詞 `number` と助数詞 `suffix` の読みを、助数詞の種類と数詞の語形で決まる音便にそろえる
+fn apply_counter_reading(
+    number: &mut Token,
+    suffix: &mut Token,
+    counter: Counter,
+    numeral: &Numeral,
+) {
+    let &Numeral {
+        ending: e,
+        tails,
+        day,
+        person,
+    } = numeral;
+    match counter {
+        Counter::H {
+            plain,
+            voiced,
+            half,
+        } => match e {
+            Ending::One | Ending::Six | Ending::Eight | Ending::Ten | Ending::Hundred => {
+                if geminate(number, e) {
+                    set_readings(suffix, half, half);
                 }
-                Ending::Three | Ending::Thousand | Ending::TenThousand => {
-                    set_readings(suffix, voiced, voiced)
+            }
+            Ending::Three | Ending::Thousand | Ending::TenThousand => {
+                set_readings(suffix, voiced, voiced)
+            }
+            _ => set_readings(suffix, plain, plain),
+        },
+        Counter::K => {
+            geminate(number, e);
+        }
+        Counter::Minute => match e {
+            Ending::One | Ending::Six | Ending::Eight | Ending::Ten | Ending::Hundred => {
+                if geminate(number, e) {
+                    set_readings(suffix, "プン", "プン");
                 }
-                _ => set_readings(suffix, plain, plain),
-            },
-            Counter::K => {
+            }
+            Ending::Three | Ending::Four | Ending::Thousand | Ending::TenThousand => {
+                set_readings(suffix, "プン", "プン")
+            }
+            _ if suffix.surface.as_ref() == "分" => set_readings(suffix, "フン", "フン"),
+            _ => {}
+        },
+        Counter::Hundred => match e {
+            Ending::Three => set_readings(suffix, "ビャク", "ビャク"),
+            Ending::Six | Ending::Eight if geminate(number, e) => {
+                set_readings(suffix, "ピャク", "ピャク");
+            }
+            _ => set_readings(suffix, "ヒャク", "ヒャク"),
+        },
+        Counter::Thousand => match e {
+            Ending::Three => set_readings(suffix, "ゼン", "ゼン"),
+            Ending::One | Ending::Eight | Ending::Ten => {
+                if geminate(number, e) {
+                    set_readings(suffix, "セン", "セン");
+                }
+            }
+            _ => set_readings(suffix, "セン", "セン"),
+        },
+        Counter::Trillion => {
+            if matches!(e, Ending::One | Ending::Eight | Ending::Ten) {
                 geminate(number, e);
             }
-            Counter::Minute => match e {
-                Ending::One | Ending::Six | Ending::Eight | Ending::Ten | Ending::Hundred => {
-                    if geminate(number, e) {
-                        set_readings(suffix, "プン", "プン");
-                    }
+        }
+        Counter::Person => {
+            if person {
+                let r = if e == Ending::One { "ヒト" } else { "フタ" };
+                if replace_tail(number, tails, r, r) {
+                    set_readings(suffix, "リ", "リ");
                 }
-                Ending::Three | Ending::Four | Ending::Thousand | Ending::TenThousand => {
-                    set_readings(suffix, "プン", "プン")
-                }
-                _ if suffix.surface.as_ref() == "分" => set_readings(suffix, "フン", "フン"),
-                _ => {}
-            },
-            Counter::Hundred => match e {
-                Ending::Three => set_readings(suffix, "ビャク", "ビャク"),
-                Ending::Six | Ending::Eight if geminate(number, e) => {
-                    set_readings(suffix, "ピャク", "ピャク");
-                }
-                _ => set_readings(suffix, "ヒャク", "ヒャク"),
-            },
-            Counter::Thousand => match e {
-                Ending::Three => set_readings(suffix, "ゼン", "ゼン"),
-                Ending::One | Ending::Eight | Ending::Ten => {
-                    if geminate(number, e) {
-                        set_readings(suffix, "セン", "セン");
-                    }
-                }
-                _ => set_readings(suffix, "セン", "セン"),
-            },
-            Counter::Trillion => {
-                if matches!(e, Ending::One | Ending::Eight | Ending::Ten) {
-                    geminate(number, e);
-                }
+            } else if e == Ending::Four {
+                replace_tail(number, tails, "ヨ", "ヨ");
+                set_readings(suffix, "ニン", "ニン");
+            } else {
+                set_readings(suffix, "ニン", "ニン");
             }
-            Counter::Person => {
-                if person {
-                    let r = if e == Ending::One { "ヒト" } else { "フタ" };
-                    if replace_tail(number, tails, r, r) {
-                        set_readings(suffix, "リ", "リ");
-                    }
-                } else if e == Ending::Four {
-                    replace_tail(number, tails, "ヨ", "ヨ");
-                    set_readings(suffix, "ニン", "ニン");
-                } else {
-                    set_readings(suffix, "ニン", "ニン");
-                }
-            }
-            Counter::Day => {
-                if let Some((r, p)) = day
-                    && replace_tail(number, tails, r, p)
-                {
-                    set_readings(suffix, "カ", "カ");
-                } else {
-                    let ordinary = match e {
-                        Ending::Seven => Some("シチ"),
-                        Ending::Nine => Some("ク"),
-                        _ => None,
-                    };
-                    if let Some(r) = ordinary {
-                        replace_tail(number, tails, r, r);
-                    }
-                    set_readings(suffix, "ニチ", "ニチ");
-                }
-            }
-            Counter::Hour => {
-                let r = match e {
-                    Ending::Four => Some("ヨ"),
+        }
+        Counter::Day => {
+            if let Some((r, p)) = day
+                && replace_tail(number, tails, r, p)
+            {
+                set_readings(suffix, "カ", "カ");
+            } else {
+                let ordinary = match e {
                     Ending::Seven => Some("シチ"),
                     Ending::Nine => Some("ク"),
                     _ => None,
                 };
-                if let Some(r) = r {
+                if let Some(r) = ordinary {
                     replace_tail(number, tails, r, r);
                 }
+                set_readings(suffix, "ニチ", "ニチ");
             }
         }
+        Counter::Hour => {
+            let r = match e {
+                Ending::Four => Some("ヨ"),
+                Ending::Seven => Some("シチ"),
+                Ending::Nine => Some("ク"),
+                _ => None,
+            };
+            if let Some(r) = r {
+                replace_tail(number, tails, r, r);
+            }
+        }
+    }
+}
+
+pub(crate) fn apply_counter_readings_with_protection(
+    tokens: &mut [Token],
+    protected: &[Range<usize>],
+) {
+    let mut run = NumeralRun::new();
+    for i in 0..tokens.len() {
+        ten_minutes(tokens, i);
+        if i == 0 || tokens[i - 1].end != tokens[i].start || !is_numeral(&tokens[i - 1]) {
+            run.restart(i);
+            continue;
+        }
+        let previous_protected = run.extend(&tokens[i - 1], protected);
+        let Some(counter) = counter(&tokens[i]) else {
+            continue;
+        };
+        let Some(numeral) = numeral_before_counter(tokens, &run, i, counter, previous_protected)
+        else {
+            continue;
+        };
+        let (before, after) = tokens.split_at_mut(i);
+        apply_counter_reading(&mut before[i - 1], &mut after[0], counter, &numeral);
     }
 }
 
@@ -797,6 +878,39 @@ mod tests {
         let protected = out[0].start..out[0].end;
         apply_counter_readings_with_protection(&mut out, std::slice::from_ref(&protected));
         assert_eq!(format!("{out:?}"), before);
+    }
+
+    #[test]
+    fn protection_is_matched_per_range_across_several_protected_runs() {
+        // 保護された範囲は位置の昇順に渡る。数詞列を走査する側は走査位置を戻さずに進めるので、
+        // 2 つ目以降の範囲でも、その範囲に重なる数詞だけが保護されることを確かめる。
+        let parts: &[(&str, &str, &str)] = &[
+            ("10", NUMBER, "ジュウ"),
+            ("本", COUNTER, "ホン"),
+            ("、", "記号,読点,*,*", "、"),
+            ("10", NUMBER, "ジュウ"),
+            ("本", COUNTER, "ホン"),
+            ("、", "記号,読点,*,*", "、"),
+            ("10", NUMBER, "ジュウ"),
+            ("本", COUNTER, "ホン"),
+        ];
+
+        // 保護なしでは 3 つとも促音化する
+        let mut out = tokens(parts);
+        apply_counter_readings_with_protection(&mut out, &[]);
+        assert_eq!(
+            readings(&out).0,
+            "ジュッポン、ジュッポン、ジュッポン",
+            "保護なし"
+        );
+
+        // 1 つ目と 3 つ目だけを保護すると、真ん中の数詞だけが促音化する
+        let mut out = tokens(parts);
+        let protected = [out[0].start..out[0].end, out[6].start..out[6].end];
+        let fields = non_reading_fields(&out);
+        apply_counter_readings_with_protection(&mut out, &protected);
+        assert_eq!(readings(&out).0, "ジュウホン、ジュッポン、ジュウホン");
+        assert_eq!(non_reading_fields(&out), fields);
     }
 
     #[test]
