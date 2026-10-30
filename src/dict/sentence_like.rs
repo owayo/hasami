@@ -362,114 +362,124 @@ fn is_modern(m: &Morph) -> bool {
         .any(|p| m.conj_type.starts_with(p))
 }
 
+/// 助動詞 `cur` が直前の語 `prev` に付けるか（助動詞の種類ごとに、付き先の活用形で決める）
+fn attaches_aux(prev: &Morph, cur: &Morph, aux: Aux) -> bool {
+    match aux {
+        // た は連用形・音便形に、だ は撥音便・イ音便（読ん/だ、泳い/だ）にだけ付く
+        // （「赤めだか」→ 赤め/だ/か、「こんた」のような音便と合わない並びを除く）
+        Aux::Past => {
+            takes_ta_te(prev, false)
+                && if cur.surface.starts_with('だ') {
+                    prev.conj_form == "連用タ接続"
+                        && (prev.surface.ends_with('ん') || prev.surface.ends_with('い'))
+                } else {
+                    !prev.surface.ends_with('ん')
+                }
+        }
+        Aux::Polite | Aux::Desire => {
+            matches!(prev.pos1, "動詞" | "助動詞") && prev.conj_form == "連用形"
+        }
+        // ない・ぬ・ん は未然形に（「曲ろ/ん」の未然ウ接続には付かない）
+        Aux::Negative => {
+            matches!(prev.pos1, "動詞" | "助動詞")
+                && matches!(prev.conj_form, "未然形" | "未然ヌ接続" | "未然特殊")
+        }
+        // う は未然ウ接続（書こ/う）か助動詞の未然形（でしょ/う、だろ/う）に、よう は未然形にも付く
+        Aux::Volitional => {
+            matches!(prev.pos1, "動詞" | "助動詞")
+                && (prev.conj_form == "未然ウ接続"
+                    || (prev.conj_form == "未然形"
+                        && (prev.pos1 == "助動詞" || cur.base == "よう")))
+        }
+        Aux::Copula => match prev.pos1 {
+            "名詞" => !prev.is_weak_noun(),
+            "副詞" => true,
+            "動詞" | "形容詞" | "助動詞" => {
+                prev.in_final_form() || prev.conj_form == "体言接続"
+            }
+            // 「からだ」「だけだ」「かだ」「私もだ」。係助詞の後ろは も・こそ だけで、格助詞 が・を・の と
+            // 終助詞の後ろには来ない（「はだ」→ は/だ は かな書きの語の断片）
+            "助詞" => match prev.pos2 {
+                "副助詞" | "副助詞／並立助詞／終助詞" => true,
+                "格助詞" => !matches!(prev.surface, "が" | "を" | "の"),
+                "係助詞" => matches!(prev.surface, "も" | "こそ"),
+                _ => false,
+            },
+            _ => false,
+        },
+    }
+}
+
+/// 助詞 `cur` が直前の語 `prev` に付けるか（終助詞・接続助詞・連体化と、格助詞などで分ける）
+fn attaches_particle(prev: &Morph, cur: &Morph) -> bool {
+    if matches!(cur.pos2, "終助詞" | "副助詞／並立助詞／終助詞") {
+        if !cur.is_final_particle() {
+            return false;
+        }
+        return match prev.pos1 {
+            "動詞" | "形容詞" | "助動詞" => prev.in_final_form(),
+            "助詞" => FINAL_PARTICLE_PAIRS.contains(&(prev.surface, cur.surface)),
+            _ => prev.is("名詞", "非自立"),
+        };
+    }
+    if cur.pos2 == "接続助詞" {
+        return match cur.surface {
+            "て" | "で" | "ても" | "でも" => {
+                // 撥音便の後ろは「で」、促音便の後ろは「て」
+                takes_ta_te(prev, true)
+                    && !(prev.surface.ends_with('ん') && cur.surface.starts_with('て'))
+                    && !(prev.surface.ends_with('っ') && cur.surface.starts_with('で'))
+            }
+            "ながら" | "つつ" => {
+                matches!(prev.pos1, "動詞" | "助動詞") && prev.conj_form == "連用形"
+            }
+            "ば" => prev.is_conjugating() && prev.conj_form.starts_with("仮定"),
+            "のに" | "ので" => {
+                prev.is_conjugating() && (prev.in_final_form() || prev.conj_form == "体言接続")
+            }
+            _ => prev.is_conjugating() && prev.in_final_form(),
+        };
+    }
+    if cur.pos2 == "連体化" {
+        return false; // 「の」で句は終わらず、述語の前にも来ない
+    }
+    // 格助詞・係助詞・副助詞・並立助詞・副詞化
+    match prev.pos1 {
+        "名詞" => !prev.is_weak_noun(),
+        "副詞" => true,
+        "助詞" => particle_follows(prev, cur),
+        // だ・です の後ろは引用の「と」と並立助詞・副助詞（「そうだと」「だの」「だなんて」）、連用形「で」の
+        // 後ろは係助詞・副助詞（「では」「でも」）だけ（「だより」→ だ/より、「だも」は かな書きの語の断片）
+        "助動詞" if aux_kind(prev) == Some(Aux::Copula) && prev.base != "らしい" => {
+            match prev.conj_form {
+                "基本形" => {
+                    (cur.pos2 == "格助詞" && cur.surface == "と")
+                        || matches!(cur.pos2, "並立助詞" | "副助詞")
+                }
+                "連用形" => matches!(cur.pos2, "係助詞" | "副助詞"),
+                _ => false,
+            }
+        }
+        "動詞" | "形容詞" | "助動詞" => {
+            prev.in_final_form() || prev.renyou() || prev.conj_form == "体言接続"
+        }
+        _ => false,
+    }
+}
+
 /// `cur` が直前の語 `prev` に付けるか（活用形・品詞で決める）
 fn attaches(prev: &Morph, cur: &Morph) -> bool {
     if !prev.known || !cur.known {
         return false;
     }
     if let Some(aux) = aux_kind(cur) {
-        return match aux {
-            // た は連用形・音便形に、だ は撥音便・イ音便（読ん/だ、泳い/だ）にだけ付く
-            // （「赤めだか」→ 赤め/だ/か、「こんた」のような音便と合わない並びを除く）
-            Aux::Past => {
-                takes_ta_te(prev, false)
-                    && if cur.surface.starts_with('だ') {
-                        prev.conj_form == "連用タ接続"
-                            && (prev.surface.ends_with('ん') || prev.surface.ends_with('い'))
-                    } else {
-                        !prev.surface.ends_with('ん')
-                    }
-            }
-            Aux::Polite | Aux::Desire => {
-                matches!(prev.pos1, "動詞" | "助動詞") && prev.conj_form == "連用形"
-            }
-            // ない・ぬ・ん は未然形に（「曲ろ/ん」の未然ウ接続には付かない）
-            Aux::Negative => {
-                matches!(prev.pos1, "動詞" | "助動詞")
-                    && matches!(prev.conj_form, "未然形" | "未然ヌ接続" | "未然特殊")
-            }
-            // う は未然ウ接続（書こ/う）か助動詞の未然形（でしょ/う、だろ/う）に、よう は未然形にも付く
-            Aux::Volitional => {
-                matches!(prev.pos1, "動詞" | "助動詞")
-                    && (prev.conj_form == "未然ウ接続"
-                        || (prev.conj_form == "未然形"
-                            && (prev.pos1 == "助動詞" || cur.base == "よう")))
-            }
-            Aux::Copula => match prev.pos1 {
-                "名詞" => !prev.is_weak_noun(),
-                "副詞" => true,
-                "動詞" | "形容詞" | "助動詞" => {
-                    prev.in_final_form() || prev.conj_form == "体言接続"
-                }
-                // 「からだ」「だけだ」「かだ」「私もだ」。係助詞の後ろは も・こそ だけで、格助詞 が・を・の と
-                // 終助詞の後ろには来ない（「はだ」→ は/だ は かな書きの語の断片）
-                "助詞" => match prev.pos2 {
-                    "副助詞" | "副助詞／並立助詞／終助詞" => true,
-                    "格助詞" => !matches!(prev.surface, "が" | "を" | "の"),
-                    "係助詞" => matches!(prev.surface, "も" | "こそ"),
-                    _ => false,
-                },
-                _ => false,
-            },
-        };
+        return attaches_aux(prev, cur, aux);
     }
     if cur.pos1 == "助動詞" {
         return false; // 文語・方言の助動詞
     }
     if cur.pos1 == "助詞" {
-        if matches!(cur.pos2, "終助詞" | "副助詞／並立助詞／終助詞") {
-            if !cur.is_final_particle() {
-                return false;
-            }
-            return match prev.pos1 {
-                "動詞" | "形容詞" | "助動詞" => prev.in_final_form(),
-                "助詞" => FINAL_PARTICLE_PAIRS.contains(&(prev.surface, cur.surface)),
-                _ => prev.is("名詞", "非自立"),
-            };
-        }
-        if cur.pos2 == "接続助詞" {
-            return match cur.surface {
-                "て" | "で" | "ても" | "でも" => {
-                    // 撥音便の後ろは「で」、促音便の後ろは「て」
-                    takes_ta_te(prev, true)
-                        && !(prev.surface.ends_with('ん') && cur.surface.starts_with('て'))
-                        && !(prev.surface.ends_with('っ') && cur.surface.starts_with('で'))
-                }
-                "ながら" | "つつ" => {
-                    matches!(prev.pos1, "動詞" | "助動詞") && prev.conj_form == "連用形"
-                }
-                "ば" => prev.is_conjugating() && prev.conj_form.starts_with("仮定"),
-                "のに" | "ので" => {
-                    prev.is_conjugating() && (prev.in_final_form() || prev.conj_form == "体言接続")
-                }
-                _ => prev.is_conjugating() && prev.in_final_form(),
-            };
-        }
-        if cur.pos2 == "連体化" {
-            return false; // 「の」で句は終わらず、述語の前にも来ない
-        }
-        // 格助詞・係助詞・副助詞・並立助詞・副詞化
-        return match prev.pos1 {
-            "名詞" => !prev.is_weak_noun(),
-            "副詞" => true,
-            "助詞" => particle_follows(prev, cur),
-            // だ・です の後ろは引用の「と」と並立助詞・副助詞（「そうだと」「だの」「だなんて」）、連用形「で」の
-            // 後ろは係助詞・副助詞（「では」「でも」）だけ（「だより」→ だ/より、「だも」は かな書きの語の断片）
-            "助動詞" if aux_kind(prev) == Some(Aux::Copula) && prev.base != "らしい" => {
-                match prev.conj_form {
-                    "基本形" => {
-                        (cur.pos2 == "格助詞" && cur.surface == "と")
-                            || matches!(cur.pos2, "並立助詞" | "副助詞")
-                    }
-                    "連用形" => matches!(cur.pos2, "係助詞" | "副助詞"),
-                    _ => false,
-                }
-            }
-            "動詞" | "形容詞" | "助動詞" => {
-                prev.in_final_form() || prev.renyou() || prev.conj_form == "体言接続"
-            }
-            _ => false,
-        };
+        return attaches_particle(prev, cur);
     }
     if matches!(cur.pos1, "動詞" | "形容詞") && cur.pos2 == "非自立" {
         // 補助動詞・補助形容詞（て/いる、て/みる、て/いく、て/ほしい）は「て」の後ろ、複合動詞の後ろの要素
