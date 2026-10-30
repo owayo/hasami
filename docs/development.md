@@ -35,6 +35,14 @@ mise exec -- cargo build --workspace
 mise exec -- cargo test --locked --workspace --exclude hasami-python -- --ignored distributed
 ```
 
+辞書を全件なめる経路（`info --verify`・`export`）の性能を変えたときは、変更前後のバイナリを
+`scripts/bench-dictionary-tooling.py` に渡して交互に測る。出力（検証の報告・CSV）が変更前後で
+一致することもスクリプトが毎回確かめる。
+
+```bash
+mise exec -- python scripts/bench-dictionary-tooling.py   --before <変更前のhasami.exe> --after <変更後のhasami.exe>   --dict dict/ipadic.hsd --dict dict/ipadic-neologd-sudachi.hsd   --rounds 7 --output <出力先>/tooling.jsonl
+```
+
 ## CLI の実装
 
 `src/main.rs` がコマンドを振り分け、`build`・`merge` の引数と実行は `src/cli/build.rs`、

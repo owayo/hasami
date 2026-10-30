@@ -4,6 +4,12 @@
 最大 Working Set の比較は [辞書取得の計測記録](measurements/dictionary-download-20261029/README.md) にある。
 大きい2辞書では取得プロセスの CPU 中央値が20〜27%減った。解析そのものの高速化とは区別する。
 
+辞書を全件なめる経路（`info --verify`・`export`・`repair`）で、表層形ごとの `String` の
+割り当てをやめた変更と、2026-10-30 の比較は
+[辞書を全件なめる経路の計測記録](measurements/dictionary-tooling-20261030/README.md) にある。
+推奨辞書では `verify` の CPU 中央値が22%、最大 Working Set が4条件すべてで27〜34%減った。
+解析は `Dictionary::groups` を通らないので、この変更では速くなっていない。
+
 形態素解析（`Analyzer::tokenize`）と `hasami tokenize` を速くしたとき（2026-09）に、測ったこと・試したこと・
 決めたこと・見送ったことをまとめる。次に速度を見直すときの出発点にする。辞書形式そのものの検討は
 [hsd-format.md](hsd-format.md) にある。

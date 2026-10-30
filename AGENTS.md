@@ -64,6 +64,9 @@ hasami/
 │   │   └── builtin_exceptions.NOTICE  # 例外表を含むものを配布するときに添える表示
 │   ├── pos.rs          # 品詞の正規化（CoarsePos、IPAdic 系・UniDic 系）、否定の判定、モーラ数
 │   ├── lattice.rs      # ラティス構築 + Viterbi、Token、トークンの組み立て（既知語キャッシュ、品詞などの Arc は解析器ごと）
+│   ├── numeric.rs      # 最良パスの数詞・助数詞の読み（音便の表、人・日の和語読み）。`analyzer` feature
+│   │   ├── ascii.rs    # ASCII の数量（小数・桁区切り・単位）の合成と、識別子の保護（AsciiPlan）
+│   │   └── month.rs    # 水平空白を挟む暦月（「3 月」）の読み
 │   ├── analyzer.rs     # 高レベルAPI（Analyzer: Arc<Dictionary> + ワークスペース）、置き場所（data_dir）と既定の探索
 │   ├── download/       # リリースの配布辞書の取得（`download` feature）
 │   │   ├── mod.rs      # 目録（Catalog・DistributedDict）、download・verify・install、zstd の展開、HTTP（ureq）
@@ -83,7 +86,9 @@ hasami/
 │   ├── dictionary_inputs.py # 独自入力の版・存在・未コミット変更を検証
 │   ├── convert_sudachi_raw.py # SudachiDict の raw CSV → IPAdic 体系の MeCab CSV
 │   ├── convert-unidic-csv.py  # UniDic CSV → IPAdic互換フォーマット変換
-│   └── find_foreign_names.py  # 外国人名の削除リストを生成（Unihan の字音と照合）
+│   ├── find_foreign_names.py  # 外国人名の削除リストを生成（Unihan の字音と照合）
+│   ├── bench-dictionary-download.py # 配布辞書の取得の性能比較（ローカル HTTP、変更前後を交互に）
+│   └── bench-dictionary-tooling.py  # info --verify・export の性能比較（辞書を全件なめる経路）
 ├── hasami-python/      # Python バインディング (PyO3)
 │   ├── src/lib.rs
 │   ├── build.rs        # PyO3 拡張モジュール向けリンク設定
@@ -163,6 +168,9 @@ hasami/
   MeCab と同じく読み飛ばしてトークンにしない（前後の語を直接つなぐ。`Node::start` はつなぐ位置で、表層は
   `ChunkChars::skip_spaces` の位置から）
 - `Dictionary::load(path)` / `Dictionary::verify()` / `Dictionary::for_each_entry(cb)` / `Dictionary::lookup(text)`
+- `Dictionary::surfaces()` - 全表層形（重複なし、バイト順）。`hsd::trie::Trie::for_each_key(cb)` が
+  キーごとの `String` を作らずに貸し、`Dictionary` 側は 1 本の緩衝と (群, 位置, 長さ) で持つ
+  （`verify`・`export`・`repair` が通る。`Trie::keys()` はこれを集めた `Vec<(u32, String)>`）
 - `Dictionary::from_static(bytes)` / `hasami::include_hsd!(path)` - 実行ファイルに埋め込んだ辞書を複製せずに読む（`Storage::Static`）。
   先頭は 8 バイト境界（型付きスライスが要るのは 4 だが `from_bytes` の所有バッファにそろえた）。マクロは 64 にそろえる
   （セクションがキャッシュラインに乗る）。境界になければ複製に切り替えずに `DictError::Invalid`（辞書でなければ先に `NotHsd` など）。
@@ -226,6 +234,9 @@ Windows のローカルでは `make SHELL=C:/PROGRA~1/Git/bin/sh.exe ci` で Git
 （System32 の `bash.exe` は WSL の起動用）。手順は `docs/development.md`。
 辞書取得の性能比較には `scripts/bench-dictionary-download.py` を使う。ローカル HTTP から同じ辞書を取得し、
 変更前後を交互に測る。Windows では CPU 時間と最大 Working Set も記録する。
+辞書を全件なめる `info --verify`・`export` の性能比較には `scripts/bench-dictionary-tooling.py` を使う。
+同じく変更前後を交互に測り、毎回出力（検証の報告・CSV）が変更前後で一致することも確かめる。
+過去の数値は [docs/measurements/dictionary-tooling-20261030/README.md](docs/measurements/dictionary-tooling-20261030/README.md)。
 
 独自 CSV は非公開の `owayo/hasami-dictionaries` で管理し、公開側では `dict/` 全体を追跡しない。
 辞書用 CI は `scripts/dictionary-inputs.json` の取得ブランチ（main）の HEAD を毎回 `dict/` に取得する。
