@@ -250,6 +250,34 @@ fn lookup_returns_every_prefix_and_group() {
     assert!(dict.lookup("大阪").unwrap().is_empty());
 }
 
+/// 表層形の重複なしの一覧（`hasami export-sentence-exceptions` が使う）
+#[test]
+fn surfaces_are_deduplicated_and_in_byte_order() {
+    let mut expected: Vec<String> = sample_entries()
+        .iter()
+        .map(|e| e.surface.to_string())
+        .collect();
+    expected.sort_by(|a, b| a.as_bytes().cmp(b.as_bytes()));
+    expected.dedup();
+    // 同じ表層形の 3 件は 1 つの群になる
+    assert!(expected.len() < sample_entries().len());
+
+    let dict = sample_builder().build().unwrap();
+    assert_eq!(dict.surfaces().unwrap(), expected);
+    assert_eq!(dict.verify().unwrap().groups, expected.len());
+
+    // mmap で読んだ辞書でも同じ（末尾圧縮に入る長いキーと BMP 外の字を含む）
+    let dir = temp_dir();
+    let path = dir.join("surfaces.hsd");
+    let builder = sample_builder();
+    builder
+        .write_hsd(&path, &builder.write_options(), |_, _| {})
+        .unwrap();
+    let dict = Dictionary::load(&path).unwrap();
+    assert_eq!(dict.surfaces().unwrap(), expected);
+    assert_eq!(dict.verify().unwrap().groups, expected.len());
+}
+
 #[test]
 fn file_roundtrip_keeps_metadata() {
     let dir = temp_dir();

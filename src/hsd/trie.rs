@@ -1024,13 +1024,30 @@ impl<'a> Trie<'a> {
         Ok(found)
     }
 
-    /// 全キーを (値, キー) で列挙する（順序は不定）。export と verify 用で、O(ノード数) の作業メモリを使う
+    /// 全キーを (値, キー) で列挙する（順序は不定）。O(ノード数) の作業メモリを使う
+    ///
+    /// キーごとに `String` を作るので、まとめて持つ必要がないなら [`Trie::for_each_key`] を使う。
     pub fn keys(&self) -> Result<Vec<(u32, String)>, TrieError> {
+        let mut out = Vec::new();
+        self.for_each_key(|value, key| {
+            out.push((value, key.to_owned()));
+            Ok(())
+        })?;
+        Ok(out)
+    }
+
+    /// 全キーを (値, キー) で列挙する（順序は不定）。export と verify 用で、O(ノード数) の作業メモリを使う
+    ///
+    /// キーは組み立て中の接頭辞の緩衝をそのまま貸すので、キーごとの割り当てが起きない。
+    /// `cb` が返したエラーはそのまま返り、列挙はその場で終わる。
+    pub fn for_each_key(
+        &self,
+        mut cb: impl FnMut(u32, &str) -> Result<(), TrieError>,
+    ) -> Result<(), TrieError> {
         let trie = self.revalidate()?;
         let chars = trie.inverse_char_map()?;
         let tree = trie.child_lists()?;
         let nodes = trie.nodes;
-        let mut out = Vec::new();
         let mut prefix = String::new();
         // (スロット, 親までの接頭辞のバイト数)
         let mut stack: Vec<(usize, usize)> = vec![(0, 0)];
@@ -1051,19 +1068,21 @@ impl<'a> Trie<'a> {
                     let len = prefix.len();
                     stack.extend(tree.of(slot).iter().rev().map(|&c| (c as usize, len)));
                 }
-                KIND_LEAF => out.push((node.base & PAYLOAD_MASK, prefix.clone())),
+                KIND_LEAF => cb(node.base & PAYLOAD_MASK, &prefix)?,
                 KIND_TAIL => {
                     let (value, suffix) = trie.tail_record(slot, node.base & PAYLOAD_MASK)?;
                     let suffix = tail_str(slot, node, suffix)?;
-                    let mut key = String::with_capacity(prefix.len() + suffix.len());
-                    key.push_str(&prefix);
-                    key.push_str(suffix);
-                    out.push((value, key));
+                    // 末尾を接頭辞に継ぎ足して貸し、呼び出しの後で元に戻す
+                    let len = prefix.len();
+                    prefix.push_str(suffix);
+                    let called = cb(value, &prefix);
+                    prefix.truncate(len);
+                    called?;
                 }
                 _ => return Err(invalid_kind(slot, node)),
             }
         }
-        Ok(out)
+        Ok(())
     }
 
     /// 全件を検査する（O(ノード数)）。値は value_limit 未満（かつ 2^30 未満）だけを許す
@@ -1448,6 +1467,47 @@ mod tests {
             .map(|(i, c)| start + i + c.len_utf8())
             .filter_map(|end| map.get(&text[start..end]).map(|&v| (end, v)))
             .collect()
+    }
+
+    /// `for_each_key` は呼び出し側のエラーでその場で止まり、エラーをそのまま返す
+    #[test]
+    fn test_for_each_key_stops_at_the_callers_error() {
+        // 末尾圧縮に入る長いキーを含める（貸した緩衝を元に戻す経路を通す）
+        let long = "あ".repeat(80);
+        let keys = [long.as_str(), "あい", "あいうえお", "か", "かき"];
+        let parts = build_indexed(&keys);
+        let trie = parts.as_trie().unwrap();
+
+        // 全キーを列挙できる（borrow したキーを写し取れば keys() と同じ）
+        let mut all = Vec::new();
+        trie.for_each_key(|value, key| {
+            all.push((value, key.to_owned()));
+            Ok(())
+        })
+        .unwrap();
+        all.sort_by(|a, b| a.1.cmp(&b.1));
+        let mut listed = trie.keys().unwrap();
+        listed.sort_by(|a, b| a.1.cmp(&b.1));
+        assert_eq!(all, listed);
+        assert_eq!(all.len(), keys.len());
+
+        // 2 件目でエラーを返すと、そこで止まってエラーが返る
+        let mut seen = 0;
+        let err = trie
+            .for_each_key(|_, _| {
+                seen += 1;
+                if seen == 2 {
+                    Err(corrupt("stop here".to_string()))
+                } else {
+                    Ok(())
+                }
+            })
+            .unwrap_err();
+        assert!(
+            matches!(&err, TrieError::Corrupt(m) if m == "stop here"),
+            "{err:?}"
+        );
+        assert_eq!(seen, 2);
     }
 
     /// 構築結果が keys と values の対応どおりに引けることを確かめる

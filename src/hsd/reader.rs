@@ -176,6 +176,52 @@ fn to_token_conj(values: &[Arc<str>]) -> Vec<Arc<str>> {
         .collect()
 }
 
+/// trie の全キーを 1 本の緩衝に詰めた列
+///
+/// 表層形ごとに `String` を持つと、大きい辞書では割り当てが数百万回になり、並べ替えでも
+/// 32 バイトの要素を動かすことになる。緩衝の中の位置と長さだけを持つことで、割り当ては
+/// 緩衝と位置の列の 2 本に収まり、並べ替えは 12 バイトの要素の移動で済む。
+#[derive(Default)]
+struct Groups {
+    /// 列挙した順に連結した表層形
+    text: String,
+    /// (群の先頭のエントリ, `text` の中の開始位置, バイト長)
+    spans: Vec<(u32, u32, u32)>,
+}
+
+impl Groups {
+    fn push(&mut self, value: u32, key: &str) -> Result<(), trie::TrieError> {
+        // 位置と長さを u32 で持つので、表層形の総量が 4GiB を超える辞書は扱わない
+        // （終わりの位置で確かめるので、位置と長さの両方が u32 に収まる）
+        let start = self.text.len();
+        let end = start
+            .checked_add(key.len())
+            .filter(|&end| end <= u32::MAX as usize)
+            .ok_or_else(|| {
+                trie::TrieError::Corrupt("the surfaces add up to more than 4GiB".to_string())
+            })?;
+        self.spans.push((value, start as u32, (end - start) as u32));
+        self.text.push_str(key);
+        Ok(())
+    }
+
+    fn sort_by_value(&mut self) {
+        self.spans.sort_unstable_by_key(|&(value, ..)| value);
+    }
+
+    fn len(&self) -> usize {
+        self.spans.len()
+    }
+
+    /// (群の先頭のエントリ, 表層形) を、並べ替えた順に返す
+    fn iter(&self) -> impl Iterator<Item = (u32, &str)> {
+        self.spans.iter().map(|&(value, start, len)| {
+            let start = start as usize;
+            (value, &self.text[start..start + len as usize])
+        })
+    }
+}
+
 impl Dictionary {
     /// .hsd ファイルを mmap して読み込む
     pub fn load<P: AsRef<Path>>(path: P) -> Result<Self, DictError> {
@@ -666,14 +712,17 @@ impl Dictionary {
 
     /// 全表層形（重複なし、バイト順）。文分割の例外表の抽出などに使う
     pub fn surfaces(&self) -> Result<Vec<String>, DictError> {
-        Ok(self.groups()?.into_iter().map(|(_, key)| key).collect())
+        let groups = self.groups()?;
+        Ok(groups.iter().map(|(_, key)| key.to_owned()).collect())
     }
 
     /// 表層形と群の先頭を集め、群の先頭の昇順（= 表層形のバイト順）に並べる
-    fn groups(&self) -> Result<Vec<(u32, String)>, DictError> {
-        let mut keys = self.trie().keys()?;
-        keys.sort_unstable_by_key(|(v, _)| *v);
-        Ok(keys)
+    fn groups(&self) -> Result<Groups, DictError> {
+        let mut groups = Groups::default();
+        self.trie()
+            .for_each_key(|value, key| groups.push(value, key))?;
+        groups.sort_by_value();
+        Ok(groups)
     }
 
     /// 全エントリを表層形のバイト順（同じ表層形の中は群の順）に渡す。export・repair・merge 用
@@ -683,7 +732,7 @@ impl Dictionary {
     ) -> Result<(), DictError> {
         let entries: &[EntryRecord] = self.typed(SectionId::Entries);
         let groups = self.groups()?;
-        for (start, key) in groups {
+        for (start, key) in groups.iter() {
             let surface: Arc<str> = Arc::from(key);
             let mut i = start as usize;
             loop {
@@ -755,8 +804,8 @@ impl Dictionary {
         let mut sizes: HashMap<usize, usize> = HashMap::new();
         let mut expected_start = 0usize;
         let mut prev_key: Option<&str> = None;
-        for (start, key) in &groups {
-            let start = *start as usize;
+        for (start, key) in groups.iter() {
+            let start = start as usize;
             if start != expected_start {
                 return Err(DictError::corrupt(format!(
                     "groups do not tile the entries: expected a group at {expected_start}, found {start}"
