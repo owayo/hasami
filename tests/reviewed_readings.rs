@@ -5,6 +5,138 @@ use hasami::Analyzer;
 
 #[test]
 #[ignore = "配布辞書が必要"]
+fn distributed_common_and_technical_readings_keep_valid_alternatives() {
+    let dir = std::env::var("HASAMI_TEST_DICT_DIR")
+        .unwrap_or_else(|_| format!("{}/dict", env!("CARGO_MANIFEST_DIR")));
+    for name in ["ipadic-neologd", "ipadic-neologd-sudachi"] {
+        let mut analyzer = Analyzer::load(format!("{dir}/{name}.hsd")).unwrap();
+        for (text, reading, pronunciation) in [
+            ("不可逆", "フカギャク", "フカギャク"),
+            ("世界共通", "セカイキョウツウ", "セカイキョーツー"),
+            ("一点集中", "イッテンシュウチュウ", "イッテンシューチュー"),
+            ("給料泥棒", "キュウリョウドロボウ", "キューリョードロボー"),
+            ("大怪我", "オオケガ", "オオケガ"),
+            ("下準備", "シタジュンビ", "シタジュンビ"),
+            ("線引き", "センビキ", "センビキ"),
+            ("pptx", "ピーピーティーエックス", "ピーピーティーエックス"),
+            (
+                "Creative Commons",
+                "クリエイティブコモンズ",
+                "クリエイティブコモンズ",
+            ),
+            ("Azure", "アジュール", "アジュール"),
+            ("有機EL", "ユウキイーエル", "ユーキイーエル"),
+            ("VOICEVOX", "ボイスボックス", "ボイスボックス"),
+            (
+                "Software as a Service",
+                "ソフトウェアアズアサービス",
+                "ソフトウェアアズアサービス",
+            ),
+        ] {
+            let tokens = analyzer.try_tokenize(text).unwrap();
+            assert_eq!(
+                tokens.iter().map(|t| &*t.reading).collect::<String>(),
+                reading,
+                "{name}: {text}: {tokens:?}"
+            );
+            assert_eq!(
+                tokens.iter().map(|t| &*t.pronunciation).collect::<String>(),
+                pronunciation,
+                "{name}: {text}: {tokens:?}"
+            );
+            for token in &tokens {
+                assert_eq!(&text[token.start..token.end], token.surface.as_ref());
+            }
+        }
+        for (surface, reading) in [
+            ("Azure", "アズレ"),
+            ("BMW", "バトルムーンウォーズ"),
+            ("堪能", "カンノウ"),
+            ("百本", "ヒャクモト"),
+        ] {
+            assert!(
+                analyzer
+                    .dictionary()
+                    .lookup(surface)
+                    .unwrap()
+                    .iter()
+                    .filter(|(length, _)| *length == surface.len())
+                    .flat_map(|(_, entries)| entries)
+                    .any(|entry| entry.reading.as_ref() == reading),
+                "{name}: {surface}: {reading}"
+            );
+        }
+        let tokens = analyzer.try_tokenize("Azureさん").unwrap();
+        assert_eq!(tokens[0].reading.as_ref(), "アズレ", "{name}: {tokens:?}");
+    }
+}
+
+#[test]
+#[ignore = "配布辞書が必要"]
+fn distributed_counter_readings_preserve_offsets_and_nonquantity_names() {
+    let dir = std::env::var("HASAMI_TEST_DICT_DIR")
+        .unwrap_or_else(|_| format!("{}/dict", env!("CARGO_MANIFEST_DIR")));
+    for name in ["ipadic-neologd", "ipadic-neologd-sudachi"] {
+        let mut analyzer = Analyzer::load(format!("{dir}/{name}.hsd")).unwrap();
+        for (quantity, reading, pronunciation) in [
+            ("1つ", "ヒトツ", "ヒトツ"),
+            ("二口", "フタクチ", "フタクチ"),
+            ("第一章", "ダイイッショウ", "ダイイッショー"),
+            ("6頭", "ロクトウ", "ロクトー"),
+            ("六曲", "ロッキョク", "ロッキョク"),
+            ("8通", "ハッツウ", "ハッツー"),
+            ("1週間", "イッシュウカン", "イッシューカン"),
+            ("6週間", "ロクシュウカン", "ロクシューカン"),
+            ("1点", "イッテン", "イッテン"),
+            ("６点", "ロクテン", "ロクテン"),
+            ("1か月", "イッカゲツ", "イッカゲツ"),
+            ("十階", "ジュッカイ", "ジュッカイ"),
+            ("十足", "ジュッソク", "ジュッソク"),
+            ("十歳", "ジュッサイ", "ジュッサイ"),
+            ("十才", "ジュッサイ", "ジュッサイ"),
+            (
+                "二〇四二年",
+                "ニセンヨンジュウニネン",
+                "ニセンヨンジューニネン",
+            ),
+            ("六〇〇円", "ロッピャクエン", "ロッピャクエン"),
+            ("三〇〇本", "サンビャッポン", "サンビャッポン"),
+        ] {
+            let text = format!("{quantity}を確認した。");
+            let tokens = analyzer.try_tokenize(&text).unwrap();
+            let actual = |pronunciation: bool| -> String {
+                tokens
+                    .iter()
+                    .take_while(|t| t.end <= quantity.len())
+                    .map(|t| {
+                        if pronunciation {
+                            t.pronunciation.as_ref()
+                        } else {
+                            t.reading.as_ref()
+                        }
+                    })
+                    .collect()
+            };
+            assert_eq!(actual(false), reading, "{name}: {text}: {tokens:?}");
+            assert_eq!(actual(true), pronunciation, "{name}: {text}: {tokens:?}");
+            for token in &tokens {
+                assert_eq!(&text[token.start..token.end], token.surface.as_ref());
+            }
+        }
+        for text in ["A1つ", "ID1点", "v1.2章"] {
+            let tokens = analyzer.try_tokenize(text).unwrap();
+            assert!(
+                tokens
+                    .iter()
+                    .all(|t| !matches!(t.reading.as_ref(), "ヒト" | "イッ")),
+                "{name}: {text}: {tokens:?}"
+            );
+        }
+    }
+}
+
+#[test]
+#[ignore = "配布辞書が必要"]
 fn distributed_reviewed_readings_keep_names_and_ascii_identifiers() {
     let dir = std::env::var("HASAMI_TEST_DICT_DIR")
         .unwrap_or_else(|_| format!("{}/dict", env!("CARGO_MANIFEST_DIR")));

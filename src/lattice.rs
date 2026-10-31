@@ -35,6 +35,8 @@ use crate::kana::{to_katakana, unvoice, voice};
 use std::borrow::Cow;
 use std::sync::Arc;
 
+mod idiom;
+
 /// トークン（形態素解析結果の1単位）
 #[derive(Debug, Clone)]
 pub struct Token {
@@ -421,6 +423,7 @@ fn apply_contextual_readings_with_protection(
     } else {
         crate::numeric::apply_counter_readings_with_protection(tokens, protected);
     }
+    idiom::apply(tokens, protected);
 }
 
 /// 仮名のみからなる表層形をカタカナの読みに変換する。
@@ -642,7 +645,9 @@ impl RunCover {
         for j in s..e {
             self.hit_starts.push(hits.len() as u32);
             trie.common_prefix_search_codes(input, &chars.codes, &chars.offsets, j, |q, g| {
-                hits.push((q as u32, g))
+                if !chars.splits_digit_run(input, j, q) {
+                    hits.push((q as u32, g));
+                }
             })?;
         }
         self.hit_starts.push(hits.len() as u32);
@@ -743,6 +748,29 @@ impl ChunkChars {
 
     fn len(&self) -> usize {
         self.codes.len()
+    }
+
+    /// 和文で始まる語の末尾の数字が、入力の数字列の途中で終わるか。
+    ///
+    /// 「中2」を「中23」の接頭辞にしない。英字・数字・符号などで始まる既知語は、
+    /// 型番・符号・小数の明示された読みを保つ。ASCII と全角の数字は同じ並びとして扱う。
+    fn splits_digit_run(&self, input: &str, start: usize, end: usize) -> bool {
+        let is_digit = |c: char| matches!(c, '0'..='9' | '０'..='９');
+        let end_byte = self.offsets[end] as usize;
+        if !input[end_byte..].chars().next().is_some_and(is_digit) {
+            return false;
+        }
+        let first_type = self.types[start] as usize;
+        if first_type != type_index(CharType::Kanji)
+            && first_type != type_index(CharType::Hiragana)
+            && first_type != KATAKANA
+        {
+            return false;
+        }
+        input[self.offsets[start] as usize..end_byte]
+            .chars()
+            .next_back()
+            .is_some_and(is_digit)
     }
 
     /// 位置 pos から空白（char.def の SPACE の文字）を読み飛ばした位置
@@ -1117,7 +1145,11 @@ impl LatticeWorkspace {
                         &chars.codes,
                         &chars.offsets,
                         p,
-                        |end, group| scratch_hits.push((end as u32, group)),
+                        |end, group| {
+                            if !chars.splits_digit_run(input, p, end) {
+                                scratch_hits.push((end as u32, group));
+                            }
+                        },
                     )?;
                     &scratch_hits[..]
                 }
@@ -1273,6 +1305,15 @@ impl LatticeWorkspace {
             first,
             plan,
             cursor,
+            |surface| unit_reading(surface).is_some_and(is_katakana_str),
+        );
+        crate::numeric::apply_kanji_quantities(
+            input,
+            offset,
+            out,
+            first,
+            plan,
+            &protected,
             |surface| unit_reading(surface).is_some_and(is_katakana_str),
         );
         apply_contextual_readings_with_protection(&mut out[first..], &protected);
@@ -1649,6 +1690,159 @@ mod tests {
     }
 
     const NOUN: &str = "名詞,一般,*,*";
+
+    #[test]
+    fn test_known_mixed_words_do_not_split_digit_runs() {
+        let dict = cost_dict(&[
+            ("中2", -10000, NOUN),
+            ("中２", -10000, NOUN),
+            ("中", 0, NOUN),
+            ("第1", -10000, NOUN),
+            ("第", 0, NOUN),
+            ("ひら2", -10000, NOUN),
+            ("ひら", 0, NOUN),
+            ("1", 0, "名詞,数,*,*"),
+            ("2", 0, "名詞,数,*,*"),
+            ("3", 0, "名詞,数,*,*"),
+            ("２", 0, "名詞,数,*,*"),
+            ("３", 0, "名詞,数,*,*"),
+            ("位", 0, "名詞,接尾,助数詞,*"),
+        ]);
+        for (text, first) in [
+            ("中23位", "中"),
+            ("中２３位", "中"),
+            ("中2３位", "中"),
+            ("中２3位", "中"),
+            ("第13位", "第"),
+            ("ひら23位", "ひら"),
+        ] {
+            let tokens = LatticeWorkspace::new().tokenize(text, &dict).unwrap();
+            assert_eq!(&*tokens[0].surface, first, "{text}");
+            assert_eq!((tokens[0].start, tokens[0].end), (0, first.len()), "{text}");
+            assert_eq!(tokens.iter().map(|t| &*t.surface).collect::<String>(), text);
+        }
+    }
+
+    #[test]
+    fn test_digit_candidates_and_complete_mixed_words_are_preserved() {
+        let dict = cost_dict(&[
+            ("2", -1000, "名詞,数,*,*"),
+            ("3", -1000, "名詞,数,*,*"),
+            ("２", -1000, "名詞,数,*,*"),
+            ("３", -1000, "名詞,数,*,*"),
+            ("中2", -1000, NOUN),
+            ("中２", -1000, NOUN),
+            ("1", -1000, "名詞,数,*,*"),
+            ("Windows1", -10000, NOUN),
+            ("Windows11", -1000, NOUN),
+            ("M6", -1000, NOUN),
+        ]);
+        for text in ["23", "２３", "2３", "２3"] {
+            let tokens = LatticeWorkspace::new().tokenize(text, &dict).unwrap();
+            assert_eq!(tokens.len(), 2, "{text}");
+            assert!(tokens.iter().all(|t| t.is_known), "{text}");
+            assert_eq!(tokens[0].surface.chars().count(), 1, "{text}");
+        }
+        for text in ["中2", "中２", "Windows1", "M6"] {
+            let tokens = LatticeWorkspace::new().tokenize(text, &dict).unwrap();
+            assert_eq!(tokens.len(), 1, "{text}");
+            let token = &tokens[0];
+            assert!(token.is_known, "{text}");
+            assert_eq!(&*token.surface, text);
+            assert_eq!(&*token.base_form, text);
+            assert_eq!(&*token.reading, text);
+            assert_eq!((token.start, token.end), (0, text.len()));
+        }
+        // 英字で始まる既知語は元のコストによる選択を保つ。数字の続きだけでは除外しない。
+        assert_eq!(segments(&dict, "Windows11"), ["Windows1", "1"]);
+    }
+
+    #[test]
+    fn test_non_japanese_leading_words_keep_digit_prefix_candidates() {
+        let dict = cost_dict(&[
+            ("Season1", -10000, NOUN),
+            ("Sea", 0, NOUN),
+            ("son", 0, NOUN),
+            ("E1", -10000, NOUN),
+            ("E", 0, NOUN),
+            ("−1", -10000, NOUN),
+            ("−", 0, NOUN),
+            ("2.0", -10000, NOUN),
+            ("Ａ1", -10000, NOUN),
+            ("Ａ", 0, NOUN),
+            ("1", 0, "名詞,数,*,*"),
+            ("2", 0, "名詞,数,*,*"),
+            ("3", 0, "名詞,数,*,*"),
+            ("0", 0, "名詞,数,*,*"),
+            ("8", 0, "名詞,数,*,*"),
+            (".", 0, "記号,句点,*,*"),
+            ("系", 0, "名詞,接尾,一般,*"),
+            ("℃", 0, "名詞,接尾,助数詞,*"),
+        ]);
+        for (text, expected) in [
+            ("Season13", "Season1"),
+            ("E10系", "E1"),
+            ("−180℃", "−1"),
+            ("2.025", "2.0"),
+            ("Ａ13", "Ａ1"),
+        ] {
+            let tokens = LatticeWorkspace::new().tokenize(text, &dict).unwrap();
+            let token = &tokens[0];
+            assert_eq!(&*token.surface, expected, "{text}");
+            assert_eq!(&*token.base_form, expected, "{text}");
+            assert_eq!(&*token.reading, expected, "{text}");
+            assert_eq!(&*token.pronunciation, expected, "{text}");
+            assert_eq!((token.start, token.end), (0, expected.len()), "{text}");
+            assert_eq!(token.word_cost, -10000, "{text}");
+            assert_eq!(&*token.pos, NOUN, "{text}");
+            assert!(token.is_known, "{text}");
+            assert!(token.conj_type.is_empty() && token.conj_form.is_empty());
+            assert_eq!(tokens.iter().map(|t| &*t.surface).collect::<String>(), text);
+        }
+    }
+
+    #[test]
+    fn test_filtered_known_words_allow_single_char_unknown_fallback() {
+        let mut builder = DictBuilder::new();
+        for (surface, cost, pos, reading) in [
+            ("中2", -10000, NOUN, "チュウニ"),
+            ("23", 100, "名詞,数,*,*", "ニジュウサン"),
+        ] {
+            builder.add_entry(DictEntry {
+                surface: surface.into(),
+                left_id: 1,
+                right_id: 1,
+                cost,
+                pos: pos.into(),
+                base_form: surface.into(),
+                reading: reading.into(),
+                pronunciation: reading.into(),
+                ..Default::default()
+            });
+        }
+        let mut classifier = crate::char_class::CharClassifier::default_japanese();
+        classifier.classes.get_mut("KANJI").unwrap().length = 0;
+        builder.set_char_classifier(classifier);
+        let dict = builder.build().unwrap();
+        let tokens = LatticeWorkspace::new().tokenize("中23", &dict).unwrap();
+        assert_eq!(spans(&tokens), [("中", 0, 3), ("23", 3, 5)]);
+        assert!(!tokens[0].is_known);
+        assert!(tokens[1].is_known);
+        assert_eq!(&*tokens[1].reading, "ニジュウサン");
+    }
+
+    #[test]
+    fn test_filtered_known_words_do_not_cover_katakana_unknowns() {
+        // アプリ2が数字列の途中なら、カタカナの未知語アプリを抑制する根拠にも使わない。
+        let dict = cost_dict(&[
+            ("アプリ2", -10000, NOUN),
+            ("ア", 3000, NOUN),
+            ("プ", 3000, NOUN),
+            ("リ", 3000, NOUN),
+            ("23", 100, "名詞,数,*,*"),
+        ]);
+        assert_eq!(segments(&dict, "アプリ23"), ["アプリ*", "23"]);
+    }
 
     #[test]
     fn test_katakana_compound_of_long_words_is_split() {

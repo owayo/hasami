@@ -1,4 +1,4 @@
-//! 最良パスの数詞と助数詞の読み。ASCII の数量だけは数詞列を合成する。
+//! 最良パスの数詞と助数詞の読み。ASCII と位を省いた漢数字の数量は数詞列を合成する。
 //!
 //! 音便は助数詞ごとの対応表で決め、読み以外の情報を保持する。人・日の和語読みは数詞列全体を見る。
 //! 一日は日付と期間を区別できないので変更せず、二十日のハツカも分配しない。
@@ -8,8 +8,10 @@ use std::ops::Range;
 use std::sync::Arc;
 
 mod ascii;
+mod kanji;
 mod month;
 pub(crate) use ascii::{AsciiPlan, apply as apply_ascii_quantities};
+pub(crate) use kanji::apply as apply_kanji_quantities;
 pub(crate) use month::apply as apply_spaced_months;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -37,6 +39,11 @@ enum Counter {
         half: &'static str,
     },
     K,
+    ExtraK,
+    Soft,
+    Step,
+    NativeTs,
+    Mouth,
     Minute,
     Hundred,
     Thousand,
@@ -170,6 +177,25 @@ fn counter(token: &Token) -> Option<Counter> {
         };
     }
     let suffix = pos_has(&token.pos, "名詞,接尾,助数詞");
+    // IPAdic の単独の「つ」は文語の助動詞にもなる。数詞に直結した標準形だけを
+    // 後段で和語の助数詞として読む。活用語の後の「つ」には適用しない。
+    if token.surface.as_ref() == "つ"
+        && has_reading(token, &["ツ"])
+        && (suffix
+            || (pos_has(&token.pos, "助動詞")
+                && matches!(token.conj_type.as_ref(), "文語・ツ" | "下二・タ行")
+                && token.conj_form.as_ref() == "基本形"))
+    {
+        return Some(Counter::NativeTs);
+    }
+    // 章見出しでは普通名詞の「章」が選ばれることもある。助数詞と同じ読みを
+    // 持つ形に限り、直結した数詞の後だけで促音化する。
+    if token.surface.as_ref() == "章"
+        && pos_has(&token.pos, "名詞,一般")
+        && has_reading(token, &["ショウ", "ショー"])
+    {
+        return Some(Counter::Soft);
+    }
     // IPAdic では「ぷん」が未知の普通名詞になる。仮名補完済みのこの形だけを許す。
     if !suffix
         && !(!token.is_known
@@ -192,6 +218,30 @@ fn counter(token: &Token) -> Option<Counter> {
         "匹" => h("ヒキ", "ビキ", "ピキ"),
         "回" if has_reading(token, &["カイ"]) => Some(Counter::K),
         "個" if has_reading(token, &["コ"]) => Some(Counter::K),
+        "句" if has_reading(token, &["ク"]) => Some(Counter::ExtraK),
+        "級" if has_reading(token, &["キュウ", "キュー"]) => Some(Counter::ExtraK),
+        "件" if has_reading(token, &["ケン"]) => Some(Counter::ExtraK),
+        "期" if has_reading(token, &["キ"]) => Some(Counter::ExtraK),
+        "曲" if has_reading(token, &["キョク"]) => Some(Counter::ExtraK),
+        "階" if has_reading(token, &["カイ"]) => Some(Counter::ExtraK),
+        "か月" | "カ月" | "ヶ月" | "ヵ月" if has_reading(token, &["カゲツ"]) => {
+            Some(Counter::ExtraK)
+        }
+        "点" if has_reading(token, &["テン"]) => Some(Counter::Soft),
+        "通" if has_reading(token, &["ツウ", "ツー"]) => Some(Counter::Soft),
+        "冊" | "刷" if has_reading(token, &["サツ"]) => Some(Counter::Soft),
+        "週" if has_reading(token, &["シュウ", "シュー"]) => Some(Counter::Soft),
+        "週間" if has_reading(token, &["シュウカン", "シューカン"]) => {
+            Some(Counter::Soft)
+        }
+        "章" if has_reading(token, &["ショウ", "ショー"]) => Some(Counter::Soft),
+        "節" if has_reading(token, &["セツ"]) => Some(Counter::Soft),
+        "頭" if has_reading(token, &["トウ", "トー"]) => Some(Counter::Soft),
+        "着" if has_reading(token, &["チャク"]) => Some(Counter::Soft),
+        "足" if has_reading(token, &["ソク"]) => Some(Counter::Soft),
+        "歳" | "才" if has_reading(token, &["サイ"]) => Some(Counter::Soft),
+        "歩" if has_reading(token, &["ホ", "ポ"]) => Some(Counter::Step),
+        "口" if has_reading(token, &["クチ", "グチ"]) => Some(Counter::Mouth),
         "分" | "ぷん" if has_reading(token, &["フン", "プン"]) => Some(Counter::Minute),
         "人" if has_reading(token, &["ニン", "リ"]) => Some(Counter::Person),
         "日" if has_reading(token, &["ニチ", "カ"]) => Some(Counter::Day),
@@ -292,6 +342,11 @@ fn standard_number_readings(token: &Token, tails: &[&str]) -> bool {
     }
     if token.surface.is_ascii() {
         return ascii::standard_readings(&token.surface, &token.reading, &token.pronunciation);
+    }
+    if !token.is_known
+        && kanji::standard_readings(&token.surface, &token.reading, &token.pronunciation)
+    {
+        return true;
     }
     standard_kanji_readings(&token.surface, &token.reading, &token.pronunciation)
 }
@@ -497,6 +552,23 @@ struct Numeral {
     day: Option<(&'static str, &'static str)>,
     /// 人の和語読み（一人・二人）にできるか
     person: bool,
+    /// 「つ」と「口」の和語読み。数詞が一つの標準形のときだけ使う。
+    native: Option<&'static str>,
+}
+
+fn native_counter_prefix(counter: Counter, value: u64) -> Option<&'static str> {
+    match (counter, value) {
+        (Counter::NativeTs | Counter::Mouth, 1) => Some("ヒト"),
+        (Counter::NativeTs | Counter::Mouth, 2) => Some("フタ"),
+        (Counter::NativeTs, 3) => Some("ミッ"),
+        (Counter::NativeTs, 4) => Some("ヨッ"),
+        (Counter::NativeTs, 5) => Some("イツ"),
+        (Counter::NativeTs, 6) => Some("ムッ"),
+        (Counter::NativeTs, 7) => Some("ナナ"),
+        (Counter::NativeTs, 8) => Some("ヤッ"),
+        (Counter::NativeTs, 9) => Some("ココノ"),
+        _ => None,
+    }
 }
 
 /// 助数詞 `tokens[i]` の読みを直せる数詞列かを判定し、音便に使う情報を返す
@@ -511,6 +583,13 @@ fn numeral_before_counter(
 ) -> Option<Numeral> {
     // 兆の新しい促音化は、保護されていない純ASCIIまたは純漢数字の列だけに適用する。
     if matches!(counter, Counter::Trillion) && (run.protected || !(run.ascii || run.kanji)) {
+        return None;
+    }
+    if matches!(
+        counter,
+        Counter::ExtraK | Counter::Soft | Counter::Step | Counter::NativeTs | Counter::Mouth
+    ) && run.protected
+    {
         return None;
     }
     if after_decimal(tokens, run.start) {
@@ -543,11 +622,25 @@ fn numeral_before_counter(
             numeral_value(std::iter::once(number.surface.as_ref())),
             Some(1 | 2)
         );
+    let native = if matches!(counter, Counter::NativeTs | Counter::Mouth)
+        && i - run.start == 1
+        && !run.start.checked_sub(1).is_some_and(|j| {
+            tokens[j].end == tokens[run.start].start
+                && tokens[j].surface.as_ref() == "第"
+                && pos_has(&tokens[j].pos, "接頭詞,数接続")
+        }) {
+        numeral_value(std::iter::once(number.surface.as_ref()))
+            .filter(|&value| standard_native_run(&tokens[run.start..i], value))
+            .and_then(|value| native_counter_prefix(counter, value))
+    } else {
+        None
+    };
     Some(Numeral {
         ending,
         tails,
         day,
         person,
+        native,
     })
 }
 
@@ -563,6 +656,7 @@ fn apply_counter_reading(
         tails,
         day,
         person,
+        native,
     } = numeral;
     match counter {
         Counter::H {
@@ -580,8 +674,35 @@ fn apply_counter_reading(
             }
             _ => set_readings(suffix, plain, plain),
         },
-        Counter::K => {
+        Counter::K | Counter::ExtraK => {
             geminate(number, e);
+        }
+        Counter::Soft => {
+            if matches!(e, Ending::One | Ending::Eight | Ending::Ten) {
+                geminate(number, e);
+            }
+        }
+        Counter::Step => match e {
+            Ending::One | Ending::Six | Ending::Eight | Ending::Ten | Ending::Hundred => {
+                if geminate(number, e) {
+                    set_readings(suffix, "ポ", "ポ");
+                }
+            }
+            Ending::Three | Ending::Thousand | Ending::TenThousand => {
+                set_readings(suffix, "ポ", "ポ");
+            }
+            _ => set_readings(suffix, "ホ", "ホ"),
+        },
+        Counter::NativeTs | Counter::Mouth => {
+            if let Some(prefix) = native {
+                set_readings(number, prefix, prefix);
+                let tail = if matches!(counter, Counter::NativeTs) {
+                    "ツ"
+                } else {
+                    "クチ"
+                };
+                set_readings(suffix, tail, tail);
+            }
         }
         Counter::Minute => match e {
             Ending::One | Ending::Six | Ending::Eight | Ending::Ten | Ending::Hundred => {
@@ -815,6 +936,210 @@ mod tests {
                 "repeat {n}{c}"
             );
         }
+    }
+
+    #[test]
+    fn reviewed_counter_families_keep_six_plain_and_preserve_every_other_field() {
+        for (n, nr, c, cr, cp, expected_r, expected_p) in [
+            ("1", "イチ", "つ", "ツ", "ツ", "ヒトツ", "ヒトツ"),
+            ("2", "ニ", "つ", "ツ", "ツ", "フタツ", "フタツ"),
+            ("8", "ハチ", "つ", "ツ", "ツ", "ヤッツ", "ヤッツ"),
+            ("1", "イチ", "口", "クチ", "クチ", "ヒトクチ", "ヒトクチ"),
+            ("2", "ニ", "口", "グチ", "グチ", "フタクチ", "フタクチ"),
+            ("一", "イチ", "歩", "ホ", "ホ", "イッポ", "イッポ"),
+            ("三", "サン", "歩", "ホ", "ホ", "サンポ", "サンポ"),
+            ("六", "ロク", "歩", "ホ", "ホ", "ロッポ", "ロッポ"),
+            ("百", "ヒャク", "歩", "ホ", "ホ", "ヒャッポ", "ヒャッポ"),
+            ("1", "イチ", "点", "テン", "テン", "イッテン", "イッテン"),
+            ("6", "ロク", "点", "テン", "テン", "ロクテン", "ロクテン"),
+            ("8", "ハチ", "点", "テン", "テン", "ハッテン", "ハッテン"),
+            ("1", "イチ", "通", "ツウ", "ツー", "イッツウ", "イッツー"),
+            ("六", "ロク", "通", "ツウ", "ツー", "ロクツウ", "ロクツー"),
+            (
+                "十",
+                "ジュウ",
+                "冊",
+                "サツ",
+                "サツ",
+                "ジュッサツ",
+                "ジュッサツ",
+            ),
+            (
+                "1",
+                "イチ",
+                "週間",
+                "シュウカン",
+                "シューカン",
+                "イッシュウカン",
+                "イッシューカン",
+            ),
+            (
+                "6",
+                "ロク",
+                "週間",
+                "シュウカン",
+                "シューカン",
+                "ロクシュウカン",
+                "ロクシューカン",
+            ),
+            (
+                "一",
+                "イチ",
+                "章",
+                "ショウ",
+                "ショー",
+                "イッショウ",
+                "イッショー",
+            ),
+            (
+                "六",
+                "ロク",
+                "章",
+                "ショウ",
+                "ショー",
+                "ロクショウ",
+                "ロクショー",
+            ),
+            ("1", "イチ", "刷", "サツ", "サツ", "イッサツ", "イッサツ"),
+            (
+                "十",
+                "ジュウ",
+                "足",
+                "ソク",
+                "ソク",
+                "ジュッソク",
+                "ジュッソク",
+            ),
+            ("六", "ロク", "足", "ソク", "ソク", "ロクソク", "ロクソク"),
+            (
+                "十",
+                "ジュウ",
+                "歳",
+                "サイ",
+                "サイ",
+                "ジュッサイ",
+                "ジュッサイ",
+            ),
+            (
+                "十",
+                "ジュウ",
+                "才",
+                "サイ",
+                "サイ",
+                "ジュッサイ",
+                "ジュッサイ",
+            ),
+            ("一", "イチ", "句", "ク", "ク", "イック", "イック"),
+            ("六", "ロク", "句", "ク", "ク", "ロック", "ロック"),
+            (
+                "十",
+                "ジュウ",
+                "階",
+                "カイ",
+                "カイ",
+                "ジュッカイ",
+                "ジュッカイ",
+            ),
+            ("三", "サン", "階", "ガイ", "ガイ", "サンガイ", "サンガイ"),
+            (
+                "1",
+                "イチ",
+                "か月",
+                "カゲツ",
+                "カゲツ",
+                "イッカゲツ",
+                "イッカゲツ",
+            ),
+            (
+                "6",
+                "ロク",
+                "ヶ月",
+                "カゲツ",
+                "カゲツ",
+                "ロッカゲツ",
+                "ロッカゲツ",
+            ),
+        ] {
+            let mut out = tokens(&[(n, NUMBER, nr), (c, COUNTER, cr)]);
+            out[1].pronunciation = cp.into();
+            let fields = non_reading_fields(&out);
+            apply_counter_readings(&mut out);
+            assert_eq!(
+                readings(&out),
+                (expected_r.into(), expected_p.into()),
+                "{n}{c}"
+            );
+            assert_eq!(non_reading_fields(&out), fields, "{n}{c}");
+            apply_counter_readings(&mut out);
+            assert_eq!(
+                readings(&out),
+                (expected_r.into(), expected_p.into()),
+                "repeat {n}{c}"
+            );
+        }
+    }
+
+    #[test]
+    fn new_counter_readings_respect_identifiers_decimals_pos_and_explicit_readings() {
+        for (c, cr) in [
+            ("つ", "ツ"),
+            ("口", "クチ"),
+            ("歩", "ホ"),
+            ("点", "テン"),
+            ("句", "ク"),
+        ] {
+            let mut out = tokens(&[("1", NUMBER, "イチ"), (c, COUNTER, cr)]);
+            let before = out.clone();
+            let protected = out[0].start..out[0].end;
+            apply_counter_readings_with_protection(&mut out, &[protected]);
+            assert_eq!(readings(&out), readings(&before), "protected {c}");
+            assert_eq!(non_reading_fields(&out), non_reading_fields(&before));
+        }
+        for parts in [
+            vec![("1", NUMBER, "イチ"), ("つ", "助詞,終助詞,*,*", "ツ")],
+            vec![("1", NUMBER, "イチ"), ("歩", "名詞,一般,*,*", "ホ")],
+            vec![("1", NUMBER, "イチ"), ("章", COUNTER, "アキラ")],
+            vec![("1", NUMBER, "イチャ"), ("つ", COUNTER, "ツ")],
+            vec![("1", NUMBER, "イチ"), ("つ", COUNTER, "ヅ")],
+            vec![("10", NUMBER, "ジュウ"), ("つ", COUNTER, "ツ")],
+            vec![
+                ("1", NUMBER, "イチ"),
+                ("2", NUMBER, "ニ"),
+                ("つ", COUNTER, "ツ"),
+            ],
+            vec![
+                ("1", NUMBER, "イチ"),
+                (".", "記号,一般,*,*", "."),
+                ("2", NUMBER, "ニ"),
+                ("つ", COUNTER, "ツ"),
+            ],
+            vec![
+                ("第", "接頭詞,数接続,*,*", "ダイ"),
+                ("1", NUMBER, "イチ"),
+                ("口", COUNTER, "クチ"),
+            ],
+        ] {
+            let mut out = tokens(&parts);
+            let before = out.clone();
+            apply_counter_readings(&mut out);
+            assert_eq!(readings(&out), readings(&before), "{parts:?}");
+            assert_eq!(non_reading_fields(&out), non_reading_fields(&before));
+        }
+        for conj_type in ["文語・ツ", "下二・タ行"] {
+            let mut out = tokens(&[("1", NUMBER, "イチ"), ("つ", "助動詞,*,*,*", "ツ")]);
+            out[1].conj_type = conj_type.into();
+            out[1].conj_form = "基本形".into();
+            let fields = non_reading_fields(&out);
+            apply_counter_readings(&mut out);
+            assert_eq!(readings(&out), ("ヒトツ".into(), "ヒトツ".into()));
+            assert_eq!(non_reading_fields(&out), fields);
+        }
+        let mut out = tokens(&[("一", NUMBER, "イチ"), ("章", "名詞,一般,*,*", "ショウ")]);
+        out[1].pronunciation = "ショー".into();
+        let fields = non_reading_fields(&out);
+        apply_counter_readings(&mut out);
+        assert_eq!(readings(&out), ("イッショウ".into(), "イッショー".into()));
+        assert_eq!(non_reading_fields(&out), fields);
     }
 
     #[test]

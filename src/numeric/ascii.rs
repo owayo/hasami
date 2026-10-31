@@ -140,6 +140,11 @@ fn readings(raw: &str, number: Number) -> (String, String) {
     (reading, pronunciation)
 }
 
+/// 位を省略した漢数字も、同じ位取りと音便で読む。
+pub(super) fn integer_readings(integer: u64) -> (String, String) {
+    readings("", Number { integer, dot: None })
+}
+
 #[derive(Debug)]
 struct Candidate {
     number: Range<usize>,
@@ -151,6 +156,7 @@ struct Candidate {
 pub(crate) struct AsciiPlan {
     candidates: Vec<Candidate>,
     month_starts: Vec<usize>,
+    kanji_starts: Vec<usize>,
 }
 
 fn envelope_byte(b: u8) -> bool {
@@ -158,6 +164,15 @@ fn envelope_byte(b: u8) -> bool {
 }
 
 impl AsciiPlan {
+    pub(super) fn has_kanji_in(&self, start: usize, end: usize) -> bool {
+        let i = self.kanji_starts.partition_point(|&s| s < start);
+        self.kanji_starts.get(i).is_some_and(|&s| s < end)
+    }
+
+    pub(super) fn kanji_number_start(&self, start: usize) -> bool {
+        self.kanji_starts.binary_search(&start).is_ok()
+    }
+
     pub(super) fn has_month_in(&self, start: usize, end: usize) -> bool {
         let i = self.month_starts.partition_point(|&s| s < start);
         self.month_starts.get(i).is_some_and(|&s| s < end)
@@ -181,9 +196,11 @@ impl AsciiPlan {
     pub(crate) fn new(input: &str, offset: usize) -> Self {
         let mut plan = Self {
             month_starts: super::month::number_starts(input, offset),
+            kanji_starts: super::kanji::number_starts(input, offset),
             ..Self::default()
         };
-        if !input.bytes().any(|b| b.is_ascii_digit()) {
+        // 全角の英数字・記号は UTF-8 の EF から始まる。漢字だけの入力では走査しない。
+        if !input.bytes().any(|b| b.is_ascii_digit() || b == 0xef) {
             return plan;
         }
         let bytes = input.as_bytes();
@@ -196,6 +213,13 @@ impl AsciiPlan {
                 }
                 let block = &input[start..pos];
                 if let Some(first) = block.bytes().position(|b| b.is_ascii_digit()) {
+                    // 単独の先行カンマは文の区切り。A,10 や ,,10 は識別子として守る。
+                    let comma_delimiter = first == 1
+                        && block.starts_with(',')
+                        && !input[..start].ends_with(|c| matches!(c, '０'..='９'));
+                    if comma_delimiter {
+                        prefix = false;
+                    }
                     let end = first
                         + block[first..]
                             .bytes()
@@ -205,20 +229,57 @@ impl AsciiPlan {
                     let allowed_suffix = suffix.is_empty()
                         || suffix == "%"
                         || suffix.bytes().all(|b| b.is_ascii_alphabetic());
-                    let parsed = if first == 0 && !prefix && allowed_suffix {
-                        parse(&block[..end])
+                    let parsed = if (first == 0 || comma_delimiter) && !prefix && allowed_suffix {
+                        parse(&block[first..end])
                     } else {
                         None
                     };
                     plan.candidates.push(Candidate {
                         number: offset + start + first..offset + start + end,
-                        envelope: offset + start..offset + pos,
+                        envelope: offset + start + usize::from(comma_delimiter)..offset + pos,
                         parsed,
                     });
                 }
                 prefix = block.bytes().any(|b| b.is_ascii_alphanumeric());
             } else {
                 let c = input[pos..].chars().next().unwrap();
+                if matches!(c, '０'..='９') {
+                    let start = pos;
+                    // 「-」「+」「_」だけの ASCII block は prefix を立てないが、
+                    // 全角数字に直結・空白越しで前置されれば同じ識別子として守る。
+                    let left = input[..start]
+                        .trim_end_matches(char::is_whitespace)
+                        .as_bytes();
+                    let comma_delimiter = left.last() == Some(&b',')
+                        && (left.len() == 1 || !envelope_byte(left[left.len() - 2]))
+                        && !input[..start]
+                            .trim_end_matches(char::is_whitespace)
+                            .strip_suffix(',')
+                            .is_some_and(|prefix| prefix.ends_with(|c| matches!(c, '０'..='９')));
+                    let left_marker =
+                        !comma_delimiter && left.last().is_some_and(|&b| envelope_byte(b));
+                    while pos < bytes.len()
+                        && input[pos..].starts_with(|c| matches!(c, '０'..='９'))
+                    {
+                        pos += 3;
+                    }
+                    let suffix_identifier = input[pos..].chars().next().is_some_and(|c| {
+                        (c.is_ascii() && envelope_byte(c as u8))
+                            || super::digit(c).is_some()
+                            || super::place(c).is_some()
+                            || matches!(c, 'Ａ'..='Ｚ' | 'ａ'..='ｚ' | '－' | '−' | '‐' | '‑' | '‒' | '–' | '—' | '―' | '．' | '，' | '／' | '∕' | '÷' | '×' | '＋')
+                    });
+                    if prefix || left_marker || suffix_identifier {
+                        let range = offset + start..offset + pos;
+                        plan.candidates.push(Candidate {
+                            number: range.clone(),
+                            envelope: range,
+                            parsed: None,
+                        });
+                    }
+                    prefix = true;
+                    continue;
+                }
                 if matches!(
                     c,
                     '－' | '−'
@@ -252,14 +313,15 @@ fn number_pos(t: &Token) -> bool {
     super::pos_has(&t.pos, "名詞,数")
 }
 
-fn quantity(t: &Token, unit: impl Fn(&str) -> bool) -> bool {
+pub(super) fn quantity(t: &Token, unit: impl Fn(&str) -> bool) -> bool {
     super::pos_has(&t.pos, "名詞,接尾,助数詞")
+        || super::counter(t).is_some()
         || (t.surface.as_ref() == "年度" && super::pos_has(&t.pos, "名詞"))
         || (number_pos(t) && matches!(t.surface.as_ref(), "百" | "千" | "万" | "億" | "兆"))
         || unit(&t.surface)
 }
 
-fn unit_boundary(input: &str, offset: usize, t: &Token) -> bool {
+pub(super) fn unit_boundary(input: &str, offset: usize, t: &Token) -> bool {
     let Some(end) = t.end.checked_sub(offset) else {
         return false;
     };
@@ -566,6 +628,15 @@ mod tests {
             "v1.2.3円",
             "192.168.0.1円",
             "1,23円",
+            "1,,000円",
+            ",,10円",
+            ",1,23円",
+            ",1,,000円",
+            "A,10円",
+            "ISO,10円",
+            "１,10円",
+            "-,10円",
+            "+,10円",
             "1.2.3円",
             "1．23円",
             "1，234円",
@@ -595,6 +666,64 @@ mod tests {
     }
 
     #[test]
+    fn single_comma_prefix_delimits_quantities_and_bare_decimals() {
+        for text in [
+            "前に,10円",
+            "一,10円",
+            "10円,20円",
+            "ISO ,10円",
+            "ISO\n,10円",
+            "１ ,10円",
+            "前に,2.50円",
+            "一,9.2",
+            "10円,1,000円",
+        ] {
+            let offset = 91;
+            let plan = AsciiPlan::new(text, offset);
+            assert!(plan.candidates.iter().all(|c| c.parsed.is_some()), "{text}");
+            for c in &plan.candidates {
+                assert_eq!(c.number, c.envelope, "{text}");
+                assert!(text.as_bytes()[c.number.start - offset].is_ascii_digit());
+            }
+            let mut out = input_tokens(text, offset);
+            let commas: Vec<_> = out
+                .iter()
+                .filter(|t| t.surface.as_ref() == ",")
+                .map(|t| (t.start, format!("{t:?}")))
+                .collect();
+            let mut cursor = 0;
+            let protected = apply(text, offset, &mut out, 0, &plan, &mut cursor, |_| false);
+            assert!(protected.is_empty(), "{text}: {protected:?}");
+            assert_eq!(cursor, plan.candidates.len());
+            for c in &plan.candidates {
+                let token = out.iter().find(|t| t.start == c.number.start).unwrap();
+                assert_eq!(token.end, c.number.end);
+                assert_eq!(token.word_cost, 100 * token.surface.len() as i16);
+                assert_eq!(token.pos.as_ref(), "名詞,数,*,*");
+                assert!(!token.is_known);
+                assert!(token.mora_count() > 0);
+                assert_eq!(
+                    plan.bare_integer(c.number.start, c.number.end),
+                    c.parsed.unwrap().dot.is_none()
+                );
+            }
+            // 数の桁区切りに属するカンマ以外は、その全フィールドを保つ。
+            for (start, before) in commas {
+                if !plan.candidates.iter().any(|c| c.number.contains(&start)) {
+                    let token = out.iter().find(|t| t.start == start).unwrap();
+                    assert_eq!(format!("{token:?}"), before);
+                }
+            }
+            for token in &out {
+                assert_eq!(
+                    &text[token.start - offset..token.end - offset],
+                    token.surface.as_ref()
+                );
+            }
+        }
+    }
+
+    #[test]
     fn synthetic_cost_is_summed_widely_and_saturated_only_once() {
         for (costs, expected) in [
             ([30000, 30000, -30000], 30000),
@@ -616,6 +745,124 @@ mod tests {
                 |_| false,
             );
             assert_eq!(out[0].word_cost, expected);
+        }
+    }
+
+    #[test]
+    fn fullwidth_identifier_digits_are_protected_but_plain_quantities_are_not() {
+        for (text, protected_number) in [
+            ("Ａ１つ", true),
+            ("A１点", true),
+            ("ID１章", true),
+            ("ID １つ", true),
+            ("ID\n１つ", true),
+            ("ID（１つ", true),
+            ("-１つ", true),
+            ("+１章", true),
+            ("_１点", true),
+            (".\n１つ", true),
+            ("A,１つ", true),
+            ("ISO,１つ", true),
+            ("１,１つ", true),
+            (",,１つ", true),
+            ("-,１つ", true),
+            ("１Aつ", true),
+            ("１_つ", true),
+            ("１2つ", true),
+            ("1１つ", true),
+            ("１．１つ", true),
+            ("１つ", false),
+            ("価格１つ", false),
+            ("(１つ", false),
+            ("（１つ", false),
+            ("前に,１つ", false),
+            ("一,１つ", false),
+            ("ISO ,１つ", false),
+            ("１ ,１つ", false),
+        ] {
+            let mut out = input_tokens(text, 0);
+            for t in &mut out {
+                if matches!(t.surface.as_ref(), "1" | "１" | "2") {
+                    t.pos = "名詞,数,*,*".into();
+                    let reading = if t.surface.as_ref() == "2" {
+                        "ニ"
+                    } else {
+                        "イチ"
+                    };
+                    t.reading = reading.into();
+                    t.pronunciation = reading.into();
+                } else if let Some((reading, pronunciation)) = match t.surface.as_ref() {
+                    "つ" => Some(("ツ", "ツ")),
+                    "点" => Some(("テン", "テン")),
+                    "章" => Some(("ショウ", "ショー")),
+                    _ => None,
+                } {
+                    t.pos = "名詞,接尾,助数詞,*".into();
+                    t.reading = reading.into();
+                    t.pronunciation = pronunciation.into();
+                }
+            }
+            let before = format!("{out:?}");
+            let ranges = apply(
+                text,
+                0,
+                &mut out,
+                0,
+                &AsciiPlan::new(text, 0),
+                &mut 0,
+                |_| false,
+            );
+            super::super::apply_counter_readings_with_protection(&mut out, &ranges);
+            if protected_number {
+                assert_eq!(format!("{out:?}"), before, "{text}");
+            } else {
+                assert!(ranges.is_empty(), "{text}: {ranges:?}");
+                assert!(
+                    out.iter()
+                        .any(|t| t.surface.as_ref() == "１" && t.reading.as_ref() == "ヒト"),
+                    "{text}: {out:?}"
+                );
+            }
+        }
+        let text = "12円、Ａ１つ、34円、１ID";
+        let plan = AsciiPlan::new(text, 37);
+        assert!(
+            plan.candidates
+                .windows(2)
+                .all(|p| p[0].number.start < p[1].number.start)
+        );
+        assert!(plan.bare_integer(37, 39));
+        let ascii_second = 37 + text.find("34").unwrap();
+        assert!(plan.bare_integer(ascii_second, ascii_second + 2));
+        let wide = 37 + text.find('１').unwrap();
+        assert!(!plan.bare_integer(wide, wide + 3));
+    }
+
+    #[test]
+    fn fullwidth_protection_and_cursor_survive_a_run_split_across_chunks() {
+        let parts = ["ID.", "\n", "１", "２つ"];
+        let full = parts.concat();
+        let offset = 91;
+        let plan = AsciiPlan::new(&full, offset);
+        assert_eq!(plan.candidates.len(), 1);
+        let envelope = plan.candidates[0].envelope.clone();
+        let (mut position, mut cursor) = (offset, 0);
+        let mut out = input_tokens("前", 0);
+        for (i, part) in parts.iter().enumerate() {
+            let first = out.len();
+            out.extend(input_tokens(part, position));
+            let before = format!("{out:?}");
+            let ranges = apply(part, position, &mut out, first, &plan, &mut cursor, |_| {
+                false
+            });
+            assert_eq!(format!("{out:?}"), before);
+            if i >= 2 {
+                assert_eq!(ranges, vec![envelope.clone()]);
+            } else {
+                assert!(ranges.is_empty());
+            }
+            assert_eq!(cursor, usize::from(i == parts.len() - 1));
+            position += part.len();
         }
     }
 }
@@ -660,6 +907,9 @@ mod analyzer_tests {
             ("倍", "名詞,接尾,助数詞,*", "バイ", "バイ", 0),
             ("人", "名詞,接尾,助数詞,*", "ニン", "ニン", 0),
             ("日", "名詞,接尾,助数詞,*", "ニチ", "ニチ", 0),
+            ("つ", "名詞,接尾,助数詞,*", "ツ", "ツ", 0),
+            ("点", "名詞,接尾,助数詞,*", "テン", "テン", 0),
+            ("章", "名詞,接尾,助数詞,*", "ショウ", "ショー", 0),
             ("年度", "名詞,一般,*,*", "ネンド", "ネンド", 0),
             ("万", "名詞,数,*,*", "マン", "マン", 0),
             ("兆", "名詞,数,*,*", "チョウ", "チョー", 0),
@@ -899,6 +1149,140 @@ mod analyzer_tests {
         assert_eq!(out[first].surface.as_ref(), "1,000");
         assert_eq!(out[first].pronunciation.as_ref(), "セン");
         assert_eq!((out[first].start, out[first].end), (91, 96));
+    }
+
+    #[test]
+    fn fullwidth_digits_in_identifiers_do_not_receive_new_counter_readings() {
+        let mut analyzer = Analyzer::from_dict(dictionary());
+        for text in [
+            "Ａ１つ",
+            "A１点",
+            "ID１章",
+            "ID\n１つ",
+            "ID.\n１章",
+            "１Aつ",
+            "1１つ",
+        ] {
+            let out = analyzer.try_tokenize(text).unwrap();
+            let number = out.iter().find(|t| t.surface.as_ref() == "１").unwrap();
+            assert_eq!(number.reading.as_ref(), "イチ", "{text}: {out:?}");
+            let sentences = analyzer
+                .try_tokenize_sentences(text, &crate::sentence::SplitOptions::default())
+                .unwrap();
+            let number = sentences
+                .iter()
+                .flat_map(|(_, tokens)| tokens)
+                .find(|t| t.surface.as_ref() == "１")
+                .unwrap();
+            assert_eq!(number.reading.as_ref(), "イチ", "sentences: {text}");
+        }
+        let out = analyzer.try_tokenize("１つ").unwrap();
+        assert_eq!(pronunciation(&out), "ヒトツ");
+    }
+
+    #[test]
+    fn comma_delimited_quantities_keep_euphony_and_identifier_protection() {
+        let mut analyzer = Analyzer::from_dict(dictionary());
+        for (text, numbers) in [
+            ("前に,10本", vec![("10", "ジュッ", 2)]),
+            ("一,10本", vec![("10", "ジュッ", 2)]),
+            (
+                "10本,20本",
+                vec![("10", "ジュッ", 2), ("20", "ニジュッ", 3)],
+            ),
+            ("ISO ,10本", vec![("10", "ジュッ", 2)]),
+            ("１ ,10本", vec![("10", "ジュッ", 2)]),
+            ("一,2.50分", vec![("2.50", "ニテンゴゼロ", 6)]),
+        ] {
+            let out = analyzer.try_tokenize(text).unwrap();
+            for (surface, expected, morae) in numbers {
+                let token = out.iter().find(|t| t.surface.as_ref() == surface).unwrap();
+                assert_eq!(token.pronunciation.as_ref(), expected, "{text}: {out:?}");
+                assert_eq!(token.mora_count(), morae);
+                // 小数点はこの辞書ではコスト9000の未知記号。
+                assert_eq!(
+                    token.word_cost,
+                    if surface.contains('.') { 9000 } else { 0 }
+                );
+                assert!(!token.is_known);
+            }
+            for token in &out {
+                assert_eq!(&text[token.start..token.end], token.surface.as_ref());
+            }
+        }
+        for text in ["前に,１つ", "一,１つ", "ISO ,１つ", "１ ,１つ"] {
+            let out = analyzer.try_tokenize(text).unwrap();
+            let token = out
+                .iter()
+                .rev()
+                .find(|t| t.surface.as_ref() == "１")
+                .unwrap();
+            assert_eq!(token.pronunciation.as_ref(), "ヒト", "{text}: {out:?}");
+        }
+        for text in [
+            "A,１つ",
+            "ISO,１つ",
+            ",,１つ",
+            "１,１つ",
+            "-１つ",
+            "+１つ",
+            "_１つ",
+        ] {
+            let out = analyzer.try_tokenize(text).unwrap();
+            let numbers: Vec<_> = out.iter().filter(|t| t.surface.as_ref() == "１").collect();
+            assert!(!numbers.is_empty());
+            assert!(
+                numbers.iter().all(|t| t.pronunciation.as_ref() == "イチ"),
+                "{text}: {out:?}"
+            );
+        }
+        for text in [
+            "A,10本",
+            "ISO,10本",
+            "１,10本",
+            "1,23本",
+            "1,,000本",
+            ",,10本",
+            "-10本",
+        ] {
+            let out = analyzer.try_tokenize(text).unwrap();
+            assert!(
+                out.iter()
+                    .filter(|t| t.surface.bytes().all(|b| b.is_ascii_digit()))
+                    .all(|t| t.surface.len() == 1),
+                "{text}: {out:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn comma_boundary_survives_prepared_chunks_and_offsets() {
+        let dict = dictionary();
+        let mut workspace = crate::lattice::LatticeWorkspace::new();
+        for parts in [&["ISO ", ",10本"][..], &["一,", "10本"][..]] {
+            let input = parts.concat();
+            let offset = 91;
+            let plan = AsciiPlan::new(&input, offset);
+            let mut cursor = 0;
+            let mut position = offset;
+            let mut out = workspace.tokenize("先", &dict).unwrap();
+            for part in parts {
+                let first = out.len();
+                let previous = format!("{out:?}");
+                workspace
+                    .tokenize_into_prepared(part, &dict, position, &mut out, &plan, &mut cursor)
+                    .unwrap();
+                assert_eq!(format!("{:?}", &out[..first]), previous);
+                position += part.len();
+            }
+            assert_eq!(cursor, plan.candidates.len());
+            let token = out.iter().find(|t| t.surface.as_ref() == "10").unwrap();
+            assert_eq!(token.pronunciation.as_ref(), "ジュッ");
+            assert_eq!(token.start, offset + input.find("10").unwrap());
+            assert_eq!(token.end, token.start + 2);
+            assert_eq!(token.word_cost, 0);
+            assert_eq!(token.mora_count(), 2);
+        }
     }
 }
 
