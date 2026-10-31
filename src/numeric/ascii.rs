@@ -157,13 +157,95 @@ pub(crate) struct AsciiPlan {
     candidates: Vec<Candidate>,
     month_starts: Vec<usize>,
     kanji_starts: Vec<usize>,
+    year_starts: Vec<usize>,
+
+    comma_year_starts: Vec<usize>,
+    negative_decimals: Vec<Range<usize>>,
 }
 
 fn envelope_byte(b: u8) -> bool {
     b.is_ascii_alphanumeric() || b"_.,:+*/=-%^".contains(&b)
 }
 
+/// 数量や識別子の認可とは分け、独立した負小数の符号だけを補うための位置を持つ。
+fn negative_decimals(input: &str, offset: usize) -> Vec<Range<usize>> {
+    let mut ranges = Vec::new();
+    for (start, _) in input.match_indices('-') {
+        let prefix = input[..start].trim_end_matches(char::is_whitespace);
+        let label = prefix.trim_end_matches(|c: char| {
+            c.is_whitespace()
+                || matches!(c, '(' | '[' | '（' | '［' | '=' | ':' | '：' | ',' | '，')
+        });
+        let comma = prefix.ends_with([',', '，']);
+        if comma
+            && prefix[..prefix.len() - prefix.chars().next_back().unwrap().len_utf8()]
+                .trim_end_matches(char::is_whitespace)
+                .ends_with([',', '，'])
+        {
+            continue;
+        }
+        if label.chars().next_back().is_some_and(|c| {
+            c.is_ascii_alphabetic()
+                || matches!(c, 'Ａ'..='Ｚ' | 'ａ'..='ｚ' | '_')
+                || (!comma && (super::digit(c).is_some() || super::place(c).is_some()))
+        }) || [
+            "電話",
+            "電話番号",
+            "番号",
+            "型番",
+            "郵便番号",
+            "識別子",
+            "コード",
+            "バージョン",
+        ]
+        .iter()
+        .any(|label_name| label.ends_with(label_name))
+        {
+            continue;
+        }
+        if prefix.chars().next_back().is_some_and(|c| {
+            !matches!(
+                c,
+                '(' | '[' | '（' | '［' | '=' | ':' | '：' | ';' | '；' | ',' | '，' | '、' | '。'
+            )
+        }) {
+            continue;
+        }
+        let number = start + 1;
+        let end = number
+            + input[number..]
+                .bytes()
+                .take_while(|b| b.is_ascii_digit() || *b == b'.')
+                .count();
+        if !parse(&input[number..end]).is_some_and(|n| n.dot.is_some()) {
+            continue;
+        }
+        let rest = &input[end..];
+        if rest.chars().next().is_some_and(|c| {
+            (c.is_ascii() && envelope_byte(c as u8) && c != ',')
+                || super::digit(c).is_some()
+                || super::place(c).is_some()
+                || matches!(c, 'Ａ'..='Ｚ' | 'ａ'..='ｚ' | '．' | '－' | '−' | '＋' | '／' | '∕' | '÷' | '×' | '²' | '³')
+        }) || rest.starts_with(',')
+            && rest[1..].chars().next().is_some_and(|c| !c.is_whitespace())
+            || rest
+                .trim_start_matches([')', ']', '）', '］'])
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_ascii_alphanumeric() || matches!(c, 'Ａ'..='Ｚ' | 'ａ'..='ｚ' | '０'..='９' | '_'))
+        {
+            continue;
+        }
+        ranges.push(offset + start..offset + end);
+    }
+    ranges
+}
+
 impl AsciiPlan {
+    pub(super) fn year_number_starts(&self) -> &[usize] {
+        &self.year_starts
+    }
+
     pub(super) fn has_kanji_in(&self, start: usize, end: usize) -> bool {
         let i = self.kanji_starts.partition_point(|&s| s < start);
         self.kanji_starts.get(i).is_some_and(|&s| s < end)
@@ -171,6 +253,10 @@ impl AsciiPlan {
 
     pub(super) fn kanji_number_start(&self, start: usize) -> bool {
         self.kanji_starts.binary_search(&start).is_ok()
+    }
+
+    pub(super) fn comma_year_start(&self, start: usize) -> bool {
+        self.comma_year_starts.binary_search(&start).is_ok()
     }
 
     pub(super) fn has_month_in(&self, start: usize, end: usize) -> bool {
@@ -194,15 +280,24 @@ impl AsciiPlan {
 
     /// 位置は offset を加えた入力全体の位置。空白越しの英字・裸の数字も識別子の前置とみなす。
     pub(crate) fn new(input: &str, offset: usize) -> Self {
+        let kanji_starts = super::kanji::number_starts(input, offset);
+
+        let comma_year_starts = super::kanji::comma_year_starts(input, offset, &kanji_starts);
         let mut plan = Self {
             month_starts: super::month::number_starts(input, offset),
-            kanji_starts: super::kanji::number_starts(input, offset),
+            kanji_starts,
+            year_starts: super::year::number_starts(input, offset, |prefix| {
+                !super::kanji::identifier_prefix(prefix)
+            }),
+
+            comma_year_starts,
             ..Self::default()
         };
         // 全角の英数字・記号は UTF-8 の EF から始まる。漢字だけの入力では走査しない。
         if !input.bytes().any(|b| b.is_ascii_digit() || b == 0xef) {
             return plan;
         }
+        plan.negative_decimals = negative_decimals(input, offset);
         let bytes = input.as_bytes();
         let (mut pos, mut prefix) = (0, false);
         while pos < bytes.len() {
@@ -432,7 +527,56 @@ pub(crate) fn apply(
         write += 1;
     }
     out.truncate(write);
+    apply_negative_decimals(input, offset, &mut out[first..], plan);
     protected
+}
+
+fn apply_negative_decimals(input: &str, offset: usize, out: &mut [Token], plan: &AsciiPlan) {
+    let end = offset + input.len();
+    let first = plan.negative_decimals.partition_point(|r| r.end <= offset);
+    for range in &plan.negative_decimals[first..] {
+        if range.start >= end {
+            break;
+        }
+        if range.start < offset || range.end > end {
+            continue;
+        }
+        let sign = out.partition_point(|t| t.end <= range.start);
+        let Some(token) = out.get(sign) else { continue };
+        if token.start != range.start
+            || token.end != range.start + 1
+            || token.surface.as_ref() != "-"
+            || !super::pos_has(&token.pos, "記号,一般")
+            || !super::has_reading(token, &["-", "－", "−"])
+        {
+            continue;
+        }
+        let mut limit = sign + 1;
+        while limit < out.len() && out[limit].end <= range.end {
+            limit += 1;
+        }
+        let body = &out[sign + 1..limit];
+        if body.is_empty()
+            || body[0].start != token.end
+            || body.last().is_none_or(|t| t.end != range.end)
+            || !body.windows(2).all(|p| p[0].end == p[1].start)
+            || !body.iter().all(|t| {
+                t.start
+                    .checked_sub(offset)
+                    .zip(t.end.checked_sub(offset))
+                    .and_then(|(start, end)| input.get(start..end))
+                    == Some(t.surface.as_ref())
+                    && ((number_pos(t)
+                        && standard_readings(&t.surface, &t.reading, &t.pronunciation))
+                        || (t.surface.as_ref() == "."
+                            && super::pos_has(&t.pos, "記号")
+                            && super::has_reading(t, &[".", "．"])))
+            })
+        {
+            continue;
+        }
+        super::set_readings(&mut out[sign], "マイナス", "マイナス");
+    }
 }
 
 #[cfg(test)]
@@ -524,6 +668,173 @@ mod tests {
                 }
             })
             .collect()
+    }
+
+    fn signed_input_tokens(text: &str, offset: usize) -> Vec<Token> {
+        let mut out = input_tokens(text, offset);
+        for t in &mut out {
+            let (r, p) = if t.surface.bytes().all(|b| b.is_ascii_digit()) {
+                readings(&t.surface, parse(&t.surface).unwrap())
+            } else {
+                (t.surface.to_string(), t.surface.to_string())
+            };
+            super::super::set_readings(t, &r, &p);
+        }
+        out
+    }
+
+    #[test]
+    fn negative_decimal_signs_preserve_all_other_fields_and_protection() {
+        for text in [
+            "-47.25",
+            "=-47.25",
+            "値：-47.25",
+            "（-47.25）",
+            "[ -47.25]",
+            "12.5; -47.25",
+            "12.5, -47.25",
+            "=-0.25",
+            "値：-47.25度",
+        ] {
+            let offset = 91;
+            let mut out = signed_input_tokens("前", 0);
+            let first = out.len();
+            out.extend(signed_input_tokens(text, offset));
+            let mut prior = out.clone();
+            let mut baseline = AsciiPlan::new(text, offset);
+            baseline.negative_decimals.clear();
+            let expected_protection =
+                apply(text, offset, &mut prior, first, &baseline, &mut 0, |_| {
+                    false
+                });
+            let mut expected = prior.clone();
+            let sign = expected
+                .iter_mut()
+                .find(|t| t.surface.as_ref() == "-")
+                .unwrap();
+            super::super::set_readings(sign, "マイナス", "マイナス");
+            let plan = AsciiPlan::new(text, offset);
+            let protected = apply(text, offset, &mut out, first, &plan, &mut 0, |_| false);
+            assert_eq!(format!("{out:?}"), format!("{expected:?}"), "{text}");
+            assert_eq!(protected, expected_protection, "{text}");
+            for t in &out[first..] {
+                assert_eq!(&text[t.start - offset..t.end - offset], t.surface.as_ref());
+            }
+            let once = format!("{out:?}");
+            apply(text, offset, &mut out, first, &plan, &mut 0, |_| false);
+            assert_eq!(format!("{out:?}"), once, "{text}");
+        }
+    }
+
+    #[test]
+    fn negative_decimal_signs_do_not_reinterpret_ids_operators_or_dictionary_readings() {
+        for text in [
+            "A-47.25",
+            "ID -47.25",
+            "ID:-47.25",
+            "ID, -47.25",
+            "コード=-47.25",
+            "4=-47.25",
+            ",,-47.25",
+            "4-47.25",
+            "4 -47.25",
+            "4 - 47.25",
+            "--47.25",
+            "=-47.25B",
+            "=-47.25_1",
+            "=-47.25/2",
+            "=-47.25e3",
+            "=-47.25.1",
+            "=-047.25",
+            "=-47.",
+            "=-.25",
+            "=-47.25,3",
+            "=-47.25%",
+            "ID（-47.25）",
+            "ID ( (-47.25)",
+            "=-47.25)B",
+            "=−47.25",
+            "=-47",
+            "=-10本",
+            "+47.25",
+            "-47.25-48",
+            "=-47.25²",
+            "=-47.25Ａ",
+            "=-47.25一",
+        ] {
+            assert!(
+                AsciiPlan::new(text, 0).negative_decimals.is_empty(),
+                "{text}"
+            );
+        }
+        for mutation in 0..5 {
+            let text = "=-47.25";
+            let mut out = signed_input_tokens(text, 0);
+            match mutation {
+                0 => super::super::set_readings(&mut out[1], "ハイフン", "ハイフン"),
+                1 => out[1].pos = "名詞,一般,*,*".into(),
+                2 => out[2].reading = "ヨシ".into(),
+                3 => out[3].pronunciation = "ナナコ".into(),
+                _ => out[4].pos = "名詞,固有名詞,一般,*".into(),
+            }
+            let before = format!("{out:?}");
+            apply(
+                text,
+                0,
+                &mut out,
+                0,
+                &AsciiPlan::new(text, 0),
+                &mut 0,
+                |_| false,
+            );
+            assert_eq!(format!("{out:?}"), before, "mutation={mutation}");
+        }
+        // 既知の-4が既にマイナスを含むときは、同じ符号を二度読まない。
+        let text = "=-47.25";
+        let mut out = signed_input_tokens(text, 0);
+        let mut known = out[1].clone();
+        known.surface = "-4".into();
+        known.end += 1;
+        super::super::set_readings(&mut known, "マイナスヨン", "マイナスヨン");
+        out.splice(1..3, [known]);
+        let before = format!("{out:?}");
+        apply(
+            text,
+            0,
+            &mut out,
+            0,
+            &AsciiPlan::new(text, 0),
+            &mut 0,
+            |_| false,
+        );
+        assert_eq!(format!("{out:?}"), before);
+    }
+
+    #[test]
+    fn negative_decimal_signs_require_the_complete_global_span_in_one_chunk() {
+        let full = "ID -47.25";
+        let plan = AsciiPlan::new(full, 37);
+        let text = "-47.25";
+        let mut out = signed_input_tokens(text, 40);
+        let before = format!("{out:?}");
+        apply(text, 40, &mut out, 0, &plan, &mut 0, |_| false);
+        assert_eq!(format!("{out:?}"), before);
+        let full = "値：-47.25";
+        let plan = AsciiPlan::new(full, 37);
+        let mut out = signed_input_tokens("前", 0);
+        let first = out.len();
+        let mut cursor = 0;
+        for (offset, part) in [(37, "値：-47."), (47, "25")] {
+            let start = out.len();
+            out.extend(signed_input_tokens(part, offset));
+            apply(part, offset, &mut out, start, &plan, &mut cursor, |_| false);
+        }
+        assert!(
+            out[first..]
+                .iter()
+                .filter(|t| t.surface.as_ref() == "-")
+                .all(|t| t.reading.as_ref() == "-")
+        );
     }
 
     #[test]
@@ -1033,6 +1344,96 @@ mod analyzer_tests {
                 assert_eq!(&text[token.start..token.end], token.surface.as_ref());
             }
         }
+    }
+
+    #[test]
+    fn analyzer_negative_decimal_signs_are_local_and_do_not_duplicate_known_minus() {
+        fn sign_dictionary(known_minus: bool) -> Dictionary {
+            let mut b = DictBuilder::new();
+            for (s, pos, r, p) in [
+                ("0", "名詞,数,*,*", "ゼロ", "ゼロ"),
+                ("1", "名詞,数,*,*", "イチ", "イチ"),
+                ("2", "名詞,数,*,*", "ニ", "ニ"),
+                ("4", "名詞,数,*,*", "ヨン", "ヨン"),
+                ("5", "名詞,数,*,*", "ゴ", "ゴ"),
+                ("7", "名詞,数,*,*", "ナナ", "ナナ"),
+                ("-", "記号,一般,*,*", "-", "-"),
+                ("=", "記号,一般,*,*", "=", "="),
+                (".", "記号,句点,*,*", "．", "．"),
+                ("：", "記号,一般,*,*", "：", "："),
+                (";", "記号,一般,*,*", ";", ";"),
+                ("値", "名詞,一般,*,*", "アタイ", "アタイ"),
+                ("度", "名詞,接尾,助数詞,*", "ド", "ド"),
+                ("A", "名詞,一般,*,*", "エー", "エー"),
+                ("ID", "名詞,一般,*,*", "アイディー", "アイディー"),
+            ] {
+                b.add_entry(DictEntry {
+                    surface: s.into(),
+                    pos: pos.into(),
+                    reading: r.into(),
+                    pronunciation: p.into(),
+                    base_form: format!("base:{s}").into(),
+                    cost: 17,
+                    ..Default::default()
+                });
+            }
+            if known_minus {
+                b.add_entry(DictEntry {
+                    surface: "-4".into(),
+                    pos: "名詞,固有名詞,一般,*".into(),
+                    base_form: "−4".into(),
+                    reading: "マイナスヨン".into(),
+                    pronunciation: "マイナスヨン".into(),
+                    cost: -1000,
+                    ..Default::default()
+                });
+            }
+            b.build().unwrap()
+        }
+        let mut a = Analyzer::from_dict(sign_dictionary(false));
+        for text in ["=-47.25", "値：-47.25", "12.5; -47.25", "=-47.25度"] {
+            let out = a.try_tokenize(text).unwrap();
+            let sign = out.iter().find(|t| t.surface.as_ref() == "-").unwrap();
+            assert_eq!(sign.reading.as_ref(), "マイナス", "{text}");
+            assert_eq!(sign.pronunciation.as_ref(), "マイナス", "{text}");
+            assert_eq!(sign.pos.as_ref(), "記号,一般,*,*");
+            assert_eq!(sign.base_form.as_ref(), "base:-");
+            assert_eq!(sign.word_cost, 17);
+            assert!(sign.is_known);
+            for t in &out {
+                assert_eq!(&text[t.start..t.end], t.surface.as_ref());
+            }
+            let sentences = a
+                .try_tokenize_sentences(text, &crate::sentence::SplitOptions::default())
+                .unwrap();
+            let p: String = sentences
+                .iter()
+                .flat_map(|(_, v)| v)
+                .map(|t| t.pronunciation.as_ref())
+                .collect();
+            assert_eq!(p, pronunciation(&out));
+        }
+        for text in ["A-47.25", "ID -47.25", "4-47.25", "=-47.25A", "=-10度"] {
+            let out = a.try_tokenize(text).unwrap();
+            assert!(
+                out.iter()
+                    .filter(|t| t.surface.as_ref() == "-")
+                    .all(|t| t.pronunciation.as_ref() == "-"),
+                "{text}: {out:?}"
+            );
+        }
+        let mut a = Analyzer::from_dict(sign_dictionary(true));
+        let out = a.try_tokenize("=-47.25").unwrap();
+        assert_eq!(
+            out.iter()
+                .filter(|t| t.pronunciation.contains("マイナス"))
+                .count(),
+            1
+        );
+        let known = out.iter().find(|t| t.surface.as_ref() == "-4").unwrap();
+        assert_eq!(known.pronunciation.as_ref(), "マイナスヨン");
+        assert_eq!(known.word_cost, -1000);
+        assert!(known.is_known);
     }
 
     #[test]

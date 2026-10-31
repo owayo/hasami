@@ -39,7 +39,7 @@ fn identifier_neighbor(c: char) -> bool {
         || matches!(c, 'Ａ'..='Ｚ' | 'ａ'..='ｚ' | '０'..='９' | '_' | '.' | '．' | '点' | '・' | ',' | '，' | ':' | '：' | '/' | '／' | '∕' | '÷' | '×' | '+' | '＋' | '-' | '－' | '−' | '‐' | '‑' | '‒' | '–' | '—' | '―' | '=' | '*' | '^' | '%' | '第')
 }
 
-fn identifier_prefix(prefix: &str) -> bool {
+pub(super) fn identifier_prefix(prefix: &str) -> bool {
     let prefix = prefix
         .trim_end_matches(|c: char| c.is_whitespace() || matches!(c, '(' | '[' | '（' | '［'));
     prefix.chars().next_back().is_some_and(identifier_neighbor)
@@ -57,9 +57,99 @@ fn identifier_prefix(prefix: &str) -> bool {
         .any(|label| prefix.ends_with(label))
 }
 
+fn pair2(raw: &str) -> bool {
+    matches!(
+        raw,
+        "一一" | "一六" | "一八" | "二一" | "三八" | "四一" | "四八"
+    )
+}
+
+fn pair2_right_boundary(rest: &str) -> bool {
+    let Some(c) = rest.chars().next() else {
+        return true;
+    };
+    if matches!(c, ',' | '.') {
+        return !rest[c.len_utf8()..]
+            .chars()
+            .next()
+            .is_some_and(identifier_neighbor);
+    }
+    !identifier_neighbor(c)
+}
+
+fn pair2_comma_prefix(prefix: &str) -> bool {
+    super::japanese_boundary::comma_prefix(prefix)
+}
+
+fn comma_existing_year(prefix: &str, suffix: &str) -> bool {
+    super::japanese_boundary::comma_prefix(prefix)
+        && super::japanese_boundary::single_year_tail(suffix)
+}
+
+pub(super) fn comma_year_starts(input: &str, offset: usize, starts: &[usize]) -> Vec<usize> {
+    starts
+        .iter()
+        .copied()
+        .filter(|&start| {
+            let start = start - offset;
+            let end = input[start..]
+                .char_indices()
+                .take_while(|&(_, c)| digit(c).is_some())
+                .map(|(i, c)| start + i + c.len_utf8())
+                .last()
+                .unwrap_or(start);
+            start < end && comma_existing_year(&input[..start], &input[end..])
+        })
+        .collect()
+}
+
+fn marked_comma_year(plan: &AsciiPlan, start: usize) -> bool {
+    plan.comma_year_start(start)
+}
+
+fn pair2_suffix(raw: &str) -> Option<(&'static str, &'static str)> {
+    [
+        ("キログラム", "キログラム"),
+        ("キロメートル", "キロメートル"),
+        ("キロ", "キロ"),
+        ("か月", "カゲツ"),
+        ("カ月", "カゲツ"),
+        ("ヶ月", "カゲツ"),
+        ("歳", "サイ"),
+        ("才", "サイ"),
+    ]
+    .into_iter()
+    .find(|(surface, _)| raw.strip_prefix(surface).is_some_and(pair2_right_boundary))
+}
+
+fn pair2_global(raw: &str, suffix: &str) -> bool {
+    pair2(raw) && pair2_suffix(suffix).is_some()
+}
+
+fn pair2_counter(raw: &str, suffix: &Token) -> bool {
+    pair2(raw)
+        && suffix.is_known
+        && pos_has(&suffix.pos, "名詞,接尾,助数詞")
+        && suffix.base_form == suffix.surface
+        && suffix.conj_type.is_empty()
+        && suffix.conj_form.is_empty()
+        && pair2_suffix(&suffix.surface).is_some_and(|(surface, reading)| {
+            surface == suffix.surface.as_ref()
+                && suffix.reading.as_ref() == reading
+                && suffix.pronunciation.as_ref() == reading
+        })
+}
+
 /// 前分割で識別子や小数の前半を失わないよう、入力全体で候補の開始位置を決める。
 pub(super) fn number_starts(input: &str, offset: usize) -> Vec<usize> {
-    let mut starts = Vec::new();
+    // 純全角数量も同じ全入力planで開始位置を保ち、漢数字の値や適用条件は広げない。
+    let mut starts = super::fullwidth::number_starts(input, offset, |prefix| {
+        if !identifier_prefix(prefix) {
+            return true;
+        }
+
+        super::japanese_boundary::comma_prefix(prefix)
+    });
     if input.is_ascii() {
         return starts;
     }
@@ -84,8 +174,10 @@ pub(super) fn number_starts(input: &str, offset: usize) -> Vec<usize> {
         let raw = &input[start..end];
         if value(raw).is_some()
             // ゼロのない二字列は「二、三」のような概数と区別できない。
-            && (raw.contains(['〇', '零']) || raw.chars().count() >= 3)
-            && !identifier_prefix(&input[..start])
+            && (raw.contains(['〇', '零']) || raw.chars().count() >= 3 || pair2_global(raw, &input[end..]))
+            && (!identifier_prefix(&input[..start])
+                || (pair2_global(raw, &input[end..]) && pair2_comma_prefix(&input[..start]))
+                || comma_existing_year(&input[..start], &input[end..]))
             && !input[end..].chars().next().is_some_and(|c| {
                 // 英字・% は実トークンの単位認識と、その末尾の境界で絞る。
                 identifier_neighbor(c) && !c.is_ascii_alphabetic() && c != '%'
@@ -94,6 +186,7 @@ pub(super) fn number_starts(input: &str, offset: usize) -> Vec<usize> {
             starts.push(offset + start);
         }
     }
+    starts.sort_unstable();
     starts
 }
 
@@ -127,6 +220,7 @@ fn candidate<'a>(
     out: &[Token],
     range: Range<usize>,
     protected: &[Range<usize>],
+    comma_year: bool,
     unit: impl Fn(&str) -> bool,
 ) -> Option<(&'a str, u64)> {
     let first = &out[range.start];
@@ -134,6 +228,18 @@ fn candidate<'a>(
     let raw = input.get(first.start.checked_sub(offset)?..last.end.checked_sub(offset)?)?;
     let value = value(raw)?;
     let suffix = out.get(range.end)?;
+    let finite_pair = pair2_counter(raw, suffix);
+    if comma_year
+        && !(suffix.is_known
+            && suffix.surface.as_ref() == "年"
+            && suffix.base_form.as_ref() == "年"
+            && pos_has(&suffix.pos, "名詞,接尾,助数詞")
+            && super::has_reading(suffix, &["ネン"])
+            && suffix.conj_type.is_empty()
+            && suffix.conj_form.is_empty())
+    {
+        return None;
+    }
     let native_day20 = raw == "二十"
         && pos_has(&suffix.pos, "名詞,接尾,助数詞")
         && match suffix.surface.as_ref() {
@@ -146,7 +252,11 @@ fn candidate<'a>(
     if (raw == "二十" && !native_day20) || (range.len() == 1 && first.is_known && !native_day20) {
         return None;
     }
-    let protected_end = if native_day20 { suffix.end } else { last.end };
+    let protected_end = if native_day20 || finite_pair || comma_year {
+        suffix.end
+    } else {
+        last.end
+    };
     let protection = protected.partition_point(|p| p.end <= first.start);
     if protected
         .get(protection)
@@ -158,9 +268,10 @@ fn candidate<'a>(
         // ゼロのない桁列は年・年度だけ。例外は標準の日・日間に直結した二十だけ。
         || (!raw.contains(['〇', '零'])
             && !matches!(suffix.surface.as_ref(), "年" | "年度")
-            && !native_day20)
+            && !native_day20 && !finite_pair)
         || !quantity(suffix, &unit)
         || !ascii::unit_boundary(input, offset, suffix)
+        || ((finite_pair || comma_year) && (suffix.start.checked_sub(offset).and_then(|start| suffix.end.checked_sub(offset).and_then(|end| input.get(start..end))) != Some(suffix.surface.as_ref())))
         || !out[range.clone()].iter().all(|t| {
             let (Some(start), Some(end)) = (t.start.checked_sub(offset), t.end.checked_sub(offset))
             else {
@@ -168,12 +279,13 @@ fn candidate<'a>(
             };
             input.get(start..end) == Some(t.surface.as_ref())
                 && standard_kanji_readings(&t.surface, &t.reading, &t.pronunciation)
-                && (!native_day20
+                && (!(native_day20 || finite_pair || comma_year)
                     || super::numeral_value(std::iter::once(t.surface.as_ref())).is_some_and(
                         |value| {
                             super::numeral_value(std::iter::once(t.base_form.as_ref())) == Some(value)
                         },
                     ))
+                && (!(finite_pair || comma_year) || (t.conj_type.is_empty() && t.conj_form.is_empty()))
         })
     {
         return None;
@@ -206,8 +318,15 @@ pub(crate) fn apply(
                 read += 1;
             }
             if plan.kanji_number_start(out[start].start)
-                && let Some((raw, value)) =
-                    candidate(input, offset, out, start..read, protected, &unit)
+                && let Some((raw, value)) = candidate(
+                    input,
+                    offset,
+                    out,
+                    start..read,
+                    protected,
+                    marked_comma_year(plan, out[start].start),
+                    &unit,
+                )
             {
                 let (reading, pronunciation) = ascii::integer_readings(value);
                 let cost: i64 = out[start..read]
@@ -238,11 +357,253 @@ pub(crate) fn apply(
         }
     }
     out.truncate(write);
+    super::fullwidth::apply(input, offset, out, first, plan, protected);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn pair_tokens(text: &str, offset: usize) -> Vec<Token> {
+        let mut out = tokens(text, offset);
+        for t in &mut out {
+            t.base_form = Arc::clone(&t.surface);
+            t.conj_type = "".into();
+            t.conj_form = "".into();
+            if t.surface.as_ref() == "歳" {
+                t.pos = "名詞,接尾,助数詞,*".into();
+                t.reading = "サイ".into();
+                t.pronunciation = "サイ".into();
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn pair_guards_and_global_boundaries() {
+        for (full, local, offset) in [("一八歳", "一八歳", 0), ("一八歳", "一八歳", 51)]
+        {
+            let mut out = pair_tokens(local, offset);
+            let plan = AsciiPlan::new(full, offset);
+            apply(local, offset, &mut out, 0, &plan, &[], |_| false);
+            assert_eq!(out.len(), 2);
+            assert_eq!(out[0].surface.as_ref(), "一八");
+            assert_eq!(out[0].base_form.as_ref(), "一八");
+            assert_eq!((out[0].start, out[0].end), (offset, offset + 6));
+            assert_eq!(out[0].word_cost, 200);
+            assert!(!out[0].is_known);
+            assert_eq!(out[0].reading.as_ref(), "ジュウハチ");
+        }
+        for full in ["日本語,一八歳", "日本語,一八歳,です", "日本語,一八歳."] {
+            let mut out = pair_tokens("一八歳", 10);
+            let plan = AsciiPlan::new(full, 0);
+            apply("一八歳", 10, &mut out, 0, &plan, &[], |_| false);
+            assert_eq!(out.len(), 2);
+            assert_eq!(out[0].surface.as_ref(), "一八");
+            assert_eq!((out[0].start, out[0].end), (10, 16));
+        }
+        for (full, offset) in [
+            ("ISO ,一八歳", 5),
+            ("A,一八歳", 2),
+            ("1,一八歳", 2),
+            ("１,一八歳", 4),
+            ("一,一八歳", 4),
+            (",,一八歳", 2),
+            ("コード,一八歳", 10),
+            ("電話番号,一八歳", 13),
+            ("日本語,一八歳A", 10),
+            ("日本語,一八歳.2", 10),
+            ("日本語,一八歳,A", 10),
+            ("日本語,一八歳,,です", 10),
+        ] {
+            let mut out = pair_tokens("一八歳", offset);
+            let before = format!("{out:?}");
+            let plan = AsciiPlan::new(full, 0);
+            apply("一八歳", offset, &mut out, 0, &plan, &[], |_| false);
+            assert_eq!(format!("{out:?}"), before, "{full}");
+        }
+        for (full, local, offset) in [
+            ("A 一八歳", "一八歳", 2),
+            ("一八歳A", "一八歳", 0),
+            ("一八歳Ａ", "一八歳", 0),
+            ("一八歳/", "一八歳", 0),
+            ("一八歳", "八歳", 3),
+            ("一八歳", "一八", 0),
+            ("一八歳", "一八 歳", 0),
+            ("一八歳", "一 八歳", 0),
+            ("一一八歳", "一八歳", 3),
+            ("一八〇歳", "一八〇", 0),
+        ] {
+            let mut out = pair_tokens(local, offset);
+            let before = out.clone();
+            let plan = AsciiPlan::new(full, 0);
+            apply(local, offset, &mut out, 0, &plan, &[], |_| false);
+            assert_eq!(
+                format!("{out:?}"),
+                format!("{before:?}"),
+                "{full:?}/{local:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn pair_standard_fields_known_whole_and_protection() {
+        for mutation in 0..14 {
+            let mut out = pair_tokens("一八歳", 0);
+            let mut protected = Vec::new();
+            match mutation {
+                0 => out[0].base_form = "ordinary".into(),
+                1 => out[0].base_form = "二".into(),
+                2 => out[0].reading = "ヒト".into(),
+                3 => out[1].pronunciation = "ハッ".into(),
+                4 => out[0].conj_type = "fixture".into(),
+                5 => out[1].pos = "名詞,固有名詞,人名,名".into(),
+                6 => out[2].is_known = false,
+                7 => out[2].pos = "名詞,一般,*,*".into(),
+                8 => out[2].base_form = "ordinary".into(),
+                9 => out[2].reading = "トシ".into(),
+                10 => out[2].conj_form = "fixture".into(),
+                11 => protected.push(0..1),
+                12 => protected.push(6..7),
+                13 => out[1].end -= 1,
+                _ => unreachable!(),
+            }
+            let before = out.clone();
+            let plan = AsciiPlan::new("一八歳", 0);
+            apply("一八歳", 0, &mut out, 0, &plan, &protected, |_| false);
+            assert_eq!(
+                format!("{out:?}"),
+                format!("{before:?}"),
+                "mutation {mutation}"
+            );
+        }
+        let mut out = pair_tokens("一八歳", 0);
+        out[0].surface = "一八".into();
+        out[0].base_form = "一八".into();
+        out[0].end = 6;
+        out[0].reading = "ジュウハチ".into();
+        out[0].pronunciation = "ジューハチ".into();
+        out.remove(1);
+        let before = out.clone();
+        let plan = AsciiPlan::new("一八歳", 0);
+        apply("一八歳", 0, &mut out, 0, &plan, &[], |_| false);
+        assert_eq!(format!("{out:?}"), format!("{before:?}"));
+    }
+
+    #[test]
+    fn pair_saturating_cost_and_prior_output() {
+        for cost in [i16::MAX, i16::MIN] {
+            let mut out = pair_tokens("一八歳", 70);
+            out[0].word_cost = cost;
+            out[1].word_cost = cost;
+            let previous = pair_tokens("前", 0).remove(0);
+            out.insert(0, previous.clone());
+            let suffix = out.last().unwrap().clone();
+            let plan = AsciiPlan::new("一八歳", 70);
+            apply("一八歳", 70, &mut out, 1, &plan, &[], |_| false);
+            assert_eq!(format!("{:?}", out[0]), format!("{previous:?}"));
+            assert_eq!(format!("{:?}", out[2]), format!("{suffix:?}"));
+            assert_eq!(out[1].word_cost, cost);
+        }
+    }
+
+    #[test]
+    fn japanese_comma_year_requires_a_complete_standard_frame() {
+        let raw = "二〇二四年";
+        let full = format!("日本語,{raw}");
+        let plan = AsciiPlan::new(&full, 0);
+        for mutation in 0..12 {
+            let mut out = pair_tokens(raw, 10);
+            let mut protected = Vec::new();
+            match mutation {
+                0 => {}
+                1 => out[4].is_known = false,
+                2 => out[4].reading = "トシ".into(),
+                3 => out[4].pos = "名詞,一般,*,*".into(),
+                4 => out[4].base_form = "ordinary".into(),
+                5 => out[4].conj_type = "fixture".into(),
+                6 => out[0].base_form = "ordinary".into(),
+                7 => out[0].base_form = "三".into(),
+                8 => out[0].conj_form = "fixture".into(),
+                9 => protected.push(22..23),
+                10 => protected.push(10..11),
+                11 => out[0].reading = "ナマエ".into(),
+                _ => unreachable!(),
+            }
+            let before = format!("{out:?}");
+            apply(raw, 10, &mut out, 0, &plan, &protected, |_| false);
+            if mutation == 0 {
+                assert_eq!(out.len(), 2);
+                assert_eq!(out[0].reading.as_ref(), "ニセンニジュウヨン");
+                assert_eq!(out[0].word_cost, 400);
+                assert_eq!(out[0].base_form.as_ref(), "二〇二四");
+            } else {
+                assert_eq!(format!("{out:?}"), before, "mutation {mutation}");
+            }
+        }
+        for full in [
+            "ISO ,二〇二四年",
+            "A,二〇二四年",
+            "1,二〇二四年",
+            "１,二〇二四年",
+            "一,二〇二四年",
+            ",,二〇二四年",
+            "日本語,二〇二四年A",
+            "日本語,二〇二四年.2",
+            "日本語,二〇二四年度",
+            "日本語,二〇二四年間",
+        ] {
+            let start = full.find("二〇二四").unwrap();
+            let mut out = pair_tokens(raw, start);
+            let before = format!("{out:?}");
+            let plan = AsciiPlan::new(full, 0);
+            apply(raw, start, &mut out, 0, &plan, &[], |_| false);
+            assert_eq!(format!("{out:?}"), before, "{full}");
+        }
+        for (full, local, start) in [
+            ("日本語,二〇二四年", "〇二四年", 13),
+            ("日本語,二〇二四年", "二〇二四", 10),
+            ("日本語,二〇二四年A", "二〇二四年", 10),
+        ] {
+            let mut out = pair_tokens(local, start);
+            let before = format!("{out:?}");
+            let plan = AsciiPlan::new(full, 0);
+            apply(local, start, &mut out, 0, &plan, &[], |_| false);
+            assert_eq!(format!("{out:?}"), before, "{full}/{local}");
+        }
+    }
+
+    #[test]
+    fn fullwidth_comma_accepts_japanese_and_keeps_identifier_contexts() {
+        for text in [
+            "日本語,１８歳",
+            "かな,１８歳",
+            "カナ,１８歳",
+            "日本語、１８歳",
+        ] {
+            let start = text.find('１').unwrap();
+            assert!(AsciiPlan::new(text, 0).kanji_number_start(start), "{text}");
+        }
+        for text in [
+            "ISO ,１８歳",
+            "ISO , １８歳",
+            "A ,１８歳",
+            "ＩＤ,１８歳",
+            "ＩＤ ,１８歳",
+            "コード,１８歳",
+            "型番 ,１８歳",
+            "番号,１８歳",
+            "1,１８歳",
+            "１,１８歳",
+            "一,１８歳",
+            ",,１８歳",
+            ",１８歳",
+        ] {
+            let starts = AsciiPlan::new(text, 0);
+            let last_start = text.rfind("１８").unwrap();
+            assert!(!starts.kanji_number_start(last_start), "{text}");
+        }
+    }
 
     fn tokens(text: &str, offset: usize) -> Vec<Token> {
         text.char_indices()

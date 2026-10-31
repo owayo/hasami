@@ -36,6 +36,7 @@ use std::borrow::Cow;
 use std::sync::Arc;
 
 mod idiom;
+mod particle;
 
 /// トークン（形態素解析結果の1単位）
 #[derive(Debug, Clone)]
@@ -424,6 +425,7 @@ fn apply_contextual_readings_with_protection(
         crate::numeric::apply_counter_readings_with_protection(tokens, protected);
     }
     idiom::apply(tokens, protected);
+    particle::apply(tokens, protected);
 }
 
 /// 仮名のみからなる表層形をカタカナの読みに変換する。
@@ -1317,7 +1319,8 @@ impl LatticeWorkspace {
             |surface| unit_reading(surface).is_some_and(is_katakana_str),
         );
         apply_contextual_readings_with_protection(&mut out[first..], &protected);
-        crate::numeric::apply_spaced_months(input, offset, out, first, plan);
+        crate::numeric::apply_year_readings(input, offset, &mut out[first..], plan, &protected);
+        crate::numeric::apply_spaced_months(input, offset, out, first, plan, &protected);
         Ok(())
     }
 }

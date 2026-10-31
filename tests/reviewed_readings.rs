@@ -17,6 +17,14 @@ fn distributed_common_and_technical_readings_keep_valid_alternatives() {
             ("給料泥棒", "キュウリョウドロボウ", "キューリョードロボー"),
             ("大怪我", "オオケガ", "オオケガ"),
             ("下準備", "シタジュンビ", "シタジュンビ"),
+            ("瞬く間", "マタタクマ", "マタタクマ"),
+            ("敵いません", "カナイマセン", "カナイマセン"),
+            ("三十歩神社", "サンジュウブジンジャ", "サンジューブジンジャ"),
+            (
+                "三十歩子どもまつり",
+                "サンジュウブコドモマツリ",
+                "サンジューブコドモマツリ",
+            ),
             ("線引き", "センビキ", "センビキ"),
             ("pptx", "ピーピーティーエックス", "ピーピーティーエックス"),
             (
@@ -53,6 +61,8 @@ fn distributed_common_and_technical_readings_keep_valid_alternatives() {
             ("BMW", "バトルムーンウォーズ"),
             ("堪能", "カンノウ"),
             ("百本", "ヒャクモト"),
+            ("瞬く", "マバタク"),
+            ("等", "ヒトシ"),
         ] {
             assert!(
                 analyzer
@@ -68,6 +78,40 @@ fn distributed_common_and_technical_readings_keep_valid_alternatives() {
         }
         let tokens = analyzer.try_tokenize("Azureさん").unwrap();
         assert_eq!(tokens[0].reading.as_ref(), "アズレ", "{name}: {tokens:?}");
+        let tokens = analyzer.try_tokenize("瞬く間隔").unwrap();
+        assert!(
+            tokens.iter().any(|token| token.surface.as_ref() == "間隔")
+                && !tokens
+                    .iter()
+                    .any(|token| token.surface.as_ref() == "瞬く間"),
+            "{name}: {tokens:?}"
+        );
+        let tokens = analyzer.try_tokenize("大間違いさ。").unwrap();
+        assert_eq!(tokens[0].reading.as_ref(), "オオマチガイ", "{name}");
+        assert!(
+            tokens.iter().any(|token| {
+                token.surface.as_ref() == "さ" && token.pos.starts_with("助詞,終助詞,")
+            }),
+            "{name}: {tokens:?}"
+        );
+        for (text, surface, pos) in [
+            (
+                "日本経済新聞出版社",
+                "日本経済新聞出版社",
+                "名詞,固有名詞,組織,",
+            ),
+            ("一言一句", "一言一句", "名詞,一般,"),
+            ("Fintechを活用する。", "Fintech", "名詞,一般,"),
+            ("Fintech社", "Fintech", "名詞,固有名詞,"),
+        ] {
+            let tokens = analyzer.try_tokenize(text).unwrap();
+            assert!(
+                tokens.iter().any(|token| {
+                    token.surface.as_ref() == surface && token.pos.starts_with(pos)
+                }),
+                "{name}: {text}: {tokens:?}"
+            );
+        }
     }
 }
 
@@ -95,6 +139,12 @@ fn distributed_counter_readings_preserve_offsets_and_nonquantity_names() {
             ("10足", "ジュッソク", "ジュッソク"),
             ("10歳", "ジュッサイ", "ジュッサイ"),
             ("10才", "ジュッサイ", "ジュッサイ"),
+            ("１８歳", "ジュウハッサイ", "ジューハッサイ"),
+            ("一八か月", "ジュウハッカゲツ", "ジューハッカゲツ"),
+            ("二一歳", "ニジュウイッサイ", "ニジューイッサイ"),
+            ("4年", "ヨネン", "ヨネン"),
+            ("14年", "ジュウヨネン", "ジューヨネン"),
+            ("一一月", "ジュウイチガツ", "ジューイチガツ"),
             ("6冊", "ロクサツ", "ロクサツ"),
             ("6足", "ロクソク", "ロクソク"),
             ("6歳", "ロクサイ", "ロクサイ"),

@@ -1,4 +1,4 @@
-//! 最良パスの数詞と助数詞の読み。ASCII と位を省いた漢数字の数量は数詞列を合成する。
+//! 最良パスの数詞と助数詞の読み。ASCII・純全角整数・位を省いた漢数字の数量は数詞列を合成する。
 //!
 //! 音便は助数詞ごとの対応表で決め、読み以外の情報を保持する。人・日の和語読みは数詞列全体を見る。
 //! 一日は日付と期間を区別できないので変更せず、二十日は単一数詞にまとまったときだけ読む。
@@ -8,11 +8,16 @@ use std::ops::Range;
 use std::sync::Arc;
 
 mod ascii;
+mod fullwidth;
+
+mod japanese_boundary;
 mod kanji;
 mod month;
+mod year;
 pub(crate) use ascii::{AsciiPlan, apply as apply_ascii_quantities};
 pub(crate) use kanji::apply as apply_kanji_quantities;
 pub(crate) use month::apply as apply_spaced_months;
+pub(crate) use year::apply as apply_year_readings;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Ending {
@@ -498,7 +503,8 @@ fn standard_number_readings(token: &Token, tails: &[&str]) -> bool {
         return ascii::standard_readings(&token.surface, &token.reading, &token.pronunciation);
     }
     if !token.is_known
-        && kanji::standard_readings(&token.surface, &token.reading, &token.pronunciation)
+        && (kanji::standard_readings(&token.surface, &token.reading, &token.pronunciation)
+            || fullwidth::standard_readings(&token.surface, &token.reading, &token.pronunciation))
     {
         return true;
     }
@@ -601,6 +607,8 @@ fn native_day(tokens: &[Token], start: usize, end: usize) -> Option<(&'static st
                 "20" => true,
                 // global planで識別子を除外した合成済み数詞だけを認可する。
                 "二十" => !run[0].is_known,
+                // 全入力で認可した全角数量の合成markerだけを、二十日と同様に読む。
+                "２０" => !run[0].is_known && run[0].base_form == run[0].surface,
                 _ => false,
             }
         {
@@ -824,6 +832,29 @@ fn numeral_before_counter(
     }
     if after_decimal(tokens, run.start) {
         return None;
+    }
+
+    if matches!(tokens[i].surface.as_ref(), "歳" | "才") {
+        let raw: String = tokens[run.start..i]
+            .iter()
+            .map(|t| t.surface.as_ref())
+            .collect();
+        // 二八には十六歳の語彙義がある。値を解釈しないまま八歳の促音だけを足さない。
+        if raw == "二八"
+            && !kanji::standard_readings(
+                &raw,
+                &tokens[run.start..i]
+                    .iter()
+                    .map(|t| t.reading.as_ref())
+                    .collect::<String>(),
+                &tokens[run.start..i]
+                    .iter()
+                    .map(|t| t.pronunciation.as_ref())
+                    .collect::<String>(),
+            )
+        {
+            return None;
+        }
     }
     let number = &tokens[i - 1];
     let ending = ending(&number.surface)?;
@@ -1148,6 +1179,54 @@ pub(crate) fn apply_counter_readings_with_protection(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lexical_nipachi_age_keeps_the_value_uninterpreted() {
+        for age in ["歳", "才"] {
+            let mut ts = tokens(&[
+                ("二", NUMBER, "ニ"),
+                ("八", NUMBER, "ハチ"),
+                (age, COUNTER, "サイ"),
+            ]);
+            let before = format!("{ts:?}");
+            apply_counter_readings(&mut ts);
+            assert_eq!(format!("{ts:?}"), before);
+            let mut whole = tokens(&[("二八", NUMBER, "ニジュウハチ"), (age, COUNTER, "サイ")]);
+            whole[0].pronunciation = "ニジューハチ".into();
+            let known_before = format!("{whole:?}");
+            apply_counter_readings(&mut whole);
+            assert_eq!(format!("{whole:?}"), known_before);
+            whole[0].is_known = false;
+            apply_counter_readings(&mut whole);
+            assert_eq!(whole[0].reading.as_ref(), "ニジュウハッ");
+            assert_eq!(whole[0].pronunciation.as_ref(), "ニジューハッ");
+        }
+        for (parts, expected) in [
+            (
+                vec![
+                    ("七", NUMBER, "ナナ"),
+                    ("八", NUMBER, "ハチ"),
+                    ("歳", COUNTER, "サイ"),
+                ],
+                "ナナハッサイ",
+            ),
+            (
+                vec![
+                    ("三", NUMBER, "サン"),
+                    ("四", NUMBER, "ヨン"),
+                    ("人", COUNTER, "ニン"),
+                ],
+                "サンヨニン",
+            ),
+        ] {
+            let mut ts = tokens(&parts);
+            apply_counter_readings(&mut ts);
+            assert_eq!(
+                ts.iter().map(|t| t.reading.as_ref()).collect::<String>(),
+                expected
+            );
+        }
+    }
 
     const NUMBER: &str = "名詞,数,*,*";
     const COUNTER: &str = "名詞,接尾,助数詞,*";

@@ -66,7 +66,11 @@ hasami/
 │   ├── lattice.rs      # ラティス構築 + Viterbi、Token、トークンの組み立て（既知語キャッシュ、品詞などの Arc は解析器ごと）
 │   ├── numeric.rs      # 最良パスの数詞・助数詞の読み（音便の表、人・日の和語読み）。`analyzer` feature
 │   │   ├── ascii.rs    # ASCII の数量（小数・桁区切り・単位）の合成と、識別子の保護（AsciiPlan）
-│   │   └── month.rs    # 水平空白を挟む暦月（「3 月」）の読み
+│   │   ├── fullwidth.rs # 純全角整数と一文字助数詞の数量合成
+│   │   ├── kanji.rs    # 位を省いた漢数字と確認済みの二字数量の合成
+│   │   ├── japanese_boundary.rs # 和文カンマの区切りと年の終端の判定
+│   │   ├── month.rs    # 水平空白を挟む暦月（「3 月」）と「一一月」の読み
+│   │   └── year.rs     # 標準数詞に直結する年の末尾4をヨネンへ補正
 │   ├── analyzer.rs     # 高レベルAPI（Analyzer: Arc<Dictionary> + ワークスペース）、置き場所（data_dir）と既定の探索
 │   ├── download/       # リリースの配布辞書の取得（`download` feature）
 │   │   ├── mod.rs      # 目録（Catalog・DistributedDict）、download・verify・install、zstd の展開、HTTP（ureq）
