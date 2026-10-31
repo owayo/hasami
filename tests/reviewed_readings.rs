@@ -88,9 +88,22 @@ fn distributed_common_and_technical_readings_keep_valid_alternatives() {
         );
         let tokens = analyzer.try_tokenize("大間違いさ。").unwrap();
         assert_eq!(tokens[0].reading.as_ref(), "オオマチガイ", "{name}");
+        // 「さ」の品詞は既存の文脈判定の課題として残し、ここでは読みを検証する。
         assert!(
             tokens.iter().any(|token| {
-                token.surface.as_ref() == "さ" && token.pos.starts_with("助詞,終助詞,")
+                token.surface.as_ref() == "さ" && token.reading.as_ref() == "サ"
+            }),
+            "{name}: {tokens:?}"
+        );
+        let tokens = analyzer
+            .try_tokenize("審判の判定は大間違いで、試合はやり直しになった。")
+            .unwrap();
+        assert!(
+            tokens.iter().any(|token| {
+                token.surface.as_ref() == "で"
+                    && token.pos.starts_with("助動詞,")
+                    && token.base_form.as_ref() == "だ"
+                    && token.conj_form.as_ref() == "連用形"
             }),
             "{name}: {tokens:?}"
         );

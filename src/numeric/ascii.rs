@@ -527,13 +527,52 @@ pub(crate) fn apply(
         write += 1;
     }
     out.truncate(write);
-    apply_negative_decimals(input, offset, &mut out[first..], plan);
+    apply_negative_decimals(input, offset, out, first, plan);
     protected
 }
 
-fn apply_negative_decimals(input: &str, offset: usize, out: &mut [Token], plan: &AsciiPlan) {
+fn negative_body_metadata(token: &Token) -> bool {
+    if !token.conj_type.is_empty() || !token.conj_form.is_empty() {
+        return false;
+    }
+    if token.surface.as_ref() == "." {
+        return matches!(token.pos.as_ref(), "記号,一般,*,*" | "記号,句点,*,*")
+            && matches!(token.base_form.as_ref(), "." | "．");
+    }
+    integer_value(&token.surface).is_some_and(|value| {
+        super::numeral_value(std::iter::once(token.base_form.as_ref())) == Some(value)
+    }) || standard_readings(&token.base_form, &token.reading, &token.pronunciation)
+}
+
+fn unspecified_negative_symbol(token: &Token, literal: &str) -> bool {
+    !token.is_known
+        && token.surface.as_ref() == literal
+        && token.end.checked_sub(token.start) == Some(1)
+        && token.pos.as_ref() == "記号,一般,*,*"
+        && token.base_form == token.surface
+        && token.conj_type.is_empty()
+        && token.conj_form.is_empty()
+        && token.reading.is_empty()
+        && token.pronunciation.is_empty()
+}
+
+fn apply_negative_decimals(
+    input: &str,
+    offset: usize,
+    out: &mut Vec<Token>,
+    first_token: usize,
+    plan: &AsciiPlan,
+) {
     let end = offset + input.len();
     let first = plan.negative_decimals.partition_point(|r| r.end <= offset);
+    if plan
+        .negative_decimals
+        .get(first)
+        .is_none_or(|range| range.start >= end)
+    {
+        return;
+    }
+    let (mut read, mut write) = (first_token, first_token);
     for range in &plan.negative_decimals[first..] {
         if range.start >= end {
             break;
@@ -541,13 +580,19 @@ fn apply_negative_decimals(input: &str, offset: usize, out: &mut [Token], plan: 
         if range.start < offset || range.end > end {
             continue;
         }
-        let sign = out.partition_point(|t| t.end <= range.start);
+        while read < out.len() && out[read].end <= range.start {
+            out.swap(write, read);
+            read += 1;
+            write += 1;
+        }
+        let sign = read;
         let Some(token) = out.get(sign) else { continue };
         if token.start != range.start
             || token.end != range.start + 1
             || token.surface.as_ref() != "-"
             || !super::pos_has(&token.pos, "記号,一般")
-            || !super::has_reading(token, &["-", "－", "−"])
+            || !(super::has_reading(token, &["-", "－", "−"])
+                || unspecified_negative_symbol(token, "-"))
         {
             continue;
         }
@@ -570,13 +615,56 @@ fn apply_negative_decimals(input: &str, offset: usize, out: &mut [Token], plan: 
                         && standard_readings(&t.surface, &t.reading, &t.pronunciation))
                         || (t.surface.as_ref() == "."
                             && super::pos_has(&t.pos, "記号")
-                            && super::has_reading(t, &[".", "．"])))
+                            && (super::has_reading(t, &[".", "．"])
+                                || unspecified_negative_symbol(t, "."))))
             })
         {
             continue;
         }
+        let raw = &input[range.start + 1 - offset..range.end - offset];
+        let magnitude = if body.len() > 1
+            && body.iter().all(negative_body_metadata)
+            && let Some(number) = parse(raw).filter(|number| number.dot.is_some())
+        {
+            let (reading, pronunciation) = readings(raw, number);
+            let cost: i64 = body.iter().map(|token| i64::from(token.word_cost)).sum();
+            let surface: Arc<str> = Arc::from(raw);
+            Some(Token {
+                surface: Arc::clone(&surface),
+                base_form: surface,
+                start: range.start + 1,
+                end: range.end,
+                pos: Arc::from("名詞,数,*,*"),
+                conj_type: Arc::from(""),
+                conj_form: Arc::from(""),
+                reading: Arc::from(reading),
+                pronunciation: Arc::from(pronunciation),
+                word_cost: cost.clamp(i64::from(i16::MIN), i64::from(i16::MAX)) as i16,
+                is_known: false,
+            })
+        } else {
+            None
+        };
         super::set_readings(&mut out[sign], "マイナス", "マイナス");
+        out.swap(write, sign);
+        write += 1;
+        if let Some(magnitude) = magnitude {
+            out[write] = magnitude;
+            write += 1;
+        } else {
+            for i in sign + 1..limit {
+                out.swap(write, i);
+                write += 1;
+            }
+        }
+        read = limit;
     }
+    while read < out.len() {
+        out.swap(write, read);
+        read += 1;
+        write += 1;
+    }
+    out.truncate(write);
 }
 
 #[cfg(test)]
@@ -684,7 +772,7 @@ mod tests {
     }
 
     #[test]
-    fn negative_decimal_signs_preserve_all_other_fields_and_protection() {
+    fn negative_decimal_signs_and_magnitudes_keep_surrounding_fields_and_protection() {
         for text in [
             "-47.25",
             "=-47.25",
@@ -709,10 +797,39 @@ mod tests {
                 });
             let mut expected = prior.clone();
             let sign = expected
-                .iter_mut()
-                .find(|t| t.surface.as_ref() == "-")
+                .iter()
+                .position(|t| t.surface.as_ref() == "-")
                 .unwrap();
-            super::super::set_readings(sign, "マイナス", "マイナス");
+            super::super::set_readings(&mut expected[sign], "マイナス", "マイナス");
+            let raw = if text.contains("-0.25") {
+                "0.25"
+            } else {
+                "47.25"
+            };
+            let start = expected[sign].end;
+            let end = start + raw.len();
+            let limit = expected.partition_point(|t| t.end <= end);
+            let (reading, pronunciation) = if raw == "0.25" {
+                ("ゼロテンニゴ", "ゼロテンニゴ")
+            } else {
+                ("ヨンジュウナナテンニゴ", "ヨンジューナナテンニゴ")
+            };
+            expected.splice(
+                sign + 1..limit,
+                [Token {
+                    surface: raw.into(),
+                    base_form: raw.into(),
+                    start,
+                    end,
+                    pos: "名詞,数,*,*".into(),
+                    conj_type: "".into(),
+                    conj_form: "".into(),
+                    reading: reading.into(),
+                    pronunciation: pronunciation.into(),
+                    word_cost: (100 * raw.len()) as i16,
+                    is_known: false,
+                }],
+            );
             let plan = AsciiPlan::new(text, offset);
             let protected = apply(text, offset, &mut out, first, &plan, &mut 0, |_| false);
             assert_eq!(format!("{out:?}"), format!("{expected:?}"), "{text}");
@@ -724,6 +841,294 @@ mod tests {
             apply(text, offset, &mut out, first, &plan, &mut 0, |_| false);
             assert_eq!(format!("{out:?}"), once, "{text}");
         }
+    }
+
+    #[test]
+    fn empty_unknown_negative_symbols_complete_only_admitted_decimal_values() {
+        for unknown_sign in [false, true] {
+            for unknown_dot in [false, true] {
+                for (text, reading, pronunciation) in [
+                    ("-0.5", "ゼロテンゴ", "ゼロテンゴ"),
+                    ("値：-12.25", "ジュウニテンニゴ", "ジューニテンニゴ"),
+                    ("-0.1本", "ゼロテンイチ", "ゼロテンイチ"),
+                ] {
+                    let offset = 91;
+                    let mut out = signed_input_tokens(text, offset);
+                    for t in &mut out {
+                        if (unknown_sign && t.surface.as_ref() == "-")
+                            || (unknown_dot && t.surface.as_ref() == ".")
+                        {
+                            t.is_known = false;
+                            t.reading = "".into();
+                            t.pronunciation = "".into();
+                        }
+                    }
+                    let sign = out.iter().position(|t| t.surface.as_ref() == "-").unwrap();
+                    let original_sign = out[sign].clone();
+                    apply(
+                        text,
+                        offset,
+                        &mut out,
+                        0,
+                        &AsciiPlan::new(text, offset),
+                        &mut 0,
+                        |_| false,
+                    );
+                    let mut expected_sign = original_sign;
+                    super::super::set_readings(&mut expected_sign, "マイナス", "マイナス");
+                    assert_eq!(format!("{:?}", out[sign]), format!("{expected_sign:?}"));
+                    assert_eq!(out[sign + 1].reading.as_ref(), reading, "{text}");
+                    assert_eq!(
+                        out[sign + 1].pronunciation.as_ref(),
+                        pronunciation,
+                        "{text}"
+                    );
+                    let once = format!("{out:?}");
+                    apply(
+                        text,
+                        offset,
+                        &mut out,
+                        0,
+                        &AsciiPlan::new(text, offset),
+                        &mut 0,
+                        |_| false,
+                    );
+                    assert_eq!(format!("{out:?}"), once, "{text}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn unknown_negative_symbol_fallback_keeps_explicit_or_nonstandard_metadata() {
+        for symbol in [0, 2] {
+            for mutation in 0..10 {
+                let text = "-0.5";
+                let mut out = signed_input_tokens(text, 0);
+                out[symbol].is_known = false;
+                out[symbol].reading = "".into();
+                out[symbol].pronunciation = "".into();
+                match mutation {
+                    0 => out[symbol].is_known = true,
+                    1 => out[symbol].reading = "custom".into(),
+                    2 => out[symbol].pronunciation = "custom".into(),
+                    3 => out[symbol].base_form = "custom".into(),
+                    4 => out[symbol].conj_type = "custom".into(),
+                    5 => out[symbol].conj_form = "custom".into(),
+                    6 => out[symbol].pos = "記号,句点,*,*".into(),
+                    7 => out[symbol].pos = "名詞,一般,*,*".into(),
+                    8 => out[symbol].pos = "記号,一般,custom,*".into(),
+                    9 => out[symbol].end += 1,
+                    _ => unreachable!(),
+                }
+                let expected = format!("{out:?}");
+                apply(
+                    text,
+                    0,
+                    &mut out,
+                    0,
+                    &AsciiPlan::new(text, 0),
+                    &mut 0,
+                    |_| false,
+                );
+                assert_eq!(
+                    format!("{out:?}"),
+                    expected,
+                    "symbol={symbol} mutation={mutation}"
+                );
+            }
+        }
+        for text in ["ID:-0.5", "4 - 0.5", "4-0.5", "=-0.5A", "--0.5"] {
+            let mut out = signed_input_tokens(text, 0);
+            for t in &mut out {
+                if matches!(t.surface.as_ref(), "-" | ".") {
+                    t.is_known = false;
+                    t.reading = "".into();
+                    t.pronunciation = "".into();
+                }
+            }
+            let mut expected = out.clone();
+            let mut baseline = AsciiPlan::new(text, 0);
+            baseline.negative_decimals.clear();
+            apply(text, 0, &mut expected, 0, &baseline, &mut 0, |_| false);
+            apply(
+                text,
+                0,
+                &mut out,
+                0,
+                &AsciiPlan::new(text, 0),
+                &mut 0,
+                |_| false,
+            );
+            assert_eq!(format!("{out:?}"), format!("{expected:?}"), "{text}");
+        }
+    }
+
+    #[test]
+    fn negative_magnitude_metadata_keeps_legacy_sign_only_and_single_correct_body() {
+        for mutation in 0..8 {
+            let text = "-0.5";
+            let mut out = signed_input_tokens(text, 0);
+            match mutation {
+                0 => out[1].base_form = "ordinary".into(),
+                1 => out[1].base_form = "一".into(),
+                2 => out[1].conj_type = "fixture".into(),
+                3 => out[3].conj_form = "fixture".into(),
+                4 => out[2].base_form = "ordinary".into(),
+                5 => out[2].pos = "記号,アルファベット,*,*".into(),
+                6 => out[2].conj_type = "fixture".into(),
+                7 => out[2].conj_form = "fixture".into(),
+                _ => unreachable!(),
+            }
+            let mut expected = out.clone();
+            super::super::set_readings(&mut expected[0], "マイナス", "マイナス");
+            apply(
+                text,
+                0,
+                &mut out,
+                0,
+                &AsciiPlan::new(text, 0),
+                &mut 0,
+                |_| false,
+            );
+            assert_eq!(
+                format!("{out:?}"),
+                format!("{expected:?}"),
+                "mutation {mutation}"
+            );
+        }
+        for known in [true, false] {
+            let text = "-0.5";
+            let mut out = signed_input_tokens(text, 0);
+            let mut body = out[1].clone();
+            body.surface = "0.5".into();
+            body.base_form = "custom metadata".into();
+            body.end = 4;
+            body.reading = "ゼロテンゴ".into();
+            body.pronunciation = "ゼロテンゴ".into();
+            body.word_cost = 1234;
+            body.is_known = known;
+            body.conj_type = "custom".into();
+            out.splice(1..4, [body.clone()]);
+            apply(
+                text,
+                0,
+                &mut out,
+                0,
+                &AsciiPlan::new(text, 0),
+                &mut 0,
+                |_| false,
+            );
+            assert_eq!(out.len(), 2);
+            assert_eq!(format!("{:?}", out[1]), format!("{body:?}"));
+            // 単一decimalは旧integer-only判定の対象外。新しい符号認可を足さず保持する。
+            assert_eq!(out[0].reading.as_ref(), "-");
+        }
+    }
+
+    #[test]
+    fn negative_magnitude_cost_excludes_sign_and_saturates_once() {
+        for bound in [i16::MIN, i16::MAX] {
+            let text = "-12.25";
+            let mut out = signed_input_tokens(text, 31);
+            out[0].word_cost = 137;
+            for token in &mut out[1..] {
+                token.word_cost = bound;
+            }
+            let sign = out[0].clone();
+            apply(
+                text,
+                31,
+                &mut out,
+                0,
+                &AsciiPlan::new(text, 31),
+                &mut 0,
+                |_| false,
+            );
+            assert_eq!(out.len(), 2);
+            assert_eq!(out[1].word_cost, bound);
+            assert_eq!(out[0].word_cost, 137);
+            assert_eq!((out[1].start, out[1].end), (32, 37));
+            let mut restored = out[0].clone();
+            restored.reading = sign.reading.clone();
+            restored.pronunciation = sign.pronunciation.clone();
+            assert_eq!(format!("{restored:?}"), format!("{sign:?}"));
+        }
+        let text = "-0.5";
+        let mut out = signed_input_tokens(text, 0);
+        out[1].base_form = "零".into();
+        out[2].base_form = "．".into();
+        apply(
+            text,
+            0,
+            &mut out,
+            0,
+            &AsciiPlan::new(text, 0),
+            &mut 0,
+            |_| false,
+        );
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[1].reading.as_ref(), "ゼロテンゴ");
+        assert_eq!(out[1].word_cost, 300);
+    }
+
+    #[test]
+    fn repeated_negative_magnitudes_compact_once_and_keep_known_minus_words() {
+        let text = "-0.5; -3.5; -0.5";
+        let mut out = signed_input_tokens(text, 0);
+        let sign = out.iter().position(|t| t.start == 6).unwrap();
+        let mut known = out[sign].clone();
+        known.surface = "-3".into();
+        known.base_form = "-3".into();
+        known.end = 8;
+        known.pos = "名詞,数,*,*".into();
+        known.reading = "マイナスサン".into();
+        known.pronunciation = "マイナスサン".into();
+        out.splice(sign..sign + 2, [known.clone()]);
+        apply(
+            text,
+            0,
+            &mut out,
+            0,
+            &AsciiPlan::new(text, 0),
+            &mut 0,
+            |_| false,
+        );
+        assert_eq!(
+            out.iter().filter(|t| t.surface.as_ref() == "0.5").count(),
+            2
+        );
+        assert_eq!(
+            format!(
+                "{:?}",
+                out.iter().find(|t| t.surface.as_ref() == "-3").unwrap()
+            ),
+            format!("{known:?}")
+        );
+        let text = std::iter::repeat_n("-0.5", 2000)
+            .collect::<Vec<_>>()
+            .join("; ");
+        let mut out = signed_input_tokens(&text, 0);
+        let plan = AsciiPlan::new(&text, 0);
+        apply(&text, 0, &mut out, 0, &plan, &mut 0, |_| false);
+        assert_eq!(
+            out.iter().filter(|t| t.surface.as_ref() == "0.5").count(),
+            2000
+        );
+        assert_eq!(
+            out.iter()
+                .filter(|t| t.reading.as_ref() == "マイナス")
+                .count(),
+            2000
+        );
+        assert!(
+            out.iter()
+                .filter(|t| t.surface.as_ref() == "0.5")
+                .all(|t| t.word_cost == 300 && t.reading.as_ref() == "ゼロテンゴ")
+        );
+        let before = format!("{out:?}");
+        apply(&text, 0, &mut out, 0, &plan, &mut 0, |_| false);
+        assert_eq!(format!("{out:?}"), before);
     }
 
     #[test]
@@ -1689,6 +2094,29 @@ mod analyzer_tests {
 
 #[cfg(test)]
 mod distributed_tests {
+    #[test]
+    #[ignore = "配布辞書 3 個が必要（make dict-download）"]
+    fn distributed_negative_decimals_include_sign_point_and_fraction() {
+        for name in ["ipadic", "ipadic-neologd", "ipadic-neologd-sudachi"] {
+            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("dict")
+                .join(format!("{name}.hsd"));
+            let mut analyzer = crate::Analyzer::load(path).unwrap();
+            for (text, expected) in [
+                ("-0.5", "マイナスゼロテンゴ"),
+                ("-0.1本", "マイナスゼロテンイチホン"),
+            ] {
+                let out = analyzer.try_tokenize(text).unwrap();
+                let reading: String = out.iter().map(|t| t.reading.as_ref()).collect();
+                let pronunciation: String = out.iter().map(|t| t.pronunciation.as_ref()).collect();
+                assert_eq!(reading, expected, "{name}: {text}");
+                assert_eq!(pronunciation, expected, "{name}: {text}");
+                for token in &out {
+                    assert_eq!(&text[token.start..token.end], token.surface.as_ref());
+                }
+            }
+        }
+    }
     #[test]
     #[ignore = "配布辞書 3 個が必要（make dict-download）"]
     fn distributed_ascii_quantity_readings() {
