@@ -71,6 +71,47 @@ match analyzer.try_tokenize("東京都に住んでいる") {
 辞書は mmap で読み込むので、読み込み中の辞書ファイルを書き換えたり切り詰めたりしてはいけない。
 辞書を差し替えるときは別名で書いてから rename する（`hasami build` / `merge` / `repair` の出力はそうしている）。
 
+## 単一数量と識別子の文字列正規化
+
+前処理で単一の数量・識別子と判定した区間は、`Analyzer` の次の API で正規化できる。
+`32bit` などの単一数量や、区間全体の ID を渡す。
+辞書と既存の数詞・単位・字母読みを使い、モデルは読み込まない。
+両メソッドは `Result<Option<String>, DictError>` を返す。
+`None` は採用する正規化結果がないことを示し、入力や辞書の読みの正誤を判定する値ではない。
+
+| メソッド | `Some` の内容 | `None` のとき |
+| --- | --- | --- |
+| `quantity_pronunciation(input)` | 全体を認可された数詞と単位・助数詞として解析できた数量の発音 | 全体が 1 既知語として選ばれた場合や、数量・境界・読みが対象外なら利用側の既存処理へ戻す |
+| `normalize_identifier(input)` | 全体が辞書にある ASCII 英数字 ID は原文。限定した未知 ID は字母・単桁読み | 未知の大小文字混在・ピリオド付き・短い ID、独自読みを持つ英字語幹などは利用側の既存処理へ戻す |
+
+利用側で数量の判定を先に行う。数量区間の `None` は既存の数量処理へ戻し、識別子として再分類しない。
+識別子 API の `Some` は原文・カタカナのどちらも再び数値変換せず保持する。
+全体が既知の ID は長さや大小文字の制限より先に保護され、登録済みの独自読みを以後の解析に渡せる。
+`Some` の原文保持は、その登録の発音を検証したという意味ではない。
+
+```rust
+fn normalize_scalar(
+    analyzer: &mut hasami::Analyzer,
+    input: &str,
+    is_quantity: bool,
+) -> Result<Option<String>, hasami::DictError> {
+    if is_quantity {
+        return analyzer.quantity_pronunciation(input);
+    }
+    analyzer.normalize_identifier(input)
+}
+```
+
+未知 ID の字母読みは、英大文字で始まり数字を含む 5 文字以上の ASCII 英大文字・数字と、
+内部で連続しない `-`・`_` に限定する。
+数字を 1 桁ずつ読み、区切り記号は読みへ足さない。既存の識別子境界と既知語幹の保護条件も満たす必要がある。
+たとえば、全体が既知の `C3PO` は `Some("C3PO")`、条件を満たす未知の `ZX1B-90Q` は字母・単桁読み、
+未知の `GPT-5.02` は `None` となる。`None` への数値変換や小数点・先頭ゼロの保持は利用側が行う。
+
+追加単位 `bit`・`mph`・`kcal`・`km2`・`km/h`・`m/s` の数量合成は半角の数値・単位綴りに限定する。
+既存の全角単位の読み補完は従来の境界規則に従う。
+識別子の文字列変換は `normalize_identifier` を明示的に呼び出した区間へ適用する。
+
 ## 辞書の既定の場所
 
 `Analyzer::load_default()` は次の順に辞書を探す。見つからなければ探した場所を持つ `DictError::NotFound` を返すので、

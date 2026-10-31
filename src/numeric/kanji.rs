@@ -13,7 +13,22 @@ fn digit(c: char) -> Option<u64> {
     .then(|| super::digit(c).unwrap())
 }
 
+fn scaled_value(raw: &str) -> Option<u64> {
+    let (digits, scale) = raw
+        .strip_suffix('万')
+        .map(|n| (n, 10_000))
+        .or_else(|| raw.strip_suffix('億').map(|n| (n, 100_000_000)))?;
+    if !digits.contains(['〇', '零']) {
+        return None;
+    }
+    let n = value(digits)?.checked_mul(scale)?;
+    (n < 10_000_000_000_000_000).then_some(n)
+}
+
 fn value(raw: &str) -> Option<u64> {
+    if raw.ends_with(['万', '億']) {
+        return scaled_value(raw);
+    }
     if raw == "二十" {
         return Some(20);
     }
@@ -154,7 +169,13 @@ pub(super) fn number_starts(input: &str, offset: usize) -> Vec<usize> {
         return starts;
     }
     let mut chars = input.char_indices().peekable();
+    let mut quotes = Vec::new();
     while let Some((start, c)) = chars.next() {
+        if quotes.last() == Some(&c) {
+            quotes.pop();
+        } else if let Some(close) = super::month::quote_end(c) {
+            quotes.push(close);
+        }
         // 位付き漢数字全般ではなく、二十日だけを和語の助数詞補正へ渡す。
         // 数字列の途中の二は下の走査が消費するので、三二十日等では開始しない。
         if input[start..].starts_with("二十日") && !identifier_prefix(&input[..start]) {
@@ -171,7 +192,19 @@ pub(super) fn number_starts(input: &str, offset: usize) -> Vec<usize> {
             end = i + c.len_utf8();
             chars.next();
         }
+        if input[end..].starts_with(['万', '億']) {
+            let next_end = end + 3;
+            if scaled_value(&input[start..next_end]).is_some() {
+                end = next_end;
+                chars.next();
+            }
+        }
         let raw = &input[start..end];
+        if scaled_value(raw).is_some()
+            && (!quotes.is_empty() || !super::month::eleven_prefix_allowed(&input[..start]))
+        {
+            continue;
+        }
         if value(raw).is_some()
             // ゼロのない二字列は「二、三」のような概数と区別できない。
             && (raw.contains(['〇', '零']) || raw.chars().count() >= 3 || pair2_global(raw, &input[end..]))
@@ -202,7 +235,7 @@ fn number_token(t: &Token) -> bool {
     pos_has(&t.pos, "名詞,数")
         && !t.surface.is_empty()
         && (t.surface.chars().all(|c| digit(c).is_some())
-            || matches!(t.surface.as_ref(), "十" | "二十"))
+            || matches!(t.surface.as_ref(), "十" | "二十" | "万" | "億"))
 }
 
 fn quantity(t: &Token, unit: impl Fn(&str) -> bool) -> bool {
@@ -220,15 +253,55 @@ fn candidate<'a>(
     out: &[Token],
     range: Range<usize>,
     protected: &[Range<usize>],
-    comma_year: bool,
+    plan: &AsciiPlan,
     unit: impl Fn(&str) -> bool,
 ) -> Option<(&'a str, u64)> {
     let first = &out[range.start];
+    let comma_year = marked_comma_year(plan, first.start);
     let last = &out[range.end - 1];
     let raw = input.get(first.start.checked_sub(offset)?..last.end.checked_sub(offset)?)?;
     let value = value(raw)?;
+    let scaled = scaled_value(raw).is_some();
+    // 明示された万・億で終わる数詞は元入力の末尾だけ認可する。
+    // 切り出したチャンクの末尾では認可せず、位を伴わない裸の数字列は変更しない。
+    if scaled
+        && range.end == out.len()
+        && last.end == plan.input_end()
+        && !(range.len() == 1 && first.is_known)
+        && !protected
+            .iter()
+            .any(|p| p.start < last.end && first.start < p.end)
+        && out[range.clone()].iter().all(|t| {
+            let (Some(start), Some(end)) = (t.start.checked_sub(offset), t.end.checked_sub(offset))
+            else {
+                return false;
+            };
+            input.get(start..end) == Some(t.surface.as_ref())
+                && t.conj_type.is_empty()
+                && t.conj_form.is_empty()
+                && standard_kanji_readings(&t.surface, &t.reading, &t.pronunciation)
+                && super::numeral_value(std::iter::once(t.surface.as_ref())).is_some_and(|n| {
+                    super::numeral_value(std::iter::once(t.base_form.as_ref())) == Some(n)
+                })
+        })
+    {
+        return Some((raw, value));
+    }
     let suffix = out.get(range.end)?;
     let finite_pair = pair2_counter(raw, suffix);
+    if scaled
+        && (!plan.scaled_unit_end_allowed(suffix.end)
+            || !(suffix.is_known
+                && suffix.base_form == suffix.surface
+                && suffix.conj_type.is_empty()
+                && suffix.conj_form.is_empty()
+                && (super::counter(suffix).is_some()
+                    || (pos_has(&suffix.pos, "名詞,接尾,助数詞")
+                        && matches!(suffix.surface.as_ref(), "円" | "エン")
+                        && super::has_reading(suffix, &["エン"])))))
+    {
+        return None;
+    }
     if comma_year
         && !(suffix.is_known
             && suffix.surface.as_ref() == "年"
@@ -252,7 +325,7 @@ fn candidate<'a>(
     if (raw == "二十" && !native_day20) || (range.len() == 1 && first.is_known && !native_day20) {
         return None;
     }
-    let protected_end = if native_day20 || finite_pair || comma_year {
+    let protected_end = if native_day20 || finite_pair || comma_year || scaled {
         suffix.end
     } else {
         last.end
@@ -279,13 +352,13 @@ fn candidate<'a>(
             };
             input.get(start..end) == Some(t.surface.as_ref())
                 && standard_kanji_readings(&t.surface, &t.reading, &t.pronunciation)
-                && (!(native_day20 || finite_pair || comma_year)
+                && (!(native_day20 || finite_pair || comma_year || scaled)
                     || super::numeral_value(std::iter::once(t.surface.as_ref())).is_some_and(
                         |value| {
                             super::numeral_value(std::iter::once(t.base_form.as_ref())) == Some(value)
                         },
                     ))
-                && (!(finite_pair || comma_year) || (t.conj_type.is_empty() && t.conj_form.is_empty()))
+                && (!(finite_pair || comma_year || scaled) || (t.conj_type.is_empty() && t.conj_form.is_empty()))
         })
     {
         return None;
@@ -318,15 +391,8 @@ pub(crate) fn apply(
                 read += 1;
             }
             if plan.kanji_number_start(out[start].start)
-                && let Some((raw, value)) = candidate(
-                    input,
-                    offset,
-                    out,
-                    start..read,
-                    protected,
-                    marked_comma_year(plan, out[start].start),
-                    &unit,
-                )
+                && let Some((raw, value)) =
+                    candidate(input, offset, out, start..read, protected, plan, &unit)
             {
                 let (reading, pronunciation) = ascii::integer_readings(value);
                 let cost: i64 = out[start..read]

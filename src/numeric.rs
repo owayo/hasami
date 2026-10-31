@@ -10,9 +10,12 @@ use std::sync::Arc;
 mod ascii;
 mod fullwidth;
 
+#[cfg(test)]
+mod followup_tests;
 mod japanese_boundary;
 mod kanji;
 mod month;
+pub(crate) mod units;
 mod year;
 pub(crate) use ascii::{AsciiPlan, apply as apply_ascii_quantities};
 pub(crate) use kanji::apply as apply_kanji_quantities;
@@ -66,6 +69,7 @@ enum Counter {
     Box,
     NativePair(&'static str),
     Minute,
+    MinuteSpan,
     Hundred,
     Thousand,
     Person,
@@ -339,6 +343,14 @@ fn counter(token: &Token) -> Option<Counter> {
         "節" if has_reading(token, &["セツ"]) => Some(Counter::Soft),
         "頭" if has_reading(token, &["トウ", "トー"]) => Some(Counter::Soft),
         "着" if has_reading(token, &["チャク"]) => Some(Counter::Soft),
+        "手" if token.is_known
+            && token.base_form.as_ref() == "手"
+            && token.conj_type.is_empty()
+            && token.conj_form.is_empty()
+            && has_reading(token, &["テ"]) =>
+        {
+            Some(Counter::Soft)
+        }
         "足" if has_reading(token, &["ソク"]) => Some(Counter::Soft),
         "歳" | "才" if has_reading(token, &["サイ"]) => Some(Counter::Soft),
         "棟" if has_reading(token, &["トウ", "トー"]) => Some(Counter::Soft),
@@ -361,6 +373,15 @@ fn counter(token: &Token) -> Option<Counter> {
         "歩" if has_reading(token, &["ホ", "ポ"]) => Some(Counter::Step),
         "口" if has_reading(token, &["クチ", "グチ"]) => Some(Counter::Mouth),
         "分" | "ぷん" if has_reading(token, &["フン", "プン"]) => Some(Counter::Minute),
+        "分間"
+            if token.is_known
+                && token.base_form.as_ref() == "分間"
+                && token.conj_type.is_empty()
+                && token.conj_form.is_empty()
+                && has_reading(token, &["フンカン", "プンカン"]) =>
+        {
+            Some(Counter::MinuteSpan)
+        }
         "人" if has_reading(token, &["ニン", "リ"]) => Some(Counter::Person),
         "日" if has_reading(token, &["ニチ", "カ"]) => Some(Counter::Day),
         "日間" if token.is_known && has_reading(token, &["ニチカン"]) => {
@@ -489,6 +510,16 @@ fn numeral_glyph_readings(
         '兆' => &["チョウ", "チョー"],
         _ => &[],
     }
+}
+
+/// 識別子の単桁読み。既存ASCII数詞の読字・発音を再利用する。
+pub(crate) fn literal_digit_pronunciation(c: char) -> Option<String> {
+    if !c.is_ascii_digit() {
+        return None;
+    }
+    let raw = c.to_string();
+    let number = ascii::parse(&raw)?;
+    Some(ascii::readings(&raw, number).1)
 }
 
 fn standard_number_readings(token: &Token, tails: &[&str]) -> bool {
@@ -818,6 +849,7 @@ fn numeral_before_counter(
             | Counter::Box
             | Counter::NativePair(_)
             | Counter::DaySpan
+            | Counter::MinuteSpan
     ) && run.protected
     {
         return None;
@@ -832,6 +864,34 @@ fn numeral_before_counter(
     }
     if after_decimal(tokens, run.start) {
         return None;
+    }
+
+    if tokens[i].surface.as_ref() == "手" {
+        // 未解釈の桁列や概数は、末尾一字だけ音便化しない。
+        // ASCII合成済み数詞と、位を含む標準漢数字の読みだけ共通規則へ渡す。
+        let source = &tokens[run.start..i];
+        let raw: String = source.iter().map(|t| t.surface.as_ref()).collect();
+        if !(run.ascii || run.kanji || raw.chars().all(|c| matches!(c, '０'..='９')))
+            || !source.iter().all(|t| {
+                let surface_value = ascii::integer_value(&t.surface)
+                    .or_else(|| numeral_value(std::iter::once(t.surface.as_ref())));
+                let base_value = ascii::integer_value(&t.base_form)
+                    .or_else(|| numeral_value(std::iter::once(t.base_form.as_ref())));
+                t.conj_type.is_empty()
+                    && t.conj_form.is_empty()
+                    && surface_value.is_some()
+                    && surface_value == base_value
+            })
+        {
+            return None;
+        }
+        let value =
+            ascii::integer_value(&raw).or_else(|| numeral_value(std::iter::once(raw.as_str())))?;
+        let reading: String = source.iter().map(|t| t.reading.as_ref()).collect();
+        let pronunciation: String = source.iter().map(|t| t.pronunciation.as_ref()).collect();
+        if !ascii::standard_readings(&value.to_string(), &reading, &pronunciation) {
+            return None;
+        }
     }
 
     if matches!(tokens[i].surface.as_ref(), "歳" | "才") {
@@ -1032,6 +1092,20 @@ fn apply_counter_reading(
                 set_readings(number, prefix, prefix);
                 set_readings(suffix, tail, tail);
             }
+        }
+        Counter::MinuteSpan => {
+            let half = match e {
+                Ending::One | Ending::Six | Ending::Eight | Ending::Ten | Ending::Hundred => {
+                    geminate(number, e)
+                }
+                Ending::Three | Ending::Four | Ending::Thousand | Ending::TenThousand => true,
+                _ => false,
+            };
+            set_readings(
+                suffix,
+                if half { "プンカン" } else { "フンカン" },
+                if half { "プンカン" } else { "フンカン" },
+            );
         }
         Counter::Minute => match e {
             Ending::One | Ending::Six | Ending::Eight | Ending::Ten | Ending::Hundred => {

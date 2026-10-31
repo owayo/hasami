@@ -32,7 +32,6 @@ use crate::hsd::reader::DictView;
 use crate::hsd::trie::Trie;
 use crate::hsd::{DictError, Dictionary};
 use crate::kana::{to_katakana, unvoice, voice};
-use std::borrow::Cow;
 use std::sync::Arc;
 
 mod idiom;
@@ -98,97 +97,7 @@ fn alpha_to_kana(c: char) -> Option<&'static str> {
     }
 }
 
-/// 数字の後に来る単一アルファベットの単位読みを返す
-///
-/// 単位記号は大文字・小文字で別の量を表す（T=テスラ / t=トン, M=メガ / m=メートル）ため、
-/// 大文字小文字を区別して引く。
-fn unit_reading_char(c: char) -> Option<&'static str> {
-    match c {
-        'W' => Some("ワット"),
-        'A' => Some("アンペア"),
-        'V' => Some("ボルト"),
-        'J' => Some("ジュール"),
-        'N' => Some("ニュートン"),
-        'T' => Some("テスラ"),
-        'F' => Some("ファラド"),
-        'H' => Some("ヘンリー"),
-        'K' => Some("ケルビン"),
-        'm' => Some("メートル"),
-        'g' => Some("グラム"),
-        't' => Some("トン"),
-        'L' | 'l' => Some("リットル"),
-        _ => None,
-    }
-}
-
-/// 数字の後に来る複数文字の単位読みを返す
-fn unit_reading_multi(s: &str) -> Option<&'static str> {
-    match s {
-        "Hz" => Some("ヘルツ"),
-        "kHz" => Some("キロヘルツ"),
-        "MHz" => Some("メガヘルツ"),
-        "GHz" => Some("ギガヘルツ"),
-        "km" => Some("キロメートル"),
-        "cm" => Some("センチメートル"),
-        "mm" => Some("ミリメートル"),
-        "nm" => Some("ナノメートル"),
-        "kg" => Some("キログラム"),
-        "mg" => Some("ミリグラム"),
-        "mL" | "ml" => Some("ミリリットル"),
-        "kW" => Some("キロワット"),
-        "MW" => Some("メガワット"),
-        "mA" => Some("ミリアンペア"),
-        "kV" => Some("キロボルト"),
-        "dB" => Some("デシベル"),
-        "Pa" => Some("パスカル"),
-        "hPa" => Some("ヘクトパスカル"),
-        "kPa" => Some("キロパスカル"),
-        "MPa" => Some("メガパスカル"),
-        "KB" => Some("キロバイト"),
-        "MB" => Some("メガバイト"),
-        "GB" => Some("ギガバイト"),
-        "TB" => Some("テラバイト"),
-        "Wh" => Some("ワットアワー"),
-        "kWh" => Some("キロワットアワー"),
-        "Ah" => Some("アンペアアワー"),
-        "mAh" => Some("ミリアンペアアワー"),
-        "cc" => Some("シーシー"),
-        "hp" => Some("馬力"),
-        "rpm" => Some("アールピーエム"),
-        "fps" => Some("エフピーエス"),
-        "bps" => Some("ビーピーエス"),
-        "Mbps" => Some("メガビーピーエス"),
-        "Gbps" => Some("ギガビーピーエス"),
-        _ => None,
-    }
-}
-
-/// 数字の後に来るアルファベットの単位読みを返す
-fn unit_reading(surface: &str) -> Option<&'static str> {
-    let folded = fold_alphabet_width(surface);
-    let surface = folded.as_ref();
-    let mut chars = surface.chars();
-    if let Some(c) = chars.next()
-        && chars.next().is_none()
-    {
-        return unit_reading_char(c);
-    }
-    unit_reading_multi(surface)
-}
-
-/// 全角英字だけを ASCII に畳む。通常の ASCII 入力では確保しない。
-fn fold_alphabet_width(surface: &str) -> Cow<'_, str> {
-    if surface.is_ascii() {
-        Cow::Borrowed(surface)
-    } else {
-        Cow::Owned(
-            surface
-                .chars()
-                .map(|c| ascii_alpha(c).unwrap_or(c))
-                .collect(),
-        )
-    }
-}
+use crate::numeric::units::reading as unit_reading;
 
 /// ASCII・全角の英字。単位読みでは大文字小文字を区別する。
 fn ascii_alpha(c: char) -> Option<char> {
@@ -405,7 +314,13 @@ fn apply_contextual_readings_with_protection(
         let preceded_by_number =
             i > 0 && tokens[i - 1].end == tokens[i].start && is_number_like(&tokens[i - 1]);
 
-        if preceded_by_number && let Some(reading) = unit_reading(&tokens[i].surface) {
+        if preceded_by_number
+            && (!crate::numeric::units::requires_frame(&tokens[i].surface)
+                || !protected
+                    .iter()
+                    .any(|p| p.start < tokens[i].end && tokens[i - 1].start < p.end))
+            && let Some(reading) = unit_reading(&tokens[i].surface)
+        {
             let arc: Arc<str> = Arc::from(reading);
             tokens[i].reading = Arc::clone(&arc);
             tokens[i].pronunciation = arc;
@@ -481,7 +396,7 @@ fn fill_kana_reading(token: &mut Token) {
     }
 }
 
-fn alphabet_reading(surface: &str) -> Option<Arc<str>> {
+pub(crate) fn alphabet_reading(surface: &str) -> Option<Arc<str>> {
     if surface.is_empty() {
         return None;
     }
@@ -1148,7 +1063,15 @@ impl LatticeWorkspace {
                         &chars.offsets,
                         p,
                         |end, group| {
-                            if !chars.splits_digit_run(input, p, end) {
+                            if !chars.splits_digit_run(input, p, end)
+                                && !crate::numeric::units::crosses_boundary(
+                                    input,
+                                    offset,
+                                    plan,
+                                    offset + chars.offsets[p] as usize,
+                                    offset + chars.offsets[end] as usize,
+                                )
+                            {
                                 scratch_hits.push((end as u32, group));
                             }
                         },
@@ -1300,6 +1223,7 @@ impl LatticeWorkspace {
                 }
             });
         }
+        crate::numeric::units::coalesce_units(input, offset, out, first, plan);
         let protected = crate::numeric::apply_ascii_quantities(
             input,
             offset,

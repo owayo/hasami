@@ -40,7 +40,7 @@ const FRAME_LABELS: [&str; 13] = [
     "キー",
 ];
 
-fn quote_end(c: char) -> Option<char> {
+pub(super) fn quote_end(c: char) -> Option<char> {
     match c {
         '「' => Some('」'),
         '『' => Some('』'),
@@ -69,7 +69,7 @@ fn identifier_neighbor(c: char) -> bool {
         || matches!(c, 'Ａ'..='Ｚ' | 'ａ'..='ｚ' | '_' | '.' | '．' | '点' | ',' | '，' | ':' | '：' | '/' | '／' | '∕' | '÷' | '×' | '+' | '＋' | '-' | '－' | '−' | '‐' | '‑' | '‒' | '–' | '—' | '―' | '=' | '*' | '^' | '%' | '第')
 }
 
-fn eleven_prefix_allowed(prefix: &str) -> bool {
+pub(super) fn eleven_prefix_allowed(prefix: &str) -> bool {
     let prefix = prefix
         .trim_end_matches(|c: char| c.is_whitespace() || matches!(c, '(' | '[' | '（' | '［'));
     !prefix.chars().next_back().is_some_and(identifier_neighbor)
@@ -244,10 +244,44 @@ pub(super) fn number_starts(input: &str, offset: usize) -> Vec<usize> {
         }
         starts.push(offset + prefix.len());
     }
+    add_zero_calendar_starts(input, offset, &mut starts);
     add_eleven_starts(input, offset, &mut starts);
     starts.sort_unstable();
     starts.dedup();
     starts
+}
+
+fn add_zero_calendar_starts(input: &str, offset: usize, starts: &mut Vec<usize>) {
+    if !input.contains("一〇月") && !input.contains("一零月") {
+        return;
+    }
+    let mut quotes = Vec::new();
+    for (start, c) in input.char_indices() {
+        if quotes.last() == Some(&c) {
+            quotes.pop();
+        } else if let Some(close) = quote_end(c) {
+            quotes.push(close);
+        }
+        if !quotes.is_empty()
+            || !["一〇月", "一零月"]
+                .iter()
+                .any(|s| input[start..].starts_with(s))
+        {
+            continue;
+        }
+        let Some(year) = input[..start].strip_suffix('年') else {
+            continue;
+        };
+        let prefix = year.trim_end_matches(|c| digit(c).is_some());
+        let raw = &year[prefix.len()..];
+        if raw.chars().count() == 4
+            && !raw.starts_with(|c| digit(c) == Some(0))
+            && eleven_prefix_allowed(prefix)
+            && eleven_right_allowed(&input[start + "一〇月".len()..], false)
+        {
+            starts.push(offset + start);
+        }
+    }
 }
 
 fn selected(token: &Token, surface: &str, pos: &str, reading: &str) -> bool {
@@ -363,6 +397,7 @@ fn candidate<'a>(
     start: usize,
     end: usize,
     plan: &AsciiPlan,
+    protected: &[Range<usize>],
 ) -> Option<(&'a str, &'static str, &'static str)> {
     let month = tokens.get(end)?;
     if month.surface.as_ref() != "月"
@@ -375,6 +410,53 @@ fn candidate<'a>(
     let to = tokens[end - 1].end.checked_sub(offset)?;
     let month_start = month.start.checked_sub(offset)?;
     let gap = input.get(to..month_start)?;
+    let raw = input.get(from..to)?;
+    if gap.is_empty()
+        && matches!(raw, "一〇" | "一零")
+        && plan.month_number_start(tokens[start].start)
+    {
+        let year = tokens.get(start.checked_sub(1)?)?;
+        let number = tokens.get(start.checked_sub(2)?)?;
+        let year_value = super::numeral_value(std::iter::once(number.surface.as_ref()))?;
+        let year_standard = super::ascii::standard_readings(
+            &year_value.to_string(),
+            &number.reading,
+            &number.pronunciation,
+        ) || (year_value % 10 == 4
+            && super::ascii::standard_readings(
+                &year_value.to_string(),
+                &format!("{}ン", number.reading),
+                &format!("{}ン", number.pronunciation),
+            ));
+        if !selected(year, "年", "名詞,接尾,助数詞,*", "ネン")
+            || number.end != year.start
+            || year.end != tokens[start].start
+            || !(1000..=9999).contains(&year_value)
+            || !is_numeral(number)
+            || !year_standard
+            || number.base_form != number.surface
+            || !number.conj_type.is_empty()
+            || !number.conj_form.is_empty()
+            || !month.is_known
+            || month.base_form != month.surface
+            || !month.conj_type.is_empty()
+            || !month.conj_form.is_empty()
+            || (end - start == 1 && tokens[start].is_known)
+            || protected
+                .iter()
+                .any(|p| p.start < month.end && tokens[start].start < p.end)
+            || !tokens[start..end].iter().all(|t| {
+                t.base_form == t.surface
+                    && t.conj_type.is_empty()
+                    && t.conj_form.is_empty()
+                    && pos_has(&t.pos, "名詞,数")
+                    && standard_readings(t)
+            })
+        {
+            return None;
+        }
+        return Some((raw, "ジュウ", "ジュー"));
+    }
     if gap.is_empty() || !gap.chars().all(horizontal) {
         return None;
     }
@@ -425,7 +507,7 @@ pub(crate) fn apply(
                 read += 1;
             }
             if let Some((raw, reading, pronunciation)) =
-                candidate(input, offset, out, start, read, plan)
+                candidate(input, offset, out, start, read, plan, protected)
             {
                 if read - start == 1 {
                     set_readings(&mut out[start], reading, pronunciation);

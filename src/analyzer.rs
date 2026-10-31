@@ -7,6 +7,8 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+mod literal_identifier;
+
 /// 既定の辞書のパスを指す環境変数
 pub const DICT_ENV: &str = "HASAMI_DICT";
 
@@ -122,6 +124,27 @@ impl Analyzer {
         let plan = crate::numeric::AsciiPlan::new(input, 0);
         self.tokenize_chunks(input, 0, &mut tokens, &plan, &mut 0)?;
         Ok(tokens)
+    }
+
+    /// 明示された単一数量を共通の数詞・助数詞規則で読み、発音を返す。
+    /// 識別子、既知の一語、認可できない選択済みの読みはNoneにする。
+    pub fn quantity_pronunciation(&mut self, input: &str) -> Result<Option<String>, DictError> {
+        if input.is_empty() || input.trim() != input || input.chars().any(char::is_whitespace) {
+            return Ok(None);
+        }
+        let tokens = self.try_tokenize(input)?;
+        Ok(crate::numeric::units::quantity_pronunciation(
+            input, &tokens,
+        ))
+    }
+
+    /// 明示されたASCII英数字識別子を、数量変換前に保護・正規化する。
+    ///
+    /// 辞書に全体があれば原文を返す。限定した未知の大文字IDには既存の字母・単桁読みを
+    /// 返し、それ以外はNoneを返す。Someは正規化済み文字列であり、常に発音ではない。
+    /// 既定の解析結果は変更しない。呼出側では単一数量の判定を先に行う。
+    pub fn normalize_identifier(&mut self, input: &str) -> Result<Option<String>, DictError> {
+        literal_identifier::normalize(self, input)
     }
 
     /// 入力を文末記号・改行の直後で区間に分け、区間ごとに解析する（ラティスを小さく保つ）

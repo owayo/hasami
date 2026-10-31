@@ -5,13 +5,13 @@ use std::ops::Range;
 use std::sync::Arc;
 
 #[derive(Clone, Copy, Debug)]
-struct Number {
+pub(super) struct Number {
     integer: u64,
     dot: Option<usize>,
 }
 
 /// 整数16桁、小数部16桁。カンマは整数部の正しい3桁区切りだけを許す。
-fn parse(raw: &str) -> Option<Number> {
+pub(super) fn parse(raw: &str) -> Option<Number> {
     let (mut integer, mut integer_digits, mut fraction_digits) = (0u64, 0usize, 0usize);
     let (mut group, mut comma, mut dot) = (0usize, false, None);
     for (i, b) in raw.bytes().enumerate() {
@@ -97,7 +97,7 @@ pub(super) fn standard_readings(raw: &str, reading: &str, pronunciation: &str) -
     super::standard_kanji_readings(&kanji(integer), reading, pronunciation)
 }
 
-fn readings(raw: &str, number: Number) -> (String, String) {
+pub(super) fn readings(raw: &str, number: Number) -> (String, String) {
     let spelling = kanji(number.integer);
     let mut chars = spelling.chars().peekable();
     let (mut reading, mut pronunciation) = (String::new(), String::new());
@@ -154,6 +154,7 @@ struct Candidate {
 
 #[derive(Default, Debug)]
 pub(crate) struct AsciiPlan {
+    input_end: usize,
     candidates: Vec<Candidate>,
     month_starts: Vec<usize>,
     kanji_starts: Vec<usize>,
@@ -161,6 +162,8 @@ pub(crate) struct AsciiPlan {
 
     comma_year_starts: Vec<usize>,
     negative_decimals: Vec<Range<usize>>,
+    unit_frames: Vec<super::units::Frame>,
+    scaled_bad_ends: Vec<usize>,
 }
 
 fn envelope_byte(b: u8) -> bool {
@@ -242,6 +245,16 @@ fn negative_decimals(input: &str, offset: usize) -> Vec<Range<usize>> {
 }
 
 impl AsciiPlan {
+    /// 既存の識別子保護候補が、指定した全体範囲と一致するか。
+    pub(crate) fn identifier_envelope_exact(&self, start: usize, end: usize) -> bool {
+        self.candidates
+            .iter()
+            .any(|candidate| candidate.parsed.is_none() && candidate.envelope == (start..end))
+    }
+
+    pub(crate) fn input_end(&self) -> usize {
+        self.input_end
+    }
     pub(super) fn year_number_starts(&self) -> &[usize] {
         &self.year_starts
     }
@@ -279,11 +292,32 @@ impl AsciiPlan {
     }
 
     /// 位置は offset を加えた入力全体の位置。空白越しの英字・裸の数字も識別子の前置とみなす。
+    pub(crate) fn scaled_unit_end_allowed(&self, end: usize) -> bool {
+        self.scaled_bad_ends.binary_search(&end).is_err()
+    }
+
+    pub(crate) fn unit_frame_at(&self, start: usize) -> Option<&super::units::Frame> {
+        let index = self
+            .unit_frames
+            .partition_point(|f| f.number.start <= start);
+        index
+            .checked_sub(1)
+            .and_then(|i| self.unit_frames.get(i))
+            .filter(|f| start < f.end)
+    }
+
+    pub(crate) fn unit_frames_in(&self, start: usize, end: usize) -> &[super::units::Frame] {
+        let first = self.unit_frames.partition_point(|f| f.number.start < start);
+        let last = self.unit_frames.partition_point(|f| f.end <= end);
+        &self.unit_frames[first.min(last)..last]
+    }
+
     pub(crate) fn new(input: &str, offset: usize) -> Self {
         let kanji_starts = super::kanji::number_starts(input, offset);
 
         let comma_year_starts = super::kanji::comma_year_starts(input, offset, &kanji_starts);
         let mut plan = Self {
+            input_end: offset + input.len(),
             month_starts: super::month::number_starts(input, offset),
             kanji_starts,
             year_starts: super::year::number_starts(input, offset, |prefix| {
@@ -291,6 +325,14 @@ impl AsciiPlan {
             }),
 
             comma_year_starts,
+            scaled_bad_ends: if input.contains(['万', '億']) && input.contains(['〇', '零']) {
+                input.char_indices().filter_map(|(i,c)| {
+                    (c.is_ascii_alphanumeric() || matches!(c, '_' | '^' | '/' | '*' | '+' | '-' | '=' | '²' | '³' | 'Ａ'..='Ｚ' | 'ａ'..='ｚ' | '０'..='９'))
+                        .then_some(offset+i)
+                }).collect()
+            } else {
+                Vec::new()
+            },
             ..Self::default()
         };
         // 全角の英数字・記号は UTF-8 の EF から始まる。漢字だけの入力では走査しない。
@@ -323,8 +365,15 @@ impl AsciiPlan {
                     let suffix = &block[end..];
                     let allowed_suffix = suffix.is_empty()
                         || suffix == "%"
-                        || suffix.bytes().all(|b| b.is_ascii_alphabetic());
-                    let parsed = if (first == 0 || comma_delimiter) && !prefix && allowed_suffix {
+                        || suffix.bytes().all(|b| b.is_ascii_alphabetic())
+                        || super::units::reading(suffix).is_some();
+                    let alias_prefix = !super::units::requires_frame(suffix)
+                        || super::month::eleven_prefix_allowed(&input[..start + first]);
+                    let parsed = if (first == 0 || comma_delimiter)
+                        && !prefix
+                        && allowed_suffix
+                        && alias_prefix
+                    {
                         parse(&block[first..end])
                     } else {
                         None
@@ -400,6 +449,22 @@ impl AsciiPlan {
                 pos += c.len_utf8();
             }
         }
+        plan.unit_frames = plan
+            .candidates
+            .iter()
+            .filter_map(|c| {
+                if c.parsed.is_none() || c.envelope.end == c.number.end {
+                    return None;
+                }
+                Some(super::units::Frame {
+                    number: c.number.clone(),
+                    end: c.envelope.end,
+                    reading: super::units::reading(
+                        &input[c.number.end - offset..c.envelope.end - offset],
+                    )?,
+                })
+            })
+            .collect();
         plan
     }
 }
@@ -470,6 +535,9 @@ pub(crate) fn apply(
                 .iter()
                 .all(|t| number_pos(t) || matches!(t.surface.as_ref(), "," | "."))
             && out[start..limit].windows(2).all(|p| p[0].end == p[1].start)
+            && (!super::units::requires_frame(
+                &input[candidate.number.end - offset..candidate.envelope.end - offset],
+            ) || out[start..limit].iter().all(super::units::number_piece))
             && ((candidate.envelope == candidate.number
                 && candidate.parsed.is_some_and(|number| number.dot.is_some()))
                 || out.get(limit).is_some_and(|t| {
