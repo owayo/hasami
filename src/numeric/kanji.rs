@@ -1,4 +1,4 @@
-//! 位を省いた漢数字列。数量に直結する標準的な数詞だけを、ASCII 数量と同じ位取りで合成する。
+//! 位を省いた漢数字列と、日に直結した二十。標準的な数詞だけを後段へ渡す。
 
 use super::{AsciiPlan, ascii, pos_has, standard_kanji_readings};
 use crate::lattice::Token;
@@ -14,6 +14,9 @@ fn digit(c: char) -> Option<u64> {
 }
 
 fn value(raw: &str) -> Option<u64> {
+    if raw == "二十" {
+        return Some(20);
+    }
     let (mut value, mut count) = (0u64, 0usize);
     for c in raw.chars() {
         let n = digit(c)?;
@@ -62,6 +65,12 @@ pub(super) fn number_starts(input: &str, offset: usize) -> Vec<usize> {
     }
     let mut chars = input.char_indices().peekable();
     while let Some((start, c)) = chars.next() {
+        // 位付き漢数字全般ではなく、二十日だけを和語の助数詞補正へ渡す。
+        // 数字列の途中の二は下の走査が消費するので、三二十日等では開始しない。
+        if input[start..].starts_with("二十日") && !identifier_prefix(&input[..start]) {
+            starts.push(offset + start);
+            continue;
+        }
         if digit(c).is_none() {
             continue;
         }
@@ -99,7 +108,8 @@ pub(super) fn standard_readings(raw: &str, reading: &str, pronunciation: &str) -
 fn number_token(t: &Token) -> bool {
     pos_has(&t.pos, "名詞,数")
         && !t.surface.is_empty()
-        && t.surface.chars().all(|c| digit(c).is_some())
+        && (t.surface.chars().all(|c| digit(c).is_some())
+            || matches!(t.surface.as_ref(), "十" | "二十"))
 }
 
 fn quantity(t: &Token, unit: impl Fn(&str) -> bool) -> bool {
@@ -121,23 +131,34 @@ fn candidate<'a>(
 ) -> Option<(&'a str, u64)> {
     let first = &out[range.start];
     let last = &out[range.end - 1];
-    if range.len() == 1 && first.is_known {
-        return None;
-    }
     let raw = input.get(first.start.checked_sub(offset)?..last.end.checked_sub(offset)?)?;
     let value = value(raw)?;
+    let suffix = out.get(range.end)?;
+    let native_day20 = raw == "二十"
+        && pos_has(&suffix.pos, "名詞,接尾,助数詞")
+        && match suffix.surface.as_ref() {
+            "日" => super::has_reading(suffix, &["ニチ", "カ"]),
+            "日間" => suffix.is_known && super::has_reading(suffix, &["ニチカン"]),
+            _ => false,
+        }
+        && input.get(suffix.start.checked_sub(offset)?..suffix.end.checked_sub(offset)?)
+            == Some(suffix.surface.as_ref());
+    if (raw == "二十" && !native_day20) || (range.len() == 1 && first.is_known && !native_day20) {
+        return None;
+    }
+    let protected_end = if native_day20 { suffix.end } else { last.end };
     let protection = protected.partition_point(|p| p.end <= first.start);
     if protected
         .get(protection)
-        .is_some_and(|p| p.start < last.end)
+        .is_some_and(|p| p.start < protected_end)
     {
         return None;
     }
-    let suffix = out.get(range.end)?;
     if last.end != suffix.start
-        // ゼロのない桁列は、西暦の年・年度だけを位取りとして扱う。
+        // ゼロのない桁列は年・年度だけ。例外は標準の日・日間に直結した二十だけ。
         || (!raw.contains(['〇', '零'])
-            && !matches!(suffix.surface.as_ref(), "年" | "年度"))
+            && !matches!(suffix.surface.as_ref(), "年" | "年度")
+            && !native_day20)
         || !quantity(suffix, &unit)
         || !ascii::unit_boundary(input, offset, suffix)
         || !out[range.clone()].iter().all(|t| {
@@ -147,6 +168,12 @@ fn candidate<'a>(
             };
             input.get(start..end) == Some(t.surface.as_ref())
                 && standard_kanji_readings(&t.surface, &t.reading, &t.pronunciation)
+                && (!native_day20
+                    || super::numeral_value(std::iter::once(t.surface.as_ref())).is_some_and(
+                        |value| {
+                            super::numeral_value(std::iter::once(t.base_form.as_ref())) == Some(value)
+                        },
+                    ))
         })
     {
         return None;
@@ -227,6 +254,7 @@ mod tests {
                     ("名詞,数,*,*", r, if r == "キュウ" { "キュー" } else { r })
                 } else {
                     match c {
+                        '十' => ("名詞,数,*,*", "ジュウ", "ジュー"),
                         '円' => ("名詞,接尾,助数詞,*", "エン", "エン"),
                         '年' => ("名詞,接尾,助数詞,*", "ネン", "ネン"),
                         '本' => ("名詞,接尾,助数詞,*", "ホン", "ホン"),
@@ -260,6 +288,302 @@ mod tests {
 
     fn apply_to(text: &str, out: &mut Vec<Token>) {
         apply(text, 0, out, 0, &AsciiPlan::new(text, 0), &[], |_| false);
+    }
+
+    fn twenty_tokens(text: &str, offset: usize, single: bool) -> Vec<Token> {
+        let mut out = tokens(text, offset);
+        for t in &mut out {
+            if number_token(t) {
+                t.base_form = Arc::clone(&t.surface);
+            }
+        }
+        if single {
+            let mut number = out[0].clone();
+            number.surface = "二十".into();
+            number.base_form = Arc::clone(&number.surface);
+            number.end = offset + "二十".len();
+            number.reading = "ニジュウ".into();
+            number.pronunciation = "ニジュー".into();
+            out.splice(0..2, [number]);
+        }
+        out
+    }
+
+    fn day_span_tokens(text: &str, offset: usize, single: bool) -> Vec<Token> {
+        let mut out = twenty_tokens(text, offset, single);
+        let day = out.iter().position(|t| t.surface.as_ref() == "日").unwrap();
+        let mut suffix = out[day].clone();
+        suffix.surface = "日間".into();
+        suffix.base_form = "known:日間".into();
+        suffix.end = out[day + 1].end;
+        suffix.reading = "ニチカン".into();
+        suffix.pronunciation = "ニチカン".into();
+        out.splice(day..day + 2, [suffix]);
+        out
+    }
+
+    #[test]
+    fn exact_twenty_day_span_keeps_the_known_counter_whole() {
+        for single in [false, true] {
+            for tail in ["", "後"] {
+                let text = format!("二十日間{tail}");
+                let mut out = day_span_tokens(&text, 0, single);
+                let original_suffix = out[if single { 1 } else { 2 }].clone();
+                apply_to(&text, &mut out);
+                assert_eq!(out[0].surface.as_ref(), "二十");
+                assert!(!out[0].is_known);
+                assert_eq!(out[1].surface.as_ref(), "日間");
+                assert_eq!(format!("{:?}", out[1]), format!("{original_suffix:?}"));
+                super::super::apply_counter_readings(&mut out);
+                assert_eq!(out[0].reading.as_ref(), "ハツ");
+                let mut expected_suffix = original_suffix;
+                expected_suffix.reading = "カカン".into();
+                expected_suffix.pronunciation = "カカン".into();
+                assert_eq!(format!("{:?}", out[1]), format!("{expected_suffix:?}"));
+                let once = format!("{out:?}");
+                apply_to(&text, &mut out);
+                super::super::apply_counter_readings(&mut out);
+                assert_eq!(format!("{out:?}"), once);
+            }
+        }
+    }
+
+    #[test]
+    fn twenty_day_span_rejects_ids_other_values_unreviewed_suffixes_and_protection() {
+        for text in [
+            "第二十日間",
+            "コード二十日間",
+            "A二十日間B",
+            "ID 二十日間",
+            "二十日間A",
+            "二十零日間",
+            "三二十日間",
+            "二 十日間",
+            "二十 日間",
+            "十四日間",
+            "二十四日間",
+        ] {
+            let mut out = day_span_tokens(text, 0, false);
+            let before = format!("{out:?}");
+            apply_to(text, &mut out);
+            assert_eq!(format!("{out:?}"), before, "{text}");
+        }
+        for defect in 0..6 {
+            let mut out = day_span_tokens("二十日間", 0, false);
+            match defect {
+                0 => out[2].is_known = false,
+                1 => out[2].pos = "名詞,一般,*,*".into(),
+                2 => out[2].pos = "名詞,固有名詞,人名,姓".into(),
+                3 => out[2].reading = "ヒマ".into(),
+                4 => out[2].pronunciation = "ジツカン".into(),
+                5 => out[2].end -= 3,
+                _ => unreachable!(),
+            }
+            let before = format!("{out:?}");
+            apply_to("二十日間", &mut out);
+            assert_eq!(format!("{out:?}"), before, "defect {defect}");
+        }
+        let offset = 29;
+        for protected in [
+            offset + 3..offset + 6,
+            offset + 6..offset + 9,
+            offset + 9..offset + 12,
+        ] {
+            let mut out = day_span_tokens("二十日間", offset, false);
+            let before = format!("{out:?}");
+            apply(
+                "二十日間",
+                offset,
+                &mut out,
+                0,
+                &AsciiPlan::new("二十日間", offset),
+                std::slice::from_ref(&protected),
+                |_| false,
+            );
+            assert_eq!(format!("{out:?}"), before, "{protected:?}");
+        }
+    }
+
+    #[test]
+    fn exact_twenty_day_synthesizes_one_safe_number_before_native_reading() {
+        for tail in ["", "間", "後"] {
+            for single in [false, true] {
+                for day in ["ニチ", "カ"] {
+                    let text = format!("二十日{tail}");
+                    let mut out = twenty_tokens(&text, 0, single);
+                    let day_index = if single { 1 } else { 2 };
+                    out[day_index].reading = day.into();
+                    out[day_index].pronunciation = day.into();
+                    let original_day = out[day_index].clone();
+                    apply_to(&text, &mut out);
+                    let number = &out[0];
+                    assert_eq!(number.surface.as_ref(), "二十");
+                    assert_eq!(number.base_form, number.surface);
+                    assert_eq!((number.start, number.end), (0, 6));
+                    assert_eq!(number.pos.as_ref(), "名詞,数,*,*");
+                    assert_eq!(number.reading.as_ref(), "ニジュウ");
+                    assert_eq!(number.pronunciation.as_ref(), "ニジュー");
+                    assert_eq!(number.word_cost, if single { 100 } else { 200 });
+                    assert!(!number.is_known);
+                    assert!(number.conj_type.is_empty() && number.conj_form.is_empty());
+                    assert_eq!(format!("{:?}", out[1]), format!("{original_day:?}"));
+                    super::super::apply_counter_readings(&mut out);
+                    assert_eq!(out[0].reading.as_ref(), "ハツ");
+                    assert_eq!(out[0].pronunciation.as_ref(), "ハツ");
+                    let mut expected_day = original_day;
+                    expected_day.reading = "カ".into();
+                    expected_day.pronunciation = "カ".into();
+                    assert_eq!(format!("{:?}", out[1]), format!("{expected_day:?}"));
+                    let once = format!("{out:?}");
+                    apply_to(&text, &mut out);
+                    super::super::apply_counter_readings(&mut out);
+                    assert_eq!(format!("{out:?}"), once, "{text}, single={single}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn twenty_day_plan_does_not_expand_to_other_places_units_or_identifiers() {
+        assert_eq!(value("二十"), Some(20));
+        for raw in ["十", "二十一", "二十零", "三二十", "一二十", "二 十"] {
+            assert_eq!(value(raw), None, "{raw}");
+        }
+        for text in [
+            "第二十日",
+            "コード二十日",
+            "A二十日B",
+            "ID 二十日",
+            "二十日A",
+            "二十人",
+            "二十円",
+            "二十年",
+            "二十零日",
+            "三二十日",
+            "二 十日",
+            "二\t十日",
+            "二十 日",
+            "２０日",
+            "Ａ二十日",
+            "二十日Ｂ",
+        ] {
+            let mut out = tokens(text, 0);
+            let before = format!("{out:?}");
+            apply_to(text, &mut out);
+            assert_eq!(format!("{out:?}"), before, "{text}");
+        }
+    }
+
+    #[test]
+    fn twenty_day_requires_standard_pos_reading_and_complete_adjacent_spans() {
+        for single in [false, true] {
+            for defect in 0..10 {
+                let mut out = twenty_tokens("二十日", 0, single);
+                let day = out.len() - 1;
+                match defect {
+                    0 => out[0].pos = "名詞,固有名詞,人名,姓".into(),
+                    1 => out[0].reading = "ニイ".into(),
+                    2 => out[day - 1].pronunciation = "テン".into(),
+                    3 => out[day].pos = "名詞,一般,*,*".into(),
+                    4 => out[day].reading = "ジツ".into(),
+                    5 => out[day].pronunciation = "ジツ".into(),
+                    6 => out[day].start += 1,
+                    7 => out[day].end -= 1,
+                    8 => out[0].base_form = "人名の原形".into(),
+                    9 => out[0].base_form = "三".into(),
+                    _ => unreachable!(),
+                }
+                let before = format!("{out:?}");
+                apply_to("二十日", &mut out);
+                assert_eq!(
+                    format!("{out:?}"),
+                    before,
+                    "single={single}, defect={defect}"
+                );
+            }
+        }
+        for (surface, pos, reading) in [
+            ("二十日", "名詞,固有名詞,一般,*", "ハツカ"),
+            ("二十", "名詞,固有名詞,人名,姓", "ニジュウ"),
+        ] {
+            let mut out = tokens("二十日", 0);
+            let limit = if surface == "二十日" { 3 } else { 2 };
+            let mut known = out[0].clone();
+            known.surface = surface.into();
+            known.end = surface.len();
+            known.pos = pos.into();
+            known.reading = reading.into();
+            known.pronunciation = reading.into();
+            out.splice(0..limit, [known]);
+            let before = format!("{out:?}");
+            apply_to("二十日", &mut out);
+            assert_eq!(format!("{out:?}"), before, "{surface}, {pos}");
+        }
+    }
+
+    #[test]
+    fn twenty_day_preserves_global_plan_guards_offsets_prior_output_and_protection() {
+        let full = "前。二十日後";
+        let offset = 37;
+        let start = full.find('二').unwrap();
+        let chunk = &full[start..];
+        let mut out = tokens("前", 0);
+        let prior = format!("{:?}", out[0]);
+        out.extend(twenty_tokens(chunk, offset + start, false));
+        apply(
+            chunk,
+            offset + start,
+            &mut out,
+            1,
+            &AsciiPlan::new(full, offset),
+            &[],
+            |_| false,
+        );
+        assert_eq!(format!("{:?}", out[0]), prior);
+        assert_eq!(out[1].surface.as_ref(), "二十");
+        assert_eq!(
+            (out[1].start, out[1].end),
+            (offset + start, offset + start + 6)
+        );
+        assert!(!out[1].is_known);
+        for t in &out[1..] {
+            assert_eq!(&full[t.start - offset..t.end - offset], t.surface.as_ref());
+        }
+        for prefix in ["ID ", "ID.\n", "コード（\n", "第"] {
+            let full = format!("{prefix}二十日");
+            let start = full.find('二').unwrap();
+            let chunk = &full[start..];
+            let mut out = tokens(chunk, offset + start);
+            let before = format!("{out:?}");
+            apply(
+                chunk,
+                offset + start,
+                &mut out,
+                0,
+                &AsciiPlan::new(&full, offset),
+                &[],
+                |_| false,
+            );
+            assert_eq!(format!("{out:?}"), before, "{full}");
+        }
+        for protected in [
+            offset..offset + 3,
+            offset + 3..offset + 6,
+            offset + 6..offset + 9,
+        ] {
+            let mut out = twenty_tokens("二十日", offset, false);
+            let before = format!("{out:?}");
+            apply(
+                "二十日",
+                offset,
+                &mut out,
+                0,
+                &AsciiPlan::new("二十日", offset),
+                std::slice::from_ref(&protected),
+                |_| false,
+            );
+            assert_eq!(format!("{out:?}"), before, "{protected:?}");
+        }
     }
 
     #[test]
@@ -524,6 +848,165 @@ mod tests {
 mod analyzer_tests {
     use crate::dict::{DictBuilder, DictEntry};
     use crate::{Analyzer, Dictionary};
+
+    fn day_dictionary(extra: Option<(&str, &str, &str, &str)>) -> Dictionary {
+        let mut builder = DictBuilder::new();
+        for (surface, pos, reading, pronunciation) in [
+            ("二", "名詞,数,*,*", "ニ", "ニ"),
+            ("十", "名詞,数,*,*", "ジュウ", "ジュー"),
+            ("2", "名詞,数,*,*", "ニ", "ニ"),
+            ("0", "名詞,数,*,*", "ゼロ", "ゼロ"),
+            ("日", "名詞,接尾,助数詞,*", "ニチ", "ニチ"),
+            ("間", "名詞,接尾,一般,*", "カン", "カン"),
+            ("後", "名詞,接尾,副詞可能,*", "ゴ", "ゴ"),
+        ] {
+            builder.add_entry(DictEntry {
+                surface: surface.into(),
+                pos: pos.into(),
+                reading: reading.into(),
+                pronunciation: pronunciation.into(),
+                base_form: if pos == "名詞,数,*,*" {
+                    surface.into()
+                } else {
+                    format!("base:{surface}").into()
+                },
+                conj_type: "fixture-type".into(),
+                conj_form: "fixture-form".into(),
+                ..Default::default()
+            });
+        }
+        // 実辞書と同じく、日+間より既知の複合助数詞を優先させる。
+        builder.add_entry(DictEntry {
+            surface: "日間".into(),
+            pos: "名詞,接尾,助数詞,*".into(),
+            reading: "ニチカン".into(),
+            pronunciation: "ニチカン".into(),
+            base_form: "base:日間".into(),
+            conj_type: "fixture-type".into(),
+            conj_form: "fixture-form".into(),
+            cost: -100,
+            ..Default::default()
+        });
+        if let Some((surface, pos, reading, pronunciation)) = extra {
+            builder.add_entry(DictEntry {
+                surface: surface.into(),
+                pos: pos.into(),
+                reading: reading.into(),
+                pronunciation: pronunciation.into(),
+                base_form: if pos == "名詞,数,*,*"
+                    && reading == "ニジュウ"
+                    && pronunciation == "ニジュー"
+                {
+                    surface.into()
+                } else {
+                    format!("known:{surface}").into()
+                },
+                conj_type: "known-type".into(),
+                conj_form: "known-form".into(),
+                cost: -1000,
+                ..Default::default()
+            });
+        }
+        builder.build().unwrap()
+    }
+
+    #[test]
+    fn analyzer_native_twenty_day_uses_one_number_for_split_and_known_numerals() {
+        for extra in [None, Some(("二十", "名詞,数,*,*", "ニジュウ", "ニジュー"))] {
+            let mut analyzer = Analyzer::from_dict(day_dictionary(extra));
+            for (text, expected) in [
+                ("二十日", "ハツカ"),
+                ("二十日間", "ハツカカン"),
+                ("二十日後", "ハツカゴ"),
+            ] {
+                let out = analyzer.try_tokenize(text).unwrap();
+                assert_eq!(out[0].surface.as_ref(), "二十");
+                assert_eq!(out[0].reading.as_ref(), "ハツ");
+                assert!(!out[0].is_known);
+                let day_span = text == "二十日間";
+                assert_eq!(
+                    out[1].surface.as_ref(),
+                    if day_span { "日間" } else { "日" }
+                );
+                assert_eq!(
+                    out[1].base_form.as_ref(),
+                    if day_span { "base:日間" } else { "base:日" }
+                );
+                assert_eq!(out[1].conj_type.as_ref(), "fixture-type");
+                assert_eq!(out[1].conj_form.as_ref(), "fixture-form");
+                assert_eq!(
+                    out[1].pronunciation.as_ref(),
+                    if day_span { "カカン" } else { "カ" }
+                );
+                assert!(out[1].is_known);
+                assert_eq!(
+                    out.iter()
+                        .map(|t| t.pronunciation.as_ref())
+                        .collect::<String>(),
+                    expected,
+                    "{text}: {out:?}"
+                );
+                for t in &out {
+                    assert_eq!(&text[t.start..t.end], t.surface.as_ref());
+                }
+            }
+            for text in [
+                "第二十日",
+                "コード二十日",
+                "A二十日B",
+                "ID 二十日",
+                "二十日A",
+            ] {
+                let out = analyzer.try_tokenize(text).unwrap();
+                assert!(
+                    !out.iter()
+                        .any(|t| t.surface.as_ref() == "二十" && !t.is_known),
+                    "{text}: {out:?}"
+                );
+                assert!(
+                    !out.iter().any(|t| t.reading.as_ref() == "ハツ"),
+                    "{text}: {out:?}"
+                );
+            }
+            let text = "前。二十日後";
+            let sentences = analyzer
+                .try_tokenize_sentences(text, &crate::sentence::SplitOptions::default())
+                .unwrap();
+            let number = sentences
+                .iter()
+                .flat_map(|(_, tokens)| tokens)
+                .find(|t| t.surface.as_ref() == "二十")
+                .unwrap();
+            assert_eq!(number.start, "前。".len());
+            assert_eq!(number.end, "前。二十".len());
+            assert_eq!(number.reading.as_ref(), "ハツ");
+            assert!(!number.is_known);
+        }
+    }
+
+    #[test]
+    fn analyzer_native_twenty_day_does_not_reclassify_known_words_or_names() {
+        for (surface, pos, reading, pronunciation) in [
+            ("二十日", "名詞,副詞可能,*,*", "ハツカ", "ハツカ"),
+            ("二十日", "名詞,固有名詞,人名,姓", "フタトカ", "フタトカ"),
+            ("二十", "名詞,固有名詞,人名,姓", "ニジュウ", "ニジュー"),
+            ("二十", "名詞,数,*,*", "フタソ", "フタソ"),
+        ] {
+            let mut analyzer =
+                Analyzer::from_dict(day_dictionary(Some((surface, pos, reading, pronunciation))));
+            let out = analyzer.try_tokenize("二十日").unwrap();
+            let first = &out[0];
+            assert_eq!(first.surface.as_ref(), surface);
+            assert_eq!(first.pos.as_ref(), pos);
+            assert_eq!(first.reading.as_ref(), reading);
+            assert_eq!(first.pronunciation.as_ref(), pronunciation);
+            assert_eq!(first.base_form.as_ref(), format!("known:{surface}"));
+            assert_eq!(first.conj_type.as_ref(), "known-type");
+            assert_eq!(first.conj_form.as_ref(), "known-form");
+            assert_eq!(first.word_cost, -1000);
+            assert!(first.is_known);
+        }
+    }
 
     fn dictionary() -> Dictionary {
         let mut builder = DictBuilder::new();
