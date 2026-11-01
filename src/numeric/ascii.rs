@@ -170,6 +170,31 @@ fn envelope_byte(b: u8) -> bool {
     b.is_ascii_alphanumeric() || b"_.,:+*/=-%^".contains(&b)
 }
 
+// 登録済み面積・体積単位の上付き指数だけを、同じ候補の末尾まで含める。
+// 後続の英数字や演算子も含め、数量の途中だけを認可しない。
+fn area_exponent_end(input: &str, start: usize, end: usize) -> usize {
+    let Some(power @ ('²' | '³')) = input[end..].chars().next() else {
+        return end;
+    };
+    let block = &input[start..end];
+    let Some(first) = block.bytes().position(|b| b.is_ascii_digit()) else {
+        return end;
+    };
+    let unit = first
+        + block[first..]
+            .bytes()
+            .take_while(|b| b.is_ascii_digit() || matches!(b, b',' | b'.'))
+            .count();
+    let mut end = end + power.len_utf8();
+    if super::units::area_readings(&input[start + unit..end]).is_none() {
+        return end - power.len_utf8();
+    }
+    while end < input.len() && envelope_byte(input.as_bytes()[end]) {
+        end += 1;
+    }
+    end
+}
+
 /// 数量や識別子の認可とは分け、独立した負小数の符号だけを補うための位置を持つ。
 fn negative_decimals(input: &str, offset: usize) -> Vec<Range<usize>> {
     let mut ranges = Vec::new();
@@ -356,6 +381,7 @@ impl AsciiPlan {
                 while pos < bytes.len() && envelope_byte(bytes[pos]) {
                     pos += 1;
                 }
+                pos = area_exponent_end(input, start, pos);
                 let block = &input[start..pos];
                 if let Some(first) = block.bytes().position(|b| b.is_ascii_digit()) {
                     // 単独の先行カンマは文の区切り。A,10 や ,,10 は識別子として守る。
@@ -467,7 +493,8 @@ impl AsciiPlan {
                 let suffix = &input[c.number.end - offset..c.envelope.end - offset];
                 // 新しい複合単位では、全角のID接尾や演算子もフレーム確定前に守る。
                 // 単位の合成は apply の境界検査より先なので、ここでも全体を確認する。
-                if matches!(suffix, "mg/dL" | "kcal/h")
+                if (matches!(suffix, "mg/dL" | "kcal/h")
+                    || super::units::area_readings(suffix).is_some())
                     && input[c.envelope.end - offset..].chars().next().is_some_and(|c| {
                         c.is_ascii_alphanumeric()
                             || matches!(c, '_' | '^' | '/' | '*' | '+' | '-' | '=' | '²' | '³' | 'Ａ'..='Ｚ' | 'ａ'..='ｚ' | '０'..='９' | '＿' | '＾' | '＊' | '＝' | '．' | '／' | '∕' | '÷' | '×' | '＋' | '－' | '−' | '‐' | '‑' | '‒' | '–' | '—' | '―')
