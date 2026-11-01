@@ -252,6 +252,14 @@ impl AsciiPlan {
             .any(|candidate| candidate.parsed.is_none() && candidate.envelope == (start..end))
     }
 
+    /// 既存の構文検証で数量と認めた、数詞全体の範囲との完全一致。
+    pub(crate) fn scalar_candidate(&self, start: usize, end: usize) -> bool {
+        let index = self.candidates.partition_point(|c| c.number.start < start);
+        self.candidates
+            .get(index)
+            .is_some_and(|candidate| candidate.number == (start..end) && candidate.parsed.is_some())
+    }
+
     pub(crate) fn input_end(&self) -> usize {
         self.input_end
     }
@@ -456,12 +464,21 @@ impl AsciiPlan {
                 if c.parsed.is_none() || c.envelope.end == c.number.end {
                     return None;
                 }
+                let suffix = &input[c.number.end - offset..c.envelope.end - offset];
+                // 新しい複合単位では、全角のID接尾や演算子もフレーム確定前に守る。
+                // 単位の合成は apply の境界検査より先なので、ここでも全体を確認する。
+                if matches!(suffix, "mg/dL" | "kcal/h")
+                    && input[c.envelope.end - offset..].chars().next().is_some_and(|c| {
+                        c.is_ascii_alphanumeric()
+                            || matches!(c, '_' | '^' | '/' | '*' | '+' | '-' | '=' | '²' | '³' | 'Ａ'..='Ｚ' | 'ａ'..='ｚ' | '０'..='９' | '＿' | '＾' | '＊' | '＝' | '．' | '／' | '∕' | '÷' | '×' | '＋' | '－' | '−' | '‐' | '‑' | '‒' | '–' | '—' | '―')
+                    })
+                {
+                    return None;
+                }
                 Some(super::units::Frame {
                     number: c.number.clone(),
                     end: c.envelope.end,
-                    reading: super::units::reading(
-                        &input[c.number.end - offset..c.envelope.end - offset],
-                    )?,
+                    reading: super::units::reading(suffix)?,
                 })
             })
             .collect();
@@ -769,6 +786,31 @@ mod tests {
             "0.12345678901234567",
         ] {
             assert!(parse(raw).is_none(), "{raw}");
+        }
+    }
+
+    #[test]
+    fn scalar_candidate_uses_complete_parser_ranges_and_global_offsets() {
+        for (text, start, end, expected) in [
+            ("前2本", 3, 4, true),
+            ("1.2本", 0, 3, true),
+            ("1.2本", 2, 3, false),
+            ("0.2本", 0, 3, true),
+            ("1,200本", 0, 5, true),
+            ("01.2本", 3, 4, false),
+            ("01.2本", 0, 4, false),
+            ("1.2.3本", 4, 5, false),
+            ("一2本", 3, 4, false),
+            ("Ａ2本", 3, 4, false),
+            ("ZX.2本", 3, 4, false),
+        ] {
+            let plan = AsciiPlan::new(text, 7);
+            assert_eq!(
+                plan.scalar_candidate(start + 7, end + 7),
+                expected,
+                "{text}"
+            );
+            assert!(!plan.scalar_candidate(start + 7, end + 8), "{text}");
         }
     }
 

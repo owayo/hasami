@@ -3,6 +3,34 @@
 use super::Analyzer;
 use crate::{DictError, Token};
 
+/// 呼出側が識別子と指定した、ASCII郵便形または限定した電話形だけを認可する。
+/// 形が一致しても、入力の意味が電話番号や郵便番号だとは保証しない。
+fn numeric_literal_shape(input: &str) -> bool {
+    if !matches!(input.len(), 8 | 12 | 13)
+        || !input.as_bytes().first().is_some_and(u8::is_ascii_digit)
+    {
+        return false;
+    }
+    let groups: Vec<_> = input.split('-').collect();
+    if !groups
+        .iter()
+        .all(|group| !group.is_empty() && group.bytes().all(|byte| byte.is_ascii_digit()))
+    {
+        return false;
+    }
+    match groups.as_slice() {
+        [first, last] => first.len() == 3 && last.len() == 4,
+        [first, middle, last] => {
+            input.starts_with('0')
+                && (2..=5).contains(&first.len())
+                && (1..=4).contains(&middle.len())
+                && last.len() == 4
+                && matches!(first.len() + middle.len() + last.len(), 10 | 11)
+        }
+        _ => false,
+    }
+}
+
 fn identifier_envelope(input: &str) -> bool {
     let bytes = input.as_bytes();
     if !bytes
@@ -59,7 +87,55 @@ fn literal(input: &str) -> Option<String> {
             return None;
         }
     }
-    (!result.is_empty()).then_some(result)
+    Some(result)
+}
+
+/// 選択された既知の断片が字母と各桁を読むだけなら、その英語の数字音も保つ。
+/// 語の展開形や数の位取りは認可しない。
+fn literal_speech(surface: &str, speech: &str) -> bool {
+    if speech.is_empty() {
+        return false;
+    }
+    const ENGLISH_DIGITS: [&str; 10] = [
+        "ゼロ",
+        "ワン",
+        "ツー",
+        "スリー",
+        "フォー",
+        "ファイブ",
+        "シックス",
+        "セブン",
+        "エイト",
+        "ナイン",
+    ];
+    let mut remaining = vec![speech];
+    for c in surface.chars() {
+        let Some(standard) = literal(&c.to_string()) else {
+            return false;
+        };
+        if standard.is_empty() {
+            return false;
+        }
+        let english = c
+            .is_ascii_digit()
+            .then(|| ENGLISH_DIGITS[c as usize - '0' as usize]);
+        let mut next = Vec::new();
+        for rest in remaining {
+            if let Some(tail) = rest.strip_prefix(&standard) {
+                next.push(tail);
+            }
+            if let Some(tail) = english.and_then(|word| rest.strip_prefix(word))
+                && !next.contains(&tail)
+            {
+                next.push(tail);
+            }
+        }
+        if next.is_empty() {
+            return false;
+        }
+        remaining = next;
+    }
+    remaining.contains(&"")
 }
 
 fn covered(input: &str, tokens: &[Token]) -> bool {
@@ -72,7 +148,8 @@ fn covered(input: &str, tokens: &[Token]) -> bool {
 }
 
 pub(super) fn normalize(analyzer: &mut Analyzer, input: &str) -> Result<Option<String>, DictError> {
-    if !identifier_envelope(input) {
+    let numeric_literal = numeric_literal_shape(input);
+    if !numeric_literal && !identifier_envelope(input) {
         return Ok(None);
     }
     // 既知の一語は長さ・大小文字・字母読みの適用条件より先に原文で保護する。
@@ -84,6 +161,9 @@ pub(super) fn normalize(analyzer: &mut Analyzer, input: &str) -> Result<Option<S
         .any(|(end, rows)| *end == input.len() && !rows.is_empty())
     {
         return Ok(Some(input.to_owned()));
+    }
+    if numeric_literal {
+        return Ok(literal(input));
     }
     if !shape(input) {
         return Ok(None);
@@ -154,7 +234,28 @@ pub(super) fn normalize(analyzer: &mut Analyzer, input: &str) -> Result<Option<S
             }
         }
     }
-    Ok(literal(input))
+    let mut result = String::new();
+    for token in &tokens {
+        let mixed_literal = token.is_known
+            && token.base_form == token.surface
+            && token.conj_type.is_empty()
+            && token.conj_form.is_empty()
+            && token.surface.bytes().any(|b| b.is_ascii_uppercase())
+            && token.surface.bytes().any(|b| b.is_ascii_digit())
+            && token
+                .surface
+                .bytes()
+                .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit())
+            && literal_speech(&token.surface, &token.reading)
+            && literal_speech(&token.surface, &token.pronunciation);
+        if mixed_literal {
+            result.push_str(&token.pronunciation);
+        } else {
+            // shape と covered で確認済みの部分範囲。区切りだけの断片は空文字になる。
+            result.push_str(&literal(&token.surface).expect("確認済みASCII識別子の断片"));
+        }
+    }
+    Ok(Some(result))
 }
 
 #[cfg(all(test, feature = "build"))]
@@ -179,6 +280,14 @@ mod tests {
             ("U2", "U2", "名詞,固有名詞,一般,*", "ャ"),
             ("C3PO", "C3PO", "名詞,固有名詞,一般,*", "シースリーピーオー"),
             ("3G", "3G", "名詞,固有名詞,一般,*", "スリージー"),
+            ("Q4F", "Q4F", "名詞,固有名詞,一般,*", "キューフォーエフ"),
+            ("Q2F", "Q2F", "名詞,固有名詞,一般,*", "キューツーエフ"),
+            (
+                "Q24F",
+                "Q24F",
+                "名詞,固有名詞,一般,*",
+                "キューニジュウヨンエフ",
+            ),
             (
                 "Python3",
                 "Python3",
@@ -314,5 +423,105 @@ mod tests {
         ] {
             assert_eq!(a.normalize_identifier(input).unwrap(), None);
         }
+    }
+
+    #[test]
+    fn selected_known_literal_fragments_keep_english_digits_without_word_expansions() {
+        let mut a = analyzer(None);
+        for (input, fragment, expected) in [
+            ("ZXQ4F-1B", "Q4F", "ゼットエックスキューフォーエフイチビー"),
+            ("ZXQ2F-M4", "Q2F", "ゼットエックスキューツーエフエムヨン"),
+            (
+                "ZXQ24F-Z9",
+                "Q24F",
+                "ゼットエックスキューニヨンエフゼットキュー",
+            ),
+        ] {
+            let before = a.try_tokenize(input).unwrap();
+            assert!(
+                before
+                    .iter()
+                    .any(|t| t.is_known && t.surface.as_ref() == fragment)
+            );
+            assert_eq!(
+                a.normalize_identifier(input).unwrap().as_deref(),
+                Some(expected)
+            );
+            assert_eq!(
+                format!("{before:?}"),
+                format!("{:?}", a.try_tokenize(input).unwrap())
+            );
+        }
+    }
+
+    #[test]
+    fn explicit_numeric_literal_shapes_ignore_partial_minus_but_keep_all_fields() {
+        let mut a = analyzer(None);
+        for (input, expected) in [
+            ("123-4567", "イチニサンヨンゴロクナナ"),
+            ("03-1234-5678", "ゼロサンイチニサンヨンゴロクナナハチ"),
+            (
+                "090-1234-5678",
+                "ゼロキューゼロイチニサンヨンゴロクナナハチ",
+            ),
+        ] {
+            let before = a.try_tokenize(input).unwrap();
+            if input == "123-4567" {
+                assert!(
+                    before
+                        .iter()
+                        .any(|token| token.is_known && token.surface.as_ref() == "-4")
+                );
+            }
+            assert_eq!(
+                a.normalize_identifier(input).unwrap().as_deref(),
+                Some(expected)
+            );
+            assert_eq!(
+                format!("{before:?}"),
+                format!("{:?}", a.try_tokenize(input).unwrap())
+            );
+        }
+        for input in [
+            "2025-01-09",
+            "978-4-1234-5678-0",
+            "12-34",
+            "123",
+            "1234567",
+            "1+2",
+            "123-4567+8",
+            "１２３-４５６７",
+            "123−4567",
+            " 123-4567",
+            "0-12345-6789",
+            "03-1234-56789",
+            "12-3456-7890",
+        ] {
+            assert_eq!(a.normalize_identifier(input).unwrap(), None, "{input}");
+        }
+    }
+
+    #[test]
+    fn numeric_known_whole_keeps_explicit_reading_before_literal_shape() {
+        let mut builder = DictBuilder::new();
+        builder.add_entry(DictEntry {
+            surface: "123-4567".into(),
+            base_form: "明示した原形".into(),
+            pos: "名詞,固有名詞,一般,*".into(),
+            reading: "メイジヨミ".into(),
+            pronunciation: "メイジヨミ".into(),
+            cost: -20000,
+            ..Default::default()
+        });
+        let mut a = Analyzer::from_dict(builder.build().unwrap());
+        let before = a.try_tokenize("123-4567").unwrap();
+        assert_eq!(
+            a.normalize_identifier("123-4567").unwrap().as_deref(),
+            Some("123-4567")
+        );
+        assert_eq!(
+            format!("{before:?}"),
+            format!("{:?}", a.try_tokenize("123-4567").unwrap())
+        );
     }
 }

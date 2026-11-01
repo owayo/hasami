@@ -8,6 +8,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 mod literal_identifier;
+mod quantity_spans;
+
+pub use quantity_spans::QuantitySpan;
 
 /// 既定の辞書のパスを指す環境変数
 pub const DICT_ENV: &str = "HASAMI_DICT";
@@ -138,9 +141,35 @@ impl Analyzer {
         ))
     }
 
-    /// 明示されたASCII英数字識別子を、数量変換前に保護・正規化する。
+    /// 全文の選択済み解析から、共通規則で発音を確認できる数量の範囲を返す。
     ///
-    /// 辞書に全体があれば原文を返す。限定した未知の大文字IDには既存の字母・単桁読みを
+    /// 位置は入力全体のUTF-8バイト位置。全文を一度だけ解析し、連続する数詞と単位の
+    /// 選択を使う。既知の一語、語の一部分、空白を挟む組、先頭ゼロ、負数、識別子内部は
+    /// 認可しない。既定の解析結果や入力は変更しない。
+    pub fn quantity_spans(&mut self, input: &str) -> Result<Vec<QuantitySpan>, DictError> {
+        let tokens = self.try_tokenize(input)?;
+        Ok(quantity_spans::collect(input, &tokens))
+    }
+
+    /// 全文の選択済み既知トークンのUTF-8バイト範囲を返す。モデルは不要。
+    ///
+    /// 辞書の全候補ではなく、通常の解析結果のis_knownを使う。入力や既定の解析結果は
+    /// 変更しない。各範囲は入力全体を参照する。語の意味や明示読みの正当性は保証しない。
+    pub fn known_word_spans(
+        &mut self,
+        input: &str,
+    ) -> Result<Vec<std::ops::Range<usize>>, DictError> {
+        Ok(self
+            .try_tokenize(input)?
+            .into_iter()
+            .filter(|token| token.is_known)
+            .map(|token| token.start..token.end)
+            .collect())
+    }
+
+    /// 明示されたASCII識別子を、数量変換前に保護・正規化する。
+    ///
+    /// 辞書に全体があれば原文を返す。限定した未知の大文字IDとASCII郵便・電話形には字母・単桁読みを
     /// 返し、それ以外はNoneを返す。Someは正規化済み文字列であり、常に発音ではない。
     /// 既定の解析結果は変更しない。呼出側では単一数量の判定を先に行う。
     pub fn normalize_identifier(&mut self, input: &str) -> Result<Option<String>, DictError> {
@@ -778,5 +807,53 @@ mod tests {
         for (a, b) in t1.iter().zip(t2.iter()) {
             assert_eq!(&*a.surface, &*b.surface);
         }
+    }
+}
+
+#[cfg(all(test, feature = "build"))]
+mod known_word_spans_tests {
+    use super::*;
+    use crate::dict::{DictBuilder, DictEntry};
+
+    #[test]
+    fn selected_known_utf8_ranges_keep_default_fields_and_larger_words() {
+        let mut builder = DictBuilder::new();
+        for (surface, reading) in [
+            ("ZX10仕様書", "ゼットエックスジューシヨーショ"),
+            ("1B", "ファーストベースマン"),
+            ("M4", "エヌジーシー"),
+        ] {
+            builder.add_entry(DictEntry {
+                surface: surface.into(),
+                base_form: surface.into(),
+                pos: "名詞,固有名詞,一般,*".into(),
+                reading: reading.into(),
+                pronunciation: reading.into(),
+                cost: -20000,
+                ..Default::default()
+            });
+        }
+        let mut analyzer = Analyzer::from_dict(builder.build().unwrap());
+        let input = "前:ZX10仕様書。ZX1B-90Q";
+        let before = analyzer.try_tokenize(input).unwrap();
+        let expected: Vec<_> = before
+            .iter()
+            .filter(|token| token.is_known)
+            .map(|token| token.start..token.end)
+            .collect();
+        let spans = analyzer.known_word_spans(input).unwrap();
+        assert_eq!(spans, expected);
+        let start = input.find("ZX10仕様書").unwrap();
+        assert!(spans.contains(&(start..start + "ZX10仕様書".len())));
+        assert!(spans.iter().all(|span| {
+            input.is_char_boundary(span.start)
+                && input.is_char_boundary(span.end)
+                && input.get(span.clone()).is_some()
+        }));
+        assert_eq!(
+            format!("{before:?}"),
+            format!("{:?}", analyzer.try_tokenize(input).unwrap())
+        );
+        assert!(analyzer.known_word_spans("").unwrap().is_empty());
     }
 }

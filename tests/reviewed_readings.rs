@@ -462,3 +462,34 @@ fn distributed_reviewed_readings_keep_names_and_ascii_identifiers() {
         }
     }
 }
+
+#[test]
+#[ignore = "配布辞書が必要"]
+fn distributed_person_name_spacing_variants_keep_given_name_readings() {
+    let dir = std::env::var("HASAMI_TEST_DICT_DIR")
+        .unwrap_or_else(|_| format!("{}/dict", env!("CARGO_MANIFEST_DIR")));
+    for name in ["ipadic-neologd", "ipadic-neologd-sudachi"] {
+        let mut analyzer = Analyzer::load(format!("{dir}/{name}.hsd")).unwrap();
+        for text in ["Daniel H.Pink", "Daniel H. Pink"] {
+            let tokens = analyzer.try_tokenize(text).unwrap();
+            let reading = tokens.iter().map(|t| &*t.reading).collect::<String>();
+            let pronunciation = tokens.iter().map(|t| &*t.pronunciation).collect::<String>();
+            // 空白なしの表層は自然な分割を許し、名の音節欠落だけを検出する。
+            assert!(
+                reading.starts_with("ダニエル"),
+                "{name}: {text}: {tokens:?}"
+            );
+            assert!(
+                pronunciation.starts_with("ダニエル"),
+                "{name}: {text}: {tokens:?}"
+            );
+            if text == "Daniel H. Pink" {
+                assert_eq!(reading, "ダニエルエイチピンク", "{name}: {tokens:?}");
+                assert_eq!(pronunciation, "ダニエルエイチピンク", "{name}: {tokens:?}");
+            }
+            for token in &tokens {
+                assert_eq!(&text[token.start..token.end], token.surface.as_ref());
+            }
+        }
+    }
+}

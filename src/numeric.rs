@@ -191,6 +191,14 @@ fn has_reading(token: &Token, allowed: &[&str]) -> bool {
     allowed.contains(&token.reading.as_ref()) && allowed.contains(&token.pronunciation.as_ref())
 }
 
+fn known_counter_form(token: &Token, readings: &[&str]) -> bool {
+    token.is_known
+        && token.base_form == token.surface
+        && token.conj_type.is_empty()
+        && token.conj_form.is_empty()
+        && has_reading(token, readings)
+}
+
 fn counter(token: &Token) -> Option<Counter> {
     if pos_has(&token.pos, "名詞,数") {
         return match token.surface.as_ref() {
@@ -248,6 +256,21 @@ fn counter(token: &Token) -> Option<Counter> {
     {
         return Some(Counter::Soft);
     }
+    // 本塁打の数量境界だけを認可し、選択済みの数詞・語頭の読みを変更しない。
+    // 助数詞「本」と同じH音便を適用する根拠は確定していない。
+    if token.surface.as_ref() == "本塁打"
+        && pos_has(&token.pos, "名詞,一般")
+        && known_counter_form(token, &["ホンルイダ", "ボンルイダ", "ポンルイダ"])
+    {
+        return Some(Counter::Plain);
+    }
+    // 回転は一般名詞・サ変接続でも数量を受ける。既知の標準形だけK系列へ渡す。
+    if token.surface.as_ref() == "回転"
+        && (suffix || pos_has(&token.pos, "名詞,一般") || pos_has(&token.pos, "名詞,サ変接続"))
+        && known_counter_form(token, &["カイテン"])
+    {
+        return Some(Counter::K);
+    }
     // IPAdic では「ぷん」が未知の普通名詞になる。仮名補完済みのこの形だけを許す。
     if !suffix
         && !(!token.is_known
@@ -278,6 +301,9 @@ fn counter(token: &Token) -> Option<Counter> {
         })
     };
     match token.surface.as_ref() {
+        "割" if known_counter_form(token, &["ワリ"]) => Some(Counter::Plain),
+        "代" if known_counter_form(token, &["ダイ"]) => Some(Counter::Plain),
+        "回戦" if known_counter_form(token, &["カイセン"]) => Some(Counter::K),
         "本" => h("ホン", "ボン", "ポン"),
         "杯" => h("ハイ", "バイ", "パイ"),
         "匹" => h("ヒキ", "ビキ", "ピキ"),
@@ -353,6 +379,7 @@ fn counter(token: &Token) -> Option<Counter> {
         }
         "足" if has_reading(token, &["ソク"]) => Some(Counter::Soft),
         "歳" | "才" if has_reading(token, &["サイ"]) => Some(Counter::Soft),
+        "歳児" if known_counter_form(token, &["サイジ"]) => Some(Counter::Soft),
         "棟" if has_reading(token, &["トウ", "トー"]) => Some(Counter::Soft),
         "体" if has_reading(token, &["タイ"]) => Some(Counter::Soft),
         "束" if has_reading(token, &["ソク"]) => Some(Counter::Soft),
@@ -830,6 +857,15 @@ fn numeral_before_counter(
     counter: Counter,
     previous_protected: bool,
 ) -> Option<Numeral> {
+    // 新しい複合助数詞は単桁でも既存の識別子保護を尊重する。
+    // 従来K・H系列の単桁読みを保つ扱いを、新しい複合語へ広げない。
+    if matches!(
+        tokens[i].surface.as_ref(),
+        "歳児" | "回転" | "回戦" | "本塁打"
+    ) && run.protected
+    {
+        return None;
+    }
     // 兆の新しい促音化は、保護されていない純ASCIIまたは純漢数字の列だけに適用する。
     if matches!(counter, Counter::Trillion) && (run.protected || !(run.ascii || run.kanji)) {
         return None;
@@ -3513,5 +3549,454 @@ mod expanded_counter_analyzer_tests {
                     .all(|t| t.reading.as_ref() == "イチ")
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod core_c_compound_counter_tests {
+    use super::*;
+
+    const NUM: &str = "名詞,数,*,*";
+    const SUFFIX: &str = "名詞,接尾,助数詞,*";
+
+    fn token(s: &str, start: usize, pos: &str, r: &str, p: &str) -> Token {
+        Token {
+            surface: s.into(),
+            start,
+            end: start + s.len(),
+            pos: pos.into(),
+            conj_type: "".into(),
+            conj_form: "".into(),
+            base_form: s.into(),
+            reading: r.into(),
+            pronunciation: p.into(),
+            word_cost: 321,
+            is_known: true,
+        }
+    }
+
+    fn pair(n: &str, r: &str, p: &str, suffix: &str, pos: &str, sr: &str) -> Vec<Token> {
+        vec![
+            token(n, 37, NUM, r, p),
+            token(suffix, 37 + n.len(), pos, sr, sr),
+        ]
+    }
+
+    fn other9(ts: &[Token]) -> Vec<String> {
+        ts.iter()
+            .map(|t| {
+                format!(
+                    "{:?}",
+                    (
+                        &t.surface,
+                        t.start,
+                        t.end,
+                        &t.pos,
+                        &t.conj_type,
+                        &t.conj_form,
+                        &t.base_form,
+                        t.word_cost,
+                        t.is_known,
+                    )
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn standard_compound_counters_reuse_only_existing_euphony() {
+        for (suffix, pos, sr, n, r, p, er, ep) in [
+            (
+                "歳児",
+                SUFFIX,
+                "サイジ",
+                "1",
+                "イチ",
+                "イチ",
+                "イッ",
+                "イッ",
+            ),
+            (
+                "歳児",
+                SUFFIX,
+                "サイジ",
+                "6",
+                "ロク",
+                "ロク",
+                "ロク",
+                "ロク",
+            ),
+            (
+                "歳児",
+                SUFFIX,
+                "サイジ",
+                "8",
+                "ハチ",
+                "ハチ",
+                "ハッ",
+                "ハッ",
+            ),
+            (
+                "歳児",
+                SUFFIX,
+                "サイジ",
+                "10",
+                "ジュウ",
+                "ジュー",
+                "ジュッ",
+                "ジュッ",
+            ),
+            (
+                "歳児",
+                SUFFIX,
+                "サイジ",
+                "100",
+                "ヒャク",
+                "ヒャク",
+                "ヒャク",
+                "ヒャク",
+            ),
+            (
+                "回転",
+                "名詞,サ変接続,*,*",
+                "カイテン",
+                "1",
+                "イチ",
+                "イチ",
+                "イッ",
+                "イッ",
+            ),
+            (
+                "回転",
+                "名詞,一般,*,*",
+                "カイテン",
+                "6",
+                "ロク",
+                "ロク",
+                "ロッ",
+                "ロッ",
+            ),
+            (
+                "回転",
+                SUFFIX,
+                "カイテン",
+                "8",
+                "ハチ",
+                "ハチ",
+                "ハッ",
+                "ハッ",
+            ),
+            (
+                "回転",
+                "名詞,サ変接続,*,*",
+                "カイテン",
+                "10",
+                "ジュウ",
+                "ジュー",
+                "ジュッ",
+                "ジュッ",
+            ),
+            (
+                "回転",
+                "名詞,一般,*,*",
+                "カイテン",
+                "100",
+                "ヒャク",
+                "ヒャク",
+                "ヒャッ",
+                "ヒャッ",
+            ),
+            (
+                "回戦",
+                SUFFIX,
+                "カイセン",
+                "1",
+                "イチ",
+                "イチ",
+                "イッ",
+                "イッ",
+            ),
+        ] {
+            let mut out = pair(n, r, p, suffix, pos, sr);
+            let before = other9(&out);
+            apply_counter_readings(&mut out);
+            assert_eq!(
+                (out[0].reading.as_ref(), out[0].pronunciation.as_ref()),
+                (er, ep),
+                "{n}{suffix}"
+            );
+            assert_eq!(
+                (out[1].reading.as_ref(), out[1].pronunciation.as_ref()),
+                (sr, sr)
+            );
+            assert_eq!(other9(&out), before);
+            let once = format!("{out:?}");
+            apply_counter_readings(&mut out);
+            assert_eq!(format!("{out:?}"), once, "repeat {n}{suffix}");
+        }
+        let mut out = pair("1", "イチ", "イチ", "本塁打", "名詞,一般,*,*", "ホンルイダ");
+        let before = format!("{out:?}");
+        apply_counter_readings(&mut out);
+        assert_eq!(format!("{out:?}"), before);
+    }
+
+    #[test]
+    fn compound_counter_recognition_keeps_selected_nonstandard_features() {
+        for (suffix, pos, sr) in [
+            ("歳児", SUFFIX, "サイジ"),
+            ("回転", "名詞,サ変接続,*,*", "カイテン"),
+            ("回戦", SUFFIX, "カイセン"),
+            ("本塁打", "名詞,一般,*,*", "ホンルイダ"),
+        ] {
+            for defect in 0..10 {
+                let mut out = pair("1", "イチ", "イチ", suffix, pos, sr);
+                match defect {
+                    0 => out[1].is_known = false,
+                    1 => out[1].base_form = "custom-base".into(),
+                    2 => out[1].conj_type = "custom-type".into(),
+                    3 => out[1].conj_form = "基本形".into(),
+                    4 => out[1].reading = "ベツヨミ".into(),
+                    5 => out[1].pronunciation = "ベツヨミ".into(),
+                    6 => out[1].pos = "名詞,固有名詞,人名,姓".into(),
+                    7 => {
+                        out[1].start += 1;
+                        out[1].end += 1;
+                    }
+                    8 => out[0].pos = "名詞,固有名詞,人名,名".into(),
+                    _ => out[0].reading = "ベツヨミ".into(),
+                }
+                let before = format!("{out:?}");
+                apply_counter_readings(&mut out);
+                assert_eq!(format!("{out:?}"), before, "{suffix} defect {defect}");
+            }
+            for (n, nr, np) in [
+                ("01", "ゼロイチ", "ゼロイチ"),
+                ("1.1", "イチテンイチ", "イチテンイチ"),
+            ] {
+                let mut out = pair(n, nr, np, suffix, pos, sr);
+                let before = format!("{out:?}");
+                apply_counter_readings(&mut out);
+                assert_eq!(format!("{out:?}"), before);
+            }
+            for n in ["1", "6", "10"] {
+                let (r, p) = match n {
+                    "1" => ("イチ", "イチ"),
+                    "6" => ("ロク", "ロク"),
+                    _ => ("ジュウ", "ジュー"),
+                };
+                let mut out = pair(n, r, p, suffix, pos, sr);
+                let protected = out[0].start..out[1].end;
+                let before = format!("{out:?}");
+                apply_counter_readings_with_protection(&mut out, std::slice::from_ref(&protected));
+                assert_eq!(format!("{out:?}"), before, "protected {n}{suffix}");
+            }
+        }
+        for (suffix, pos, r) in [
+            ("回路", "名詞,一般,*,*", "カイロ"),
+            ("回転数", "名詞,一般,*,*", "カイテンスウ"),
+            ("回転", "名詞,固有名詞,一般,*", "カイテン"),
+            ("歳児", "名詞,一般,*,*", "サイジ"),
+            ("歳児童", SUFFIX, "サイジドウ"),
+            ("回生", SUFFIX, "カイセイ"),
+        ] {
+            let mut out = pair("8", "ハチ", "ハチ", suffix, pos, r);
+            let before = format!("{out:?}");
+            apply_counter_readings(&mut out);
+            assert_eq!(format!("{out:?}"), before, "{suffix}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod honruida_plain_e_tests {
+    use super::*;
+
+    fn token(s: &str, start: usize, pos: &str, r: &str, p: &str) -> Token {
+        Token {
+            surface: s.into(),
+            start,
+            end: start + s.len(),
+            pos: pos.into(),
+            conj_type: "".into(),
+            conj_form: "".into(),
+            base_form: s.into(),
+            reading: r.into(),
+            pronunciation: p.into(),
+            word_cost: 123,
+            is_known: true,
+        }
+    }
+
+    fn input_tokens(text: &str, offset: usize, reading: &str) -> Vec<Token> {
+        let mut out = Vec::new();
+        let mut at = 0;
+        while at < text.len() {
+            if text[at..].starts_with("本塁打") {
+                let mut t = token("本塁打", offset + at, "名詞,一般,*,*", reading, reading);
+                t.word_cost = 7319;
+                out.push(t);
+                at += "本塁打".len();
+                continue;
+            }
+            let c = text[at..].chars().next().unwrap();
+            let s = c.to_string();
+            if c != ' ' {
+                let r = match c {
+                    '0' | '０' => "ゼロ",
+                    '1' | '１' => "イチ",
+                    '2' | '２' => "ニ",
+                    '3' | '３' => "サン",
+                    '6' => "ロク",
+                    '8' => "ハチ",
+                    _ => "",
+                };
+                let pos = if c.is_numeric() {
+                    "名詞,数,*,*"
+                } else {
+                    "記号,一般,*,*"
+                };
+                out.push(token(&s, offset + at, pos, r, r));
+            }
+            at += c.len_utf8();
+        }
+        out
+    }
+
+    fn pipeline(text: &str, offset: usize, mut out: Vec<Token>) -> Vec<Token> {
+        let plan = AsciiPlan::new(text, offset);
+        let mut cursor = 0;
+        let protected = ascii::apply(text, offset, &mut out, 0, &plan, &mut cursor, |_| false);
+        apply_counter_readings_with_protection(&mut out, &protected);
+        out
+    }
+
+    #[test]
+    fn honruida_plain_preserves_selected_number_and_suffix_readings() {
+        for (n, r, p) in [
+            ("1", "イチ", "イチ"),
+            ("3", "サン", "サン"),
+            ("6", "ロク", "ロク"),
+            ("8", "ハチ", "ハチ"),
+            ("10", "ジュウ", "ジュー"),
+            ("21", "ニジュウイチ", "ニジューイチ"),
+            ("13", "ジュウサン", "ジューサン"),
+            ("33", "サンジュウサン", "サンジューサン"),
+        ] {
+            for sr in ["ホンルイダ", "ボンルイダ", "ポンルイダ"] {
+                let mut pair = vec![
+                    token(n, 37, "名詞,数,*,*", r, p),
+                    token("本塁打", 37 + n.len(), "名詞,一般,*,*", sr, sr),
+                ];
+                let before = format!("{pair:?}");
+                assert!(matches!(counter(&pair[1]), Some(Counter::Plain)));
+                apply_counter_readings(&mut pair);
+                assert_eq!(format!("{pair:?}"), before, "{n}: {sr}");
+                apply_counter_readings(&mut pair);
+                assert_eq!(format!("{pair:?}"), before);
+            }
+        }
+    }
+
+    #[test]
+    fn honruida_plain_keeps_scalar_compaction_cost_offsets_and_getter() {
+        for (n, r, p) in [
+            ("1", "イチ", "イチ"),
+            ("3", "サン", "サン"),
+            ("6", "ロク", "ロク"),
+            ("8", "ハチ", "ハチ"),
+            ("10", "ジュウ", "ジュー"),
+            ("21", "ニジュウイチ", "ニジューイチ"),
+            ("13", "ジュウサン", "ジューサン"),
+            ("33", "サンジュウサン", "サンジューサン"),
+        ] {
+            for sr in ["ホンルイダ", "ボンルイダ", "ポンルイダ"] {
+                let text = format!("{n}本塁打");
+                let before = input_tokens(&text, 37, sr);
+                let suffix = before.last().unwrap().clone();
+                let out = pipeline(&text, 37, before);
+                assert_eq!(out.len(), 2, "{text}");
+                assert_eq!((out[0].surface.as_ref(), out[0].base_form.as_ref()), (n, n));
+                assert_eq!(
+                    (out[0].reading.as_ref(), out[0].pronunciation.as_ref()),
+                    (r, p)
+                );
+                assert_eq!((out[0].start, out[0].end), (37, 37 + n.len()));
+                assert_eq!(out[0].word_cost, 123 * n.len() as i16);
+                assert_eq!(out[0].is_known, n.len() == 1);
+                assert_eq!(format!("{:?}", out[1]), format!("{suffix:?}"));
+                let mut relative = out.clone();
+                for t in &mut relative {
+                    t.start -= 37;
+                    t.end -= 37;
+                }
+                assert_eq!(
+                    units::quantity_pronunciation(&text, &relative),
+                    Some(format!("{p}{sr}"))
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn honruida_plain_rejects_noncanonical_forms_without_new_recognition() {
+        for defect in 0..8 {
+            let mut suffix = token("本塁打", 1, "名詞,一般,*,*", "ホンルイダ", "ホンルイダ");
+            match defect {
+                0 => suffix.is_known = false,
+                1 => suffix.base_form = "custom-base".into(),
+                2 => suffix.conj_type = "custom-type".into(),
+                3 => suffix.conj_form = "基本形".into(),
+                4 => suffix.reading = "ベツヨミ".into(),
+                5 => suffix.pronunciation = "ベツヨミ".into(),
+                6 => suffix.pos = "名詞,固有名詞,人名,姓".into(),
+                _ => suffix.pos = "名詞,接尾,一般,*".into(),
+            }
+            assert!(counter(&suffix).is_none(), "defect {defect}");
+        }
+    }
+
+    #[test]
+    fn honruida_plain_keeps_existing_id_leadingzero_gap_and_knownwhole_guards() {
+        for text in [
+            "X21本塁打",
+            "ISO 21本塁打",
+            "021本塁打",
+            "21 本塁打",
+            "２1本塁打",
+        ] {
+            let before = input_tokens(text, 37, "ホンルイダ");
+            let expected = format!("{before:?}");
+            assert_eq!(
+                format!("{:?}", pipeline(text, 37, before)),
+                expected,
+                "{text}"
+            );
+        }
+        // 日本語の数量の後の英字は、既存のASCII識別子境界には含まれない。
+        // 数だけを合成し、後続の既知語と英字の全素性を維持する。
+        let text = "21本塁打X";
+        let before = input_tokens(text, 37, "ホンルイダ");
+        let suffix_and_tail = format!("{:?}", &before[2..]);
+        let out = pipeline(text, 37, before);
+        assert_eq!(out[0].pronunciation.as_ref(), "ニジューイチ");
+        assert_eq!(format!("{:?}", &out[1..]), suffix_and_tail);
+        let text = "21本塁打";
+        let whole = vec![token(
+            text,
+            37,
+            "名詞,固有名詞,一般,*",
+            "カスタム",
+            "カスタム",
+        )];
+        let before = format!("{whole:?}");
+        assert_eq!(format!("{:?}", pipeline(text, 37, whole)), before);
+        // 読みを変更しない検査であり、小数の本塁打を意味上認可するものではない。
+        let mut decimal = vec![
+            token("1.5", 0, "名詞,数,*,*", "イチテンゴ", "イチテンゴ"),
+            token("本塁打", 3, "名詞,一般,*,*", "ホンルイダ", "ホンルイダ"),
+        ];
+        let before = format!("{decimal:?}");
+        apply_counter_readings(&mut decimal);
+        assert_eq!(format!("{decimal:?}"), before);
     }
 }
