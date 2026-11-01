@@ -516,6 +516,8 @@ fn distributed_reviewed_calendar_and_compound_counters() {
             ("3杯目", "サンバイメ", "サンバイメ"),
             ("6杯目", "ロッパイメ", "ロッパイメ"),
             ("100杯目", "ヒャッパイメ", "ヒャッパイメ"),
+            ("年2回", "ネンニカイ", "ネンニカイ"),
+            ("年0回", "ネンゼロカイ", "ネンゼロカイ"),
         ] {
             let text = format!("{quantity}を記録した。");
             let tokens = analyzer.try_tokenize(&text).unwrap();
@@ -545,5 +547,11 @@ fn distributed_reviewed_calendar_and_compound_counters() {
         assert_eq!(&*token.reading, "チョウリユウ");
         assert_eq!(&*token.pronunciation, "チョーリユー");
         assert!(token.is_known);
+        for text in ["その年2回を記録した。", "ある年2回を記録した。"] {
+            let tokens = analyzer.try_tokenize(text).unwrap();
+            let year = tokens.iter().find(|t| t.surface.as_ref() == "年").unwrap();
+            assert_eq!(&*year.reading, "トシ", "{name}: {text}: {tokens:?}");
+            assert_eq!(&*year.pronunciation, "トシ", "{name}: {text}: {tokens:?}");
+        }
     }
 }

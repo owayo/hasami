@@ -7,6 +7,7 @@ use crate::lattice::Token;
 use std::ops::Range;
 use std::sync::Arc;
 
+mod annual;
 mod ascii;
 mod fullwidth;
 
@@ -1276,6 +1277,14 @@ pub(crate) fn apply_counter_readings_with_protection(
                 .any(|range| tokens[i].start < range.end)
         {
             continue;
+        }
+        // 年0回も頻度だが、0には促音化用の語尾がない。年の標準整数検査は
+        // annual側で行い、音便用Numeralの取得とは分ける。
+        if matches!(tokens[i].surface.as_ref(), "冊" | "回")
+            && !run.protected
+            && !after_decimal(tokens, run.start)
+        {
+            annual::apply(tokens, run.start, i, protected);
         }
         let Some(numeral) = numeral_before_counter(tokens, &run, i, counter, previous_protected)
         else {
