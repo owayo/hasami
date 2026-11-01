@@ -493,3 +493,57 @@ fn distributed_person_name_spacing_variants_keep_given_name_readings() {
         }
     }
 }
+
+// 独立に作成した例で、限定削除後の合成と正しい同形語の保持を確認する。
+#[test]
+#[ignore = "配布辞書が必要"]
+fn distributed_reviewed_calendar_and_compound_counters() {
+    let dir = std::env::var("HASAMI_TEST_DICT_DIR")
+        .unwrap_or_else(|_| format!("{}/dict", env!("CARGO_MANIFEST_DIR")));
+    for name in ["ipadic-neologd", "ipadic-neologd-sudachi"] {
+        let mut analyzer = Analyzer::load(format!("{dir}/{name}.hsd")).unwrap();
+        for (quantity, reading, pronunciation) in [
+            ("4月上旬", "シガツジョウジュン", "シガツジョージュン"),
+            ("4月中旬", "シガツチュウジュン", "シガツチュージュン"),
+            ("4月下旬", "シガツゲジュン", "シガツゲジュン"),
+            ("9月上旬", "クガツジョウジュン", "クガツジョージュン"),
+            ("9月中旬", "クガツチュウジュン", "クガツチュージュン"),
+            ("9月下旬", "クガツゲジュン", "クガツゲジュン"),
+            ("2馬身半", "ニバシンハン", "ニバシンハン"),
+            ("2馬身半差", "ニバシンハンサ", "ニバシンハンサ"),
+            ("2馬身差", "ニバシンサ", "ニバシンサ"),
+            ("1杯目", "イッパイメ", "イッパイメ"),
+            ("3杯目", "サンバイメ", "サンバイメ"),
+            ("6杯目", "ロッパイメ", "ロッパイメ"),
+            ("100杯目", "ヒャッパイメ", "ヒャッパイメ"),
+        ] {
+            let text = format!("{quantity}を記録した。");
+            let tokens = analyzer.try_tokenize(&text).unwrap();
+            let actual: Vec<_> = tokens
+                .iter()
+                .take_while(|t| t.end <= quantity.len())
+                .collect();
+            assert_eq!(
+                actual.iter().map(|t| &*t.reading).collect::<String>(),
+                reading,
+                "{name}: {text}: {tokens:?}"
+            );
+            assert_eq!(
+                actual.iter().map(|t| &*t.pronunciation).collect::<String>(),
+                pronunciation,
+                "{name}: {text}: {tokens:?}"
+            );
+            for token in &tokens {
+                assert_eq!(&text[token.start..token.end], token.surface.as_ref());
+            }
+        }
+        let tokens = analyzer.try_tokenize("張豊猷さんが来た。").unwrap();
+        let token = tokens
+            .iter()
+            .find(|t| t.surface.as_ref() == "張豊猷")
+            .unwrap();
+        assert_eq!(&*token.reading, "チョウリユウ");
+        assert_eq!(&*token.pronunciation, "チョーリユー");
+        assert!(token.is_known);
+    }
+}
