@@ -26,7 +26,7 @@ fn value(raw: &str) -> Option<u64> {
     (count > 0).then_some(value)
 }
 
-fn counter_surface(c: char) -> bool {
+pub(super) fn counter_surface(c: char) -> bool {
     matches!(
         c,
         '本' | '匹'

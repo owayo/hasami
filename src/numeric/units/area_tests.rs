@@ -54,11 +54,69 @@ fn area_frames_cover_only_complete_supported_units_and_keep_byte_offsets() {
         "70cm3",
     ] {
         let plan = super::super::AsciiPlan::new(text, 0);
-        assert!(plan.unit_frames_in(0, text.len()).is_empty(), "{text}");
+        assert!(
+            plan.unit_frames_in(0, text.len())
+                .iter()
+                .all(|frame| { area_readings(&text[frame.number.end..frame.end]).is_none() }),
+            "{text}"
+        );
     }
     assert_eq!(reading("km2"), Some("ヘイホウキロメートル"));
     assert_eq!(reading("ｍ2"), None);
     assert_eq!(reading("ｍ²"), None);
+}
+
+#[test]
+fn ascii_exponents_do_not_absorb_the_next_counter_or_enter_unicode_expressions() {
+    for text in [
+        "100m2分05秒",
+        "150m3秒",
+        "120cm2時間",
+        "100m2人",
+        "100m2年度",
+        "100m2分の土地",
+        "100m2名",
+        "100m3倍",
+        "100m2割",
+        "100m2代",
+        "100m2つ",
+        "100m2か月",
+        "100m2ミリ秒",
+        "100m3リットル",
+        "100m2センチ",
+        "1,500m2×4",
+        "1,500m3÷4",
+        "1,500cm2／4",
+    ] {
+        let plan = super::super::AsciiPlan::new(text, 31);
+        let number_end = text
+            .bytes()
+            .take_while(|b| b.is_ascii_digit() || *b == b',')
+            .count();
+        assert!(
+            plan.unit_frames_in(31, 31 + text.len()).is_empty(),
+            "{text}"
+        );
+        assert!(!plan.scalar_candidate(31, 31 + number_end), "{text}");
+    }
+    // 拒否した上付き表記では、元のmまでの格子境界を落とさない。
+    let text = "1,500m²×4";
+    let plan = super::super::AsciiPlan::new(text, 31);
+    let frames = plan.unit_frames_in(31, 31 + text.len());
+    assert_eq!(frames.len(), 1);
+    assert_eq!(frames[0].number, 31..36);
+    assert_eq!(frames[0].end, 37);
+    assert_eq!(frames[0].reading, "メートル");
+    for text in [
+        "100m²分",
+        "150m³秒",
+        "120cm²時間",
+        "100m2以上",
+        "100m3を測る。",
+    ] {
+        let plan = super::super::AsciiPlan::new(text, 31);
+        assert_eq!(plan.unit_frames_in(31, 31 + text.len()).len(), 1, "{text}");
+    }
 }
 
 fn token(s: &str, start: usize, pos: &str, r: &str, p: &str, cost: i16) -> Token {
@@ -181,6 +239,8 @@ mod analyzer_tests {
             ),
             (".", "記号,一般,*,*", "．", "．", 50),
             (",", "記号,読点,*,*", "，", "，", 60),
+            ("分", "名詞,接尾,助数詞,*", "フン", "フン", 70),
+            ("秒", "名詞,接尾,助数詞,*", "ビョウ", "ビョー", 80),
         ] {
             b.add_entry(DictEntry {
                 surface: s.into(),
@@ -311,5 +371,39 @@ mod analyzer_tests {
                 .any(|t| t.pronunciation.as_ref() == "カスタム")
         );
         assert_eq!(a.quantity_pronunciation("70m2").unwrap(), None);
+    }
+
+    #[test]
+    fn adjacent_time_keeps_the_known_distance_and_the_following_quantity() {
+        for (text, distance, numeral, counter) in [
+            ("100m2分05秒", "100m", "2", "分"),
+            ("150m3秒", "150m", "3", "秒"),
+        ] {
+            let mut a = analyzer(Some(distance), false);
+            let selected_distance = a.tokenize(distance)[0].clone();
+            let out = a.tokenize(text);
+            assert_eq!(
+                format!("{:?}", out[0]),
+                format!("{selected_distance:?}"),
+                "{text}"
+            );
+            let suffix = out
+                .iter()
+                .position(|token| token.surface.as_ref() == counter)
+                .unwrap();
+            assert_eq!(out[suffix - 1].surface.as_ref(), numeral, "{text}");
+            assert_eq!(out[suffix - 1].end, out[suffix].start, "{text}");
+            assert!(
+                out.iter()
+                    .all(|token| !matches!(token.surface.as_ref(), "m2" | "m3")),
+                "{text}"
+            );
+            assert!(a.quantity_spans(text).unwrap().iter().all(|span| {
+                !span.pronunciation.contains("ヘイホウ")
+                    && !span.pronunciation.contains("ヘイホー")
+                    && !span.pronunciation.contains("リッポウ")
+                    && !span.pronunciation.contains("リッポー")
+            }));
+        }
     }
 }
