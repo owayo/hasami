@@ -555,3 +555,114 @@ fn distributed_reviewed_calendar_and_compound_counters() {
         }
     }
 }
+
+#[test]
+#[ignore = "配布辞書が必要"]
+fn distributed_lexical_repairs_keep_plural_sounds_and_grammatical_boundaries() {
+    let dir = std::env::var("HASAMI_TEST_DICT_DIR")
+        .unwrap_or_else(|_| format!("{}/dict", env!("CARGO_MANIFEST_DIR")));
+    for name in ["ipadic-neologd", "ipadic-neologd-sudachi"] {
+        let mut analyzer = Analyzer::load(format!("{dir}/{name}.hsd")).unwrap();
+        for (surface, reading, pronunciation) in [
+            ("潰散", "カイサン", "カイサン"),
+            ("失冠", "シッカン", "シッカン"),
+            ("界磁", "カイジ", "カイジ"),
+            ("蹄球炎", "テイキュウエン", "テイキューエン"),
+            ("安青錦", "アオニシキ", "アオニシキ"),
+            ("Stories", "ストーリーズ", "ストーリーズ"),
+            ("Associates", "アソシエーツ", "アソシエーツ"),
+            ("ストーリー", "ストーリー", "ストーリー"),
+            ("アソシエート", "アソシエート", "アソシエート"),
+            ("アトール", "アトール", "アトール"),
+            ("多値", "タチ", "タチ"),
+            ("医事", "イジ", "イジ"),
+        ] {
+            for text in [surface.to_owned(), format!("{surface}を記す。")] {
+                let tokens = analyzer.try_tokenize(&text).unwrap();
+                let actual: Vec<_> = tokens
+                    .iter()
+                    .take_while(|token| token.end <= surface.len())
+                    .collect();
+                assert_eq!(
+                    actual.iter().map(|t| &*t.reading).collect::<String>(),
+                    reading,
+                    "{name}: {text}: {tokens:?}"
+                );
+                assert_eq!(
+                    actual.iter().map(|t| &*t.pronunciation).collect::<String>(),
+                    pronunciation,
+                    "{name}: {text}: {tokens:?}"
+                );
+                for token in &tokens {
+                    assert_eq!(&text[token.start..token.end], token.surface.as_ref());
+                }
+            }
+        }
+        for (text, reading, pronunciation) in [
+            (
+                "学習到達度調査",
+                "ガクシュウトウタツドチョウサ",
+                "ガクシュートータツドチョーサ",
+            ),
+            ("ルート権", "ルートケン", "ルートケン"),
+            ("ルート権限", "ルートケンゲン", "ルートケンゲン"),
+        ] {
+            let tokens = analyzer.try_tokenize(text).unwrap();
+            assert_eq!(
+                tokens.iter().map(|t| &*t.reading).collect::<String>(),
+                reading,
+                "{name}: {text}: {tokens:?}"
+            );
+            assert_eq!(
+                tokens.iter().map(|t| &*t.pronunciation).collect::<String>(),
+                pronunciation,
+                "{name}: {text}: {tokens:?}"
+            );
+            for token in &tokens {
+                assert_eq!(&text[token.start..token.end], token.surface.as_ref());
+            }
+        }
+        // 著者省略表記を別語のアトールへ展開せず、唯一のカナ表記はここで決めない。
+        let text = "著者一覧を et al. と表す。";
+        let tokens = analyzer.try_tokenize(text).unwrap();
+        assert!(
+            tokens.iter().all(|token| {
+                token.reading.as_ref() != "アトール" && token.pronunciation.as_ref() != "アトール"
+            }),
+            "{name}: {text}: {tokens:?}"
+        );
+        for token in &tokens {
+            assert_eq!(&text[token.start..token.end], token.surface.as_ref());
+        }
+        // 真の多値・医事とは別に、助動詞と名詞の境界を保つ。
+        // 値の同形異音語の選択を、この境界検査だけで正読と認定しない。
+        for (text, auxiliary, noun, wrong_surface, wrong_base) in [
+            ("計算した値を比べる。", "た", "値", "た値", "多値"),
+            ("覚えたい事を並べる。", "たい", "事", "い事", "医事"),
+        ] {
+            let tokens = analyzer.try_tokenize(text).unwrap();
+            assert!(
+                tokens.iter().all(|token| {
+                    token.surface.as_ref() != wrong_surface
+                        || token.base_form.as_ref() != wrong_base
+                }),
+                "{name}: {text}: {tokens:?}"
+            );
+            assert!(
+                tokens.iter().any(|token| {
+                    token.surface.as_ref() == auxiliary && token.pos.starts_with("助動詞,")
+                }),
+                "{name}: {text}: {tokens:?}"
+            );
+            assert!(
+                tokens.iter().any(|token| {
+                    token.surface.as_ref() == noun && token.base_form.as_ref() == noun
+                }),
+                "{name}: {text}: {tokens:?}"
+            );
+            for token in &tokens {
+                assert_eq!(&text[token.start..token.end], token.surface.as_ref());
+            }
+        }
+    }
+}
