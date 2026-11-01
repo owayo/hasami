@@ -170,6 +170,52 @@ fn envelope_byte(b: u8) -> bool {
     b.is_ascii_alphanumeric() || b"_.,:+*/=-%^".contains(&b)
 }
 
+// 登録済み面積・体積単位の上付き指数だけを、同じ候補の末尾まで含める。
+// 後続の英数字や演算子も含め、数量の途中だけを認可しない。
+fn area_exponent_end(input: &str, start: usize, end: usize) -> usize {
+    let ascii_end = end;
+    let Some(power @ ('²' | '³')) = input[end..].chars().next() else {
+        return end;
+    };
+    let block = &input[start..end];
+    let Some(first) = block.bytes().position(|b| b.is_ascii_digit()) else {
+        return end;
+    };
+    let unit = first
+        + block[first..]
+            .bytes()
+            .take_while(|b| b.is_ascii_digit() || matches!(b, b',' | b'.'))
+            .count();
+    let mut end = end + power.len_utf8();
+    if super::units::area_readings(&input[start + unit..end]).is_none() {
+        return end - power.len_utf8();
+    }
+    while end < input.len() && envelope_byte(input.as_bytes()[end]) {
+        end += 1;
+    }
+    let suffix = &input[start + unit..end];
+    if super::units::area_readings(suffix).is_some() && area_suffix_boundary(suffix, &input[end..])
+    {
+        end
+    } else {
+        // 保留時は従来のm/cmまでの候補へ戻し、既存の格子境界も保持する。
+        ascii_end
+    }
+}
+
+// 平文の指数は、直後の助数詞に続く次の数量でもあり得る。
+// 面積として保留した候補は、格子・単位・数詞のどの段階でも新たに補完しない。
+fn area_suffix_boundary(suffix: &str, rest: &str) -> bool {
+    rest.chars().next().is_none_or(|c| {
+        !(c.is_ascii_alphanumeric()
+            || matches!(c, '_' | '^' | '/' | '*' | '+' | '-' | '=' | '²' | '³' | 'Ａ'..='Ｚ' | 'ａ'..='ｚ' | '０'..='９' | '＿' | '＾' | '＊' | '＝' | '．' | '／' | '∕' | '÷' | '×' | '＋' | '－' | '−' | '‐' | '‑' | '‒' | '–' | '—' | '―')
+            || suffix.is_ascii()
+                && (super::fullwidth::counter_surface(c)
+                    || matches!(c, '秒' | '名' | '倍' | '割' | '代' | 'つ' | 'ァ'..='ヺ' | 'ー' | 'ｦ'..='ﾟ')
+                    || ["か月", "か所", "箇所", "ぷん"].iter().any(|word| rest.starts_with(word))))
+    })
+}
+
 /// 数量や識別子の認可とは分け、独立した負小数の符号だけを補うための位置を持つ。
 fn negative_decimals(input: &str, offset: usize) -> Vec<Range<usize>> {
     let mut ranges = Vec::new();
@@ -356,6 +402,7 @@ impl AsciiPlan {
                 while pos < bytes.len() && envelope_byte(bytes[pos]) {
                     pos += 1;
                 }
+                pos = area_exponent_end(input, start, pos);
                 let block = &input[start..pos];
                 if let Some(first) = block.bytes().position(|b| b.is_ascii_digit()) {
                     // 単独の先行カンマは文の区切り。A,10 や ,,10 は識別子として守る。
@@ -377,10 +424,13 @@ impl AsciiPlan {
                         || super::units::reading(suffix).is_some();
                     let alias_prefix = !super::units::requires_frame(suffix)
                         || super::month::eleven_prefix_allowed(&input[..start + first]);
+                    let area_boundary = super::units::area_readings(suffix).is_none()
+                        || area_suffix_boundary(suffix, &input[pos..]);
                     let parsed = if (first == 0 || comma_delimiter)
                         && !prefix
                         && allowed_suffix
                         && alias_prefix
+                        && area_boundary
                     {
                         parse(&block[first..end])
                     } else {

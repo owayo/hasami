@@ -1,18 +1,32 @@
 //! 単位の読み表と、数詞・単位の全体が揃った数量の範囲。
 
+#[cfg(test)]
+mod area_tests;
+
 use crate::lattice::Token;
 use std::{ops::Range, sync::Arc};
 
 fn ascii_alias_requires_frame(folded: &str) -> bool {
     matches!(
         folded,
-        "bit" | "mph" | "kcal" | "kcal/h" | "km2" | "km/h" | "m/s" | "mg/dL"
+        "bit" | "mph" | "kcal" | "kcal/h" | "km2" | "km/h" | "m/s" | "mg/dL" | "m2" | "cm2" | "m3"
     )
 }
 
 /// 保護の判定は読みと同じ英字幅で行う。物理量として認可する元表記とは分ける。
 pub(crate) fn requires_frame(surface: &str) -> bool {
-    ascii_alias_requires_frame(fold_alphabet_width(surface).as_ref())
+    let folded = fold_alphabet_width(surface);
+    ascii_alias_requires_frame(folded.as_ref()) || area_readings(folded.as_ref()).is_some()
+}
+
+/// 互換文字のNFKC表記と上付き表記。読みと長音を含む発音を区別する。
+pub(super) fn area_readings(surface: &str) -> Option<(&'static str, &'static str)> {
+    match surface {
+        "m2" | "m²" => Some(("ヘイホウメートル", "ヘイホーメートル")),
+        "cm2" | "cm²" => Some(("ヘイホウセンチメートル", "ヘイホーセンチメートル")),
+        "m3" | "m³" => Some(("リッポウメートル", "リッポーメートル")),
+        _ => None,
+    }
 }
 
 fn unit_reading_char(c: char) -> Option<&'static str> {
@@ -102,9 +116,14 @@ fn fold_alphabet_width(surface: &str) -> std::borrow::Cow<'_, str> {
 
 /// 数字の後に来るアルファベットの単位読みを返す
 pub(crate) fn reading(surface: &str) -> Option<&'static str> {
+    if let Some((reading, _)) = area_readings(surface) {
+        return Some(reading);
+    }
     let folded = fold_alphabet_width(surface);
     // 追加した単位はASCII元表記だけ認可する。従来の全角単位の読みは維持する。
-    if !surface.is_ascii() && ascii_alias_requires_frame(folded.as_ref()) {
+    if !surface.is_ascii()
+        && (ascii_alias_requires_frame(folded.as_ref()) || area_readings(folded.as_ref()).is_some())
+    {
         return None;
     }
     let surface = folded.as_ref();
@@ -243,7 +262,8 @@ pub(crate) fn coalesce_units(
     for frame in frames {
         let unit = input.get(frame.number.end - offset..frame.end - offset);
         let concentration = unit == Some("mg/dL");
-        let strict_scalar = concentration || unit == Some("kcal/h");
+        let area = unit.and_then(area_readings);
+        let strict_scalar = concentration || unit == Some("kcal/h") || area.is_some();
         let begin = out[read..].partition_point(|t| t.end <= frame.number.start) + read;
         let finish = out[read..].partition_point(|t| t.end <= frame.number.end) + read;
         if begin >= finish
@@ -292,11 +312,38 @@ pub(crate) fn coalesce_units(
         }
         // 選択された一語の単位は、辞書の素性と明示された読みを保持する。
         if limit - start == 1 {
+            // 完全な面積・体積フレームの中で、空欄または標準の単位読みだけを補完する。
+            // 独自読み・人名・原形の異なる語は、単位表記と同形でも上書きしない。
+            if let Some((reading, pronunciation)) = area {
+                let token = &mut out[start];
+                if token.base_form == token.surface
+                    && token.conj_type.is_empty()
+                    && token.conj_form.is_empty()
+                    && (super::pos_has(&token.pos, "名詞,一般")
+                        || super::pos_has(&token.pos, "名詞,接尾,助数詞")
+                        || !token.is_known && super::pos_has(&token.pos, "記号"))
+                    && ["", reading, pronunciation].contains(&token.reading.as_ref())
+                    && ["", reading, pronunciation].contains(&token.pronunciation.as_ref())
+                {
+                    token.reading = Arc::from(reading);
+                    token.pronunciation = Arc::from(pronunciation);
+                }
+            }
             continue;
         }
         if !out[start..limit].iter().all(|token| {
             if concentration {
                 concentration_unit_piece(token, frame.number.end)
+            } else if area.is_some()
+                && token.surface.as_ref() == "3"
+                && token.base_form == token.surface
+                && token.conj_type.is_empty()
+                && token.conj_form.is_empty()
+                && super::pos_has(&token.pos, "名詞,数")
+                && token.reading.as_ref() == "サン"
+                && token.pronunciation.as_ref() == "サン"
+            {
+                true
             } else {
                 unit_piece(token)
             }
@@ -317,7 +364,9 @@ pub(crate) fn coalesce_units(
             conj_type: Arc::from(""),
             conj_form: Arc::from(""),
             reading: Arc::from(frame.reading),
-            pronunciation: Arc::from(frame.reading),
+            pronunciation: Arc::from(
+                area.map_or(frame.reading, |(_, pronunciation)| pronunciation),
+            ),
             word_cost: cost.clamp(i64::from(i16::MIN), i64::from(i16::MAX)) as i16,
             is_known: false,
         };
@@ -353,8 +402,9 @@ pub(crate) fn quantity_pronunciation(input: &str, tokens: &[Token]) -> Option<St
     let counter = super::counter(suffix);
     let unit_reading = reading(&suffix.surface);
     if let Some(unit) = unit_reading {
+        let pronunciation = area_readings(&suffix.surface).map_or(unit, |(_, p)| p);
         if suffix.reading.as_ref() != unit
-            || suffix.pronunciation.as_ref() != unit
+            || suffix.pronunciation.as_ref() != pronunciation
             || !(suffix.base_form == suffix.surface
                 || (suffix.surface.is_ascii()
                     && suffix.base_form.is_ascii()
