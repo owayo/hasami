@@ -30,7 +30,7 @@ pub mod pos;
 pub mod sentence;
 
 #[cfg(feature = "analyzer")]
-pub use analyzer::{Analyzer, QuantitySpan};
+pub use analyzer::{Analyzer, ContextualReadingSpan, QuantitySpan};
 #[cfg(feature = "analyzer")]
 pub use dict::DictEntry;
 #[cfg(feature = "analyzer")]
