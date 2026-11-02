@@ -192,6 +192,73 @@ mod tests {
                 "サ変・スル",
                 "基本形",
             ),
+            ("式", "名詞,一般,*,*", "式", "シキ", "シキ", "", ""),
+            ("自体", "名詞,一般,*,*", "自体", "ジタイ", "ジタイ", "", ""),
+            ("が", "助詞,格助詞,一般,*", "が", "ガ", "ガ", "", ""),
+            (
+                "返す",
+                "動詞,自立,*,*",
+                "返す",
+                "カエス",
+                "カエス",
+                "五段・サ行",
+                "基本形",
+            ),
+            (
+                "とり",
+                "動詞,自立,*,*",
+                "とる",
+                "トリ",
+                "トリ",
+                "五段・ラ行",
+                "連用形",
+            ),
+            (
+                "うる",
+                "動詞,非自立,*,*",
+                "うる",
+                "ウル",
+                "ウル",
+                "一段・得ル",
+                "基本形",
+            ),
+            (
+                "最大",
+                "名詞,一般,*,*",
+                "最大",
+                "サイダイ",
+                "サイダイ",
+                "",
+                "",
+            ),
+            (
+                "最も",
+                "副詞,一般,*,*",
+                "最も",
+                "モットモ",
+                "モットモ",
+                "",
+                "",
+            ),
+            ("頻度", "名詞,一般,*,*", "頻度", "ヒンド", "ヒンド", "", ""),
+            (
+                "高い",
+                "形容詞,自立,*,*",
+                "高い",
+                "タカイ",
+                "タカイ",
+                "形容詞・アウオ段",
+                "基本形",
+            ),
+            (
+                "です",
+                "助動詞,*,*,*",
+                "です",
+                "デス",
+                "デス",
+                "特殊・デス",
+                "基本形",
+            ),
         ] {
             builder.add_entry(DictEntry {
                 surface: surface.into(),
@@ -219,6 +286,94 @@ mod tests {
 
     fn standard() -> Analyzer {
         analyzer("名詞,一般,*,*", "ネ", "ネ", true)
+    }
+
+    #[test]
+    fn strong_value_frames_use_original_utf8_ranges_and_actual_corrections_only() {
+        let mut analyzer = standard();
+        let input = "前置き。\n「式自体が値を返す」。\nとりうる最大の値。\n最も頻度が高い値です。";
+        let expected: Vec<_> = input
+            .match_indices('値')
+            .map(|(start, _)| ContextualReadingSpan {
+                start,
+                end: start + "値".len(),
+                pronunciation: "アタイ".into(),
+            })
+            .collect();
+        let tokens = analyzer.try_tokenize(input).unwrap();
+        assert_eq!(analyzer.contextual_reading_spans(input).unwrap(), expected);
+        let values: Vec<_> = tokens
+            .iter()
+            .filter(|t| t.surface.as_ref() == "値")
+            .collect();
+        assert_eq!(values.len(), 3);
+        for (token, span) in values.iter().zip(&expected) {
+            assert_eq!(token.reading.as_ref(), "アタイ");
+            assert_eq!(token.pronunciation.as_ref(), "アタイ");
+            assert_eq!((token.start, token.end), (span.start, span.end));
+            assert_eq!(input.get(span.start..span.end), Some("値"));
+        }
+        assert_eq!(
+            format!("{tokens:?}"),
+            format!("{:?}", analyzer.try_tokenize(input).unwrap())
+        );
+        assert!(analyzer.contextual_reading_spans("").unwrap().is_empty());
+    }
+
+    #[test]
+    fn strong_value_frames_keep_controls_and_preselected_readings() {
+        let mut a = standard();
+        for input in [
+            "魚の値を返す。",
+            "最も高い値です。",
+            "頻度が高い値です。",
+            "式自体が値(ね)を返す。",
+            "とりうる最大の値(ね)。",
+            "最も頻度が高い値(ね)です。",
+            "式 自体が値を返す。",
+            "とり うる最大の値。",
+            "最も 頻度が高い値です。",
+            "「式」自体が値を返す。",
+            "とりうる「最大」の値。",
+            "最も頻度が「高い」値です。",
+            "SKU-式自体が値を返す。",
+            "SKU：とりうる最大の値。",
+            "SKU/最も頻度が高い値です。",
+        ] {
+            let before = a.try_tokenize(input).unwrap();
+            assert!(
+                a.contextual_reading_spans(input).unwrap().is_empty(),
+                "{input}"
+            );
+            assert_eq!(
+                format!("{before:?}"),
+                format!("{:?}", a.try_tokenize(input).unwrap())
+            );
+        }
+        for (pos, reading, pronunciation, known) in [
+            ("名詞,固有名詞,人名,名", "ネ", "ネ", true),
+            ("名詞,一般,*,*", "アタイ", "アタイ", true),
+            ("名詞,一般,*,*", "チ", "チ", true),
+            ("名詞,一般,*,*", "ネ", "アタイ", true),
+            ("名詞,一般,*,*", "ネ", "ネ", false),
+        ] {
+            let mut a = analyzer(pos, reading, pronunciation, known);
+            for input in [
+                "式自体が値を返す。",
+                "とりうる最大の値。",
+                "最も頻度が高い値です。",
+            ] {
+                let before = a.try_tokenize(input).unwrap();
+                assert!(
+                    a.contextual_reading_spans(input).unwrap().is_empty(),
+                    "{input}"
+                );
+                assert_eq!(
+                    format!("{before:?}"),
+                    format!("{:?}", a.try_tokenize(input).unwrap())
+                );
+            }
+        }
     }
 
     #[test]

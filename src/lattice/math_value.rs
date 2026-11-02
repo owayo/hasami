@@ -273,6 +273,38 @@ fn frame_start(tokens: &[Token], i: usize) -> Option<usize> {
     {
         return Some(i - 5);
     }
+    // 「最大」だけを数学の見出しにせず、標準の可能表現まで含める。
+    if i >= 4 {
+        let take = &tokens[i - 4];
+        let possible = &tokens[i - 3];
+        if take.is_known
+            && take.surface.as_ref() == "とり"
+            && take.base_form.as_ref() == "とる"
+            && take.pos.as_ref() == "動詞,自立,*,*"
+            && take.conj_type.as_ref() == "五段・ラ行"
+            && take.conj_form.as_ref() == "連用形"
+            && take.reading.as_ref() == "トリ"
+            && take.pronunciation.as_ref() == "トリ"
+            && possible.is_known
+            && possible.surface.as_ref() == "うる"
+            && possible.base_form.as_ref() == "うる"
+            && possible.pos.as_ref() == "動詞,非自立,*,*"
+            && possible.conj_type.as_ref() == "一段・得ル"
+            && possible.conj_form.as_ref() == "基本形"
+            && possible.reading.as_ref() == "ウル"
+            && possible.pronunciation.as_ref() == "ウル"
+            && fixed(
+                &tokens[i - 2],
+                "最大",
+                "名詞,一般,*,*",
+                "サイダイ",
+                "サイダイ",
+            )
+            && fixed(&tokens[i - 1], "の", "助詞,連体化,*,*", "ノ", "ノ")
+        {
+            return Some(i - 4);
+        }
+    }
     None
 }
 
@@ -342,6 +374,60 @@ fn difference_frame(tokens: &[Token], i: usize) -> Option<(usize, usize)> {
     .then_some((i - 2, i + 3))
 }
 
+fn expression_return_frame(tokens: &[Token], i: usize) -> Option<(usize, usize)> {
+    if i < 3 || i + 2 >= tokens.len() {
+        return None;
+    }
+    let verb = &tokens[i + 2];
+    (fixed(&tokens[i - 3], "式", "名詞,一般,*,*", "シキ", "シキ")
+        && fixed(&tokens[i - 2], "自体", "名詞,一般,*,*", "ジタイ", "ジタイ")
+        && fixed(&tokens[i - 1], "が", "助詞,格助詞,一般,*", "ガ", "ガ")
+        && fixed(&tokens[i + 1], "を", "助詞,格助詞,一般,*", "ヲ", "ヲ")
+        && verb.is_known
+        && verb.surface.as_ref() == "返す"
+        && verb.base_form.as_ref() == "返す"
+        && verb.pos.as_ref() == "動詞,自立,*,*"
+        && verb.conj_type.as_ref() == "五段・サ行"
+        && verb.conj_form.as_ref() == "基本形"
+        && verb.reading.as_ref() == "カエス"
+        && verb.pronunciation.as_ref() == "カエス")
+        .then_some((i - 3, i + 2))
+}
+
+fn frequent_value_frame(tokens: &[Token], i: usize) -> Option<(usize, usize)> {
+    if i < 4 || i + 1 >= tokens.len() {
+        return None;
+    }
+    let high = &tokens[i - 1];
+    let copula = &tokens[i + 1];
+    // 価格の「高い値」ではなく、最上級の頻度と標準の述語まで認定する。
+    (fixed(
+        &tokens[i - 4],
+        "最も",
+        "副詞,一般,*,*",
+        "モットモ",
+        "モットモ",
+    ) && fixed(&tokens[i - 3], "頻度", "名詞,一般,*,*", "ヒンド", "ヒンド")
+        && fixed(&tokens[i - 2], "が", "助詞,格助詞,一般,*", "ガ", "ガ")
+        && high.is_known
+        && high.surface.as_ref() == "高い"
+        && high.base_form.as_ref() == "高い"
+        && high.pos.as_ref() == "形容詞,自立,*,*"
+        && high.conj_type.as_ref() == "形容詞・アウオ段"
+        && high.conj_form.as_ref() == "基本形"
+        && high.reading.as_ref() == "タカイ"
+        && high.pronunciation.as_ref() == "タカイ"
+        && copula.is_known
+        && copula.surface.as_ref() == "です"
+        && copula.base_form.as_ref() == "です"
+        && copula.pos.as_ref() == "助動詞,*,*,*"
+        && copula.conj_type.as_ref() == "特殊・デス"
+        && copula.conj_form.as_ref() == "基本形"
+        && copula.reading.as_ref() == "デス"
+        && copula.pronunciation.as_ref() == "デス")
+        .then_some((i - 4, i + 1))
+}
+
 pub(super) fn apply(
     tokens: &mut [Token],
     protected: &[Range<usize>],
@@ -364,6 +450,10 @@ pub(super) fn apply(
         } else if let Some(frame) = configuration_frame(tokens, i) {
             frame
         } else if let Some(frame) = difference_frame(tokens, i) {
+            frame
+        } else if let Some(frame) = expression_return_frame(tokens, i) {
+            frame
+        } else if let Some(frame) = frequent_value_frame(tokens, i) {
             frame
         } else {
             continue;
@@ -422,6 +512,52 @@ mod tests {
                         "",
                     ),
                     "設定" => ("名詞,サ変接続,*,*", surface, "セッテイ", "セッテイ", "", ""),
+                    "式" => ("名詞,一般,*,*", surface, "シキ", "シキ", "", ""),
+                    "自体" => ("名詞,一般,*,*", surface, "ジタイ", "ジタイ", "", ""),
+                    "が" => ("助詞,格助詞,一般,*", surface, "ガ", "ガ", "", ""),
+                    "返す" => (
+                        "動詞,自立,*,*",
+                        surface,
+                        "カエス",
+                        "カエス",
+                        "五段・サ行",
+                        "基本形",
+                    ),
+                    "とり" => (
+                        "動詞,自立,*,*",
+                        "とる",
+                        "トリ",
+                        "トリ",
+                        "五段・ラ行",
+                        "連用形",
+                    ),
+                    "うる" => (
+                        "動詞,非自立,*,*",
+                        surface,
+                        "ウル",
+                        "ウル",
+                        "一段・得ル",
+                        "基本形",
+                    ),
+                    "最大" => ("名詞,一般,*,*", surface, "サイダイ", "サイダイ", "", ""),
+                    "最も" => ("副詞,一般,*,*", surface, "モットモ", "モットモ", "", ""),
+                    "頻度" => ("名詞,一般,*,*", surface, "ヒンド", "ヒンド", "", ""),
+                    "高い" => (
+                        "形容詞,自立,*,*",
+                        surface,
+                        "タカイ",
+                        "タカイ",
+                        "形容詞・アウオ段",
+                        "基本形",
+                    ),
+                    "です" => (
+                        "助動詞,*,*,*",
+                        surface,
+                        "デス",
+                        "デス",
+                        "特殊・デス",
+                        "基本形",
+                    ),
                     "する" => (
                         "動詞,自立,*,*",
                         surface,
@@ -446,7 +582,9 @@ mod tests {
                     ),
                     "三" => ("名詞,数,*,*", surface, "サン", "サン", "", ""),
                     "次元" => ("名詞,接尾,助数詞,*", surface, "ジゲン", "ジゲン", "", ""),
-                    "_" => ("記号,一般,*,*", surface, "", "", "", ""),
+                    "_" | "-" | "." | "/" | ":" | "＿" | "－" | "．" | "／" | "：" | "," => {
+                        ("記号,一般,*,*", surface, "", "", "", "")
+                    }
                     "の" => ("助詞,連体化,*,*", surface, "ノ", "ノ", "", ""),
                     "を" => ("助詞,格助詞,一般,*", surface, "ヲ", "ヲ", "", ""),
                     "し" => ("動詞,自立,*,*", "する", "シ", "シ", "サ変・スル", "連用形"),
@@ -500,6 +638,150 @@ mod tests {
         assert_eq!(before.base_form, after.base_form);
         assert_eq!(before.word_cost, after.word_cost);
         assert_eq!(before.is_known, after.is_known);
+    }
+
+    fn strong_frame_words() -> [Vec<&'static str>; 3] {
+        [
+            vec!["式", "自体", "が", "値", "を", "返す"],
+            vec!["とり", "うる", "最大", "の", "値"],
+            vec!["最も", "頻度", "が", "高い", "値", "です"],
+        ]
+    }
+
+    #[test]
+    fn strong_value_frames_change_only_target_readings_and_receipts() {
+        for frame in strong_frame_words() {
+            for quoted in [false, true] {
+                let words = if quoted {
+                    [vec!["「"], frame.clone(), vec!["」"]].concat()
+                } else {
+                    frame.clone()
+                };
+                let input = words.concat();
+                let mut ts = tokens(&words);
+                let before = ts.clone();
+                let mut spans = Vec::new();
+                super::apply(
+                    &mut ts,
+                    &[],
+                    &mut ContextualReadingContext::new(&input, 0, Some(&mut spans)),
+                );
+                let target = ts.iter().find(|t| t.surface.as_ref() == "値").unwrap();
+                assert_eq!(target.reading.as_ref(), "アタイ", "{input}");
+                assert_eq!(target.pronunciation.as_ref(), "アタイ", "{input}");
+                assert_eq!(
+                    spans,
+                    vec![crate::ContextualReadingSpan {
+                        start: target.start,
+                        end: target.end,
+                        pronunciation: "アタイ".into(),
+                    }],
+                    "{input}"
+                );
+                for (old, new) in before.iter().zip(&ts) {
+                    assert_other_fields_equal(old, new);
+                    if old.surface.as_ref() != "値" {
+                        assert_eq!(old.reading, new.reading);
+                        assert_eq!(old.pronunciation, new.pronunciation);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn strong_value_frames_require_every_standard_profile_and_protection_check() {
+        for words in strong_frame_words() {
+            for index in 0..words.len() {
+                for mode in 0..6 {
+                    let mut ts = tokens(&words);
+                    match mode {
+                        0 => ts[index].is_known = false,
+                        1 => ts[index].pos = Arc::from("名詞,固有名詞,一般,*"),
+                        2 => ts[index].base_form = Arc::from("別語"),
+                        3 => ts[index].reading = Arc::from("ベツメイ"),
+                        4 => ts[index].pronunciation = Arc::from("ベツメイ"),
+                        _ => ts[index].conj_form = Arc::from("別の活用形"),
+                    }
+                    let before = format!("{ts:?}");
+                    apply(&mut ts, &[]);
+                    assert_eq!(format!("{ts:?}"), before, "{words:?}/{index}/{mode}");
+                }
+                let mut ts = tokens(&words);
+                let range = ts[index].start..ts[index].end;
+                let before = format!("{ts:?}");
+                apply(&mut ts, &[range]);
+                assert_eq!(format!("{ts:?}"), before, "protected {words:?}/{index}");
+            }
+            for reading in ["アタイ", "チ"] {
+                let mut ts = tokens(&words);
+                let target = ts.iter_mut().find(|t| t.surface.as_ref() == "値").unwrap();
+                target.reading = Arc::from(reading);
+                target.pronunciation = Arc::from(reading);
+                let before = format!("{ts:?}");
+                apply(&mut ts, &[]);
+                assert_eq!(format!("{ts:?}"), before);
+            }
+            for join in 1..words.len() {
+                let mut ts = tokens(&words);
+                for t in &mut ts[join..] {
+                    t.start += "　".len();
+                    t.end += "　".len();
+                }
+                let before = format!("{ts:?}");
+                apply(&mut ts, &[]);
+                assert_eq!(format!("{ts:?}"), before, "gap {words:?}/{join}");
+            }
+        }
+    }
+
+    #[test]
+    fn strong_value_frames_keep_origin_aware_identifier_boundaries() {
+        for frame in strong_frame_words() {
+            for separator in ["-", ".", "/", ":", "_", "－", "．", "／", "：", "＿"] {
+                for origin in [0, "前置き。".len()] {
+                    let words = [vec!["SKU", separator], frame.clone()].concat();
+                    let input = words.concat();
+                    let mut ts = tokens(&words);
+                    for t in &mut ts {
+                        t.start += origin;
+                        t.end += origin;
+                    }
+                    let before = format!("{ts:?}");
+                    let mut spans = Vec::new();
+                    super::apply(
+                        &mut ts,
+                        &[],
+                        &mut ContextualReadingContext::new(&input, origin, Some(&mut spans)),
+                    );
+                    assert_eq!(format!("{ts:?}"), before, "{input}/{origin}");
+                    assert!(spans.is_empty());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn strong_value_frames_do_not_expand_prices_annotations_or_verb_scope() {
+        for words in [
+            vec!["魚", "の", "値", "を", "返す"],
+            vec!["最も", "高い", "値", "です"],
+            vec!["頻度", "が", "高い", "値", "です"],
+            vec!["値", "を", "返す"],
+            vec!["式", "自体", "が", "値", "(", "ね", ")", "を", "返す"],
+            vec!["とり", "うる", "最大", "の", "値", "(", "ね", ")"],
+            vec!["最も", "頻度", "が", "高い", "値", "(", "ね", ")", "です"],
+            vec!["とり", "うる", "最大", "の", "値", ","],
+            vec!["「", "式", "」", "自体", "が", "値", "を", "返す"],
+            vec!["とり", "うる", "「", "最大", "」", "の", "値"],
+            vec!["最も", "頻度", "が", "「", "高い", "」", "値", "です"],
+            vec!["最も", "頻度", "が", "高い", "値", "を"],
+        ] {
+            let mut ts = tokens(&words);
+            let before = format!("{ts:?}");
+            apply(&mut ts, &[]);
+            assert_eq!(format!("{ts:?}"), before, "{words:?}");
+        }
     }
 
     #[test]
