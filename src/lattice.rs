@@ -35,7 +35,10 @@ use crate::kana::{to_katakana, unvoice, voice};
 use std::sync::Arc;
 
 mod idiom;
+mod math_value;
 mod particle;
+
+pub(crate) use math_value::ContextualReadingContext;
 
 /// トークン（形態素解析結果の1単位）
 #[derive(Debug, Clone)]
@@ -258,12 +261,17 @@ fn apply_decimal_counter_override(token: &mut Token, after_decimal_point: bool) 
 /// - 仮名のみの語: 表層形をカタカナ化した読み（未知語で読みが空になるケースの救済）
 #[cfg(all(test, feature = "build"))]
 fn apply_contextual_readings(tokens: &mut [Token]) {
-    apply_contextual_readings_with_protection(tokens, &[]);
+    apply_contextual_readings_with_protection(
+        tokens,
+        &[],
+        &mut ContextualReadingContext::default(),
+    );
 }
 
 fn apply_contextual_readings_with_protection(
     tokens: &mut [Token],
     protected: &[std::ops::Range<usize>],
+    contextual_readings: &mut ContextualReadingContext<'_>,
 ) {
     for i in 0..tokens.len() {
         if tokens[i].surface.is_empty() {
@@ -341,6 +349,7 @@ fn apply_contextual_readings_with_protection(
     }
     idiom::apply(tokens, protected);
     particle::apply(tokens, protected);
+    math_value::apply(tokens, protected, contextual_readings);
 }
 
 /// 仮名のみからなる表層形をカタカナの読みに変換する。
@@ -1001,6 +1010,27 @@ impl LatticeWorkspace {
         plan: &crate::numeric::AsciiPlan,
         cursor: &mut usize,
     ) -> Result<(), DictError> {
+        let mut context = ContextualReadingContext::new(input, offset, None);
+        self.tokenize_into_prepared_collecting(
+            input,
+            dict,
+            offset,
+            out,
+            (plan, cursor),
+            &mut context,
+        )
+    }
+
+    pub(crate) fn tokenize_into_prepared_collecting(
+        &mut self,
+        input: &str,
+        dict: &Dictionary,
+        offset: usize,
+        out: &mut Vec<Token>,
+        prepared: (&crate::numeric::AsciiPlan, &mut usize),
+        contextual_readings: &mut ContextualReadingContext<'_>,
+    ) -> Result<(), DictError> {
+        let (plan, cursor) = prepared;
         if input.is_empty() {
             return Ok(());
         }
@@ -1242,7 +1272,11 @@ impl LatticeWorkspace {
             &protected,
             |surface| unit_reading(surface).is_some_and(is_katakana_str),
         );
-        apply_contextual_readings_with_protection(&mut out[first..], &protected);
+        apply_contextual_readings_with_protection(
+            &mut out[first..],
+            &protected,
+            contextual_readings,
+        );
         crate::numeric::apply_year_readings(input, offset, &mut out[first..], plan, &protected);
         crate::numeric::apply_spaced_months(input, offset, out, first, plan, &protected);
         Ok(())

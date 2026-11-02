@@ -1,15 +1,17 @@
 //! アナライザー - 形態素解析の高レベルAPI
 
 use crate::hsd::{DictError, Dictionary};
-use crate::lattice::{LatticeWorkspace, Token};
+use crate::lattice::{ContextualReadingContext, LatticeWorkspace, Token};
 use crate::sentence::{Sentence, SplitOptions, Splitter};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+mod contextual_readings;
 mod literal_identifier;
 mod quantity_spans;
 
+pub use contextual_readings::ContextualReadingSpan;
 pub use quantity_spans::QuantitySpan;
 
 /// 既定の辞書のパスを指す環境変数
@@ -125,8 +127,29 @@ impl Analyzer {
     pub fn try_tokenize(&mut self, input: &str) -> Result<Vec<Token>, DictError> {
         let mut tokens = Vec::with_capacity(input.len() / 3);
         let plan = crate::numeric::AsciiPlan::new(input, 0);
-        self.tokenize_chunks(input, 0, &mut tokens, &plan, &mut 0)?;
+        let mut context = ContextualReadingContext::new(input, 0, None);
+        self.tokenize_chunks(input, 0, &mut tokens, &plan, &mut 0, &mut context)?;
         Ok(tokens)
+    }
+
+    /// 共通の文脈判断で、発音を実際に補正した箇所を返す。
+    ///
+    /// 位置は入力全体のUTF-8バイト位置。全文を一度だけ通常と同じ経路で解析し、
+    /// 同じ補正点で範囲と補正後の発音を集める。引用の内外で語義を変えない。
+    /// 現在は有限な数学・設定構文の「値」のネからアタイへの変更だけを扱う。
+    /// 固有名詞、独自読み、すでにアタイの語、保護範囲は含めない。
+    /// 未補正のトークンを保持・かな化するための照会ではない。モデルは不要。
+    /// 辞書の不正な参照は[`Analyzer::try_tokenize`]と同じエラーを返す。
+    pub fn contextual_reading_spans(
+        &mut self,
+        input: &str,
+    ) -> Result<Vec<ContextualReadingSpan>, DictError> {
+        let mut tokens = Vec::with_capacity(input.len() / 3);
+        let mut spans = Vec::new();
+        let plan = crate::numeric::AsciiPlan::new(input, 0);
+        let mut context = ContextualReadingContext::new(input, 0, Some(&mut spans));
+        self.tokenize_chunks(input, 0, &mut tokens, &plan, &mut 0, &mut context)?;
+        Ok(spans)
     }
 
     /// 明示された単一数量を共通の数詞・助数詞規則で読み、発音を返す。
@@ -188,19 +211,20 @@ impl Analyzer {
         out: &mut Vec<Token>,
         plan: &crate::numeric::AsciiPlan,
         cursor: &mut usize,
+        contextual_readings: &mut ContextualReadingContext<'_>,
     ) -> Result<(), DictError> {
         let mut ends = std::mem::take(&mut self.chunk_ends);
         self.splitter.chunk_ends_into(input, &mut ends);
         let mut start = 0;
         let mut result = Ok(());
         for &end in &ends {
-            result = self.workspace.tokenize_into_prepared(
+            result = self.workspace.tokenize_into_prepared_collecting(
                 &input[start..end],
                 &self.dict,
                 offset + start,
                 out,
-                plan,
-                cursor,
+                (plan, cursor),
+                contextual_readings,
             );
             if result.is_err() {
                 break;
@@ -236,6 +260,7 @@ impl Analyzer {
         let plan = crate::numeric::AsciiPlan::new(text, 0);
         let mut cursor = 0;
         let mut out = Vec::new();
+        let mut context = ContextualReadingContext::new(text, 0, None);
         for sentence in splitter.split(text) {
             let mut tokens = Vec::new();
             let range = sentence.range.clone();
@@ -245,6 +270,7 @@ impl Analyzer {
                 &mut tokens,
                 &plan,
                 &mut cursor,
+                &mut context,
             )?;
             out.push((sentence, tokens));
         }

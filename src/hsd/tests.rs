@@ -875,7 +875,18 @@ fn detects_broken_references() {
             matches!(analyzer.try_tokenize("東京"), Err(DictError::Corrupt(_))),
             "{name}"
         );
+        assert!(
+            matches!(
+                analyzer.contextual_reading_spans("東京"),
+                Err(DictError::Corrupt(_))
+            ),
+            "{name}"
+        );
         assert!(analyzer.dictionary().verify().is_err(), "{name}");
+        assert!(
+            analyzer.contextual_reading_spans("").unwrap().is_empty(),
+            "{name}"
+        );
 
         // 群の最後の印を消す → 群が隣と混ざるので verify で見つかる
         let mut bad = bytes.clone();
@@ -888,6 +899,14 @@ fn detects_broken_references() {
         // 最後の群が配列の外まで続く → 解析時にエラー
         let mut analyzer = Analyzer::from_dict(dict);
         assert!(analyzer.try_tokenize("𠮷野家").is_err(), "{name}");
+        assert!(
+            analyzer.contextual_reading_spans("𠮷野家").is_err(),
+            "{name}"
+        );
+        assert!(
+            analyzer.contextual_reading_spans("").unwrap().is_empty(),
+            "{name}"
+        );
 
         // 文脈 ID を行列の外にする → 解析時にエラー
         let mut bad = bytes.clone();
@@ -898,6 +917,14 @@ fn detects_broken_references() {
         let mut analyzer = Analyzer::from_dict(load(&bad).unwrap());
         assert!(
             matches!(analyzer.try_tokenize("東京"), Err(DictError::Corrupt(_))),
+            "{name}"
+        );
+
+        assert!(
+            matches!(
+                analyzer.contextual_reading_spans("東京"),
+                Err(DictError::Corrupt(_))
+            ),
             "{name}"
         );
 
