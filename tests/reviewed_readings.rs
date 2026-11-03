@@ -666,3 +666,57 @@ fn distributed_lexical_repairs_keep_plural_sounds_and_grammatical_boundaries() {
         }
     }
 }
+
+#[test]
+#[ignore = "配布辞書が必要"]
+fn distributed_choketsu_readings_keep_general_noun_and_particle_boundaries() {
+    let dir = std::env::var("HASAMI_TEST_DICT_DIR")
+        .unwrap_or_else(|_| format!("{}/dict", env!("CARGO_MANIFEST_DIR")));
+    for name in ["ipadic-neologd", "ipadic-neologd-sudachi"] {
+        let mut analyzer = Analyzer::load(format!("{dir}/{name}.hsd")).unwrap();
+        for (text, surfaces) in [
+            ("挑決", &["挑決"][..]),
+            (
+                "挑決を観戦する。",
+                &["挑決", "を", "観戦", "する", "。"][..],
+            ),
+            (
+                "挑決の結果を待つ。",
+                &["挑決", "の", "結果", "を", "待つ", "。"][..],
+            ),
+        ] {
+            let tokens = analyzer.try_tokenize(text).unwrap();
+            assert_eq!(
+                tokens
+                    .iter()
+                    .map(|token| token.surface.as_ref())
+                    .collect::<Vec<_>>(),
+                surfaces,
+                "{name}: {text}: {tokens:?}"
+            );
+            let word = &tokens[0];
+            assert!(word.is_known, "{name}: {text}: {tokens:?}");
+            assert_eq!(word.reading.as_ref(), "チョウケツ", "{name}: {text}");
+            assert_eq!(word.pronunciation.as_ref(), "チョーケツ", "{name}: {text}");
+            assert_eq!(word.pos.as_ref(), "名詞,一般,*,*", "{name}: {text}");
+            assert_eq!(word.base_form.as_ref(), "挑決", "{name}: {text}");
+            assert!(word.conj_type.is_empty(), "{name}: {text}: {tokens:?}");
+            assert!(word.conj_form.is_empty(), "{name}: {text}: {tokens:?}");
+            assert_eq!(word.start, 0, "{name}: {text}");
+            assert_eq!(word.end, "挑決".len(), "{name}: {text}");
+            if let Some(particle) = tokens.get(1) {
+                assert!(
+                    particle.pos.starts_with("助詞,"),
+                    "{name}: {text}: {tokens:?}"
+                );
+            }
+            for token in &tokens {
+                assert_eq!(&text[token.start..token.end], token.surface.as_ref());
+            }
+            for pair in tokens.windows(2) {
+                assert_eq!(pair[0].end, pair[1].start, "{name}: {text}: {tokens:?}");
+            }
+            assert_eq!(tokens.last().unwrap().end, text.len(), "{name}: {text}");
+        }
+    }
+}

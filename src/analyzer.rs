@@ -136,8 +136,10 @@ impl Analyzer {
     ///
     /// 位置は入力全体のUTF-8バイト位置。全文を一度だけ通常と同じ経路で解析し、
     /// 同じ補正点で範囲と補正後の発音を集める。引用の内外で語義を変えない。
-    /// 現在は有限な数学・設定構文の「値」のネからアタイへの変更だけを扱う。
-    /// 固有名詞、独自読み、すでにアタイの語、保護範囲は含めない。
+    /// 有限な数学・設定構文の「値」、明確な段位構文での一般名詞候補の選択、
+    /// 明示姓ラベルで数詞と「段」を実姓候補へ結合して発音が変わった箇所を扱う。
+    /// 任意の固有名詞や独自読みを変換する照会ではない。
+    /// すでに同じ発音の語、未補正の語、保護範囲は含めない。
     /// 未補正のトークンを保持・かな化するための照会ではない。モデルは不要。
     /// 辞書の不正な参照は[`Analyzer::try_tokenize`]と同じエラーを返す。
     pub fn contextual_reading_spans(
@@ -149,6 +151,9 @@ impl Analyzer {
         let plan = crate::numeric::AsciiPlan::new(input, 0);
         let mut context = ContextualReadingContext::new(input, 0, Some(&mut spans));
         self.tokenize_chunks(input, 0, &mut tokens, &plan, &mut 0, &mut context)?;
+        // 判定ごとの収集順は別でも、公開照会は元入力の座標順に返す。
+        // 各補正の対象語は互いに異なり、同一トークンを二度記録しない。
+        spans.sort_unstable_by_key(|span| (span.start, span.end));
         Ok(spans)
     }
 
