@@ -83,3 +83,50 @@ fn distributed_counter_sentences_keep_tens_distinct_from_six_hundred_and_thousan
         }
     }
 }
+
+#[test]
+#[ignore = "配布辞書3種が必要"]
+fn distributed_fullwidth_quantities_keep_original_surfaces_and_identifier_guards() {
+    let dir = std::env::var("HASAMI_TEST_DICT_DIR")
+        .unwrap_or_else(|_| format!("{}/dict", env!("CARGO_MANIFEST_DIR")));
+    for name in ["ipadic", "ipadic-neologd", "ipadic-neologd-sudachi"] {
+        let mut analyzer = Analyzer::load(format!("{dir}/{name}.hsd")).unwrap();
+        for _ in 0..2 {
+            let text = "年齢は１８歳で、回数は２０回だ。次は２４歳だ。";
+            let tokens = analyzer.try_tokenize(text).unwrap();
+            for (surface, reading, speech) in [
+                ("１８歳", "ジュウハッサイ", "ジューハッサイ"),
+                ("２０回", "ニジュッカイ", "ニジュッカイ"),
+                ("２４歳", "ニジュウヨンサイ", "ニジューヨンサイ"),
+            ] {
+                assert_reading(text, &tokens, surface, reading, speech);
+                let number = surface.trim_end_matches(['歳', '回']);
+                let token = tokens
+                    .iter()
+                    .find(|t| t.surface.as_ref() == number)
+                    .unwrap();
+                assert_eq!(token.base_form.as_ref(), number);
+                assert_eq!(token.pos.as_ref(), "名詞,数,*,*");
+                assert!(!token.is_known);
+                assert!(token.conj_type.is_empty() && token.conj_form.is_empty());
+            }
+            // 数量ではない入力を挟んでも、次の呼出しへ保護範囲を持ち越さない。
+            for text in ["０１８歳", "ID１８歳", "１８歳A", "１８", "1８歳", "一８歳"]
+            {
+                let tokens = analyzer.try_tokenize(text).unwrap();
+                assert!(
+                    tokens
+                        .iter()
+                        .all(|t| !matches!(t.surface.as_ref(), "１８" | "０１８" | "1８" | "一８")),
+                    "{name}: {text}: {tokens:?}"
+                );
+                for token in &tokens {
+                    assert_eq!(
+                        text.get(token.start..token.end),
+                        Some(token.surface.as_ref())
+                    );
+                }
+            }
+        }
+    }
+}
