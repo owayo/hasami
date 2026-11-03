@@ -37,6 +37,7 @@ use std::sync::Arc;
 mod idiom;
 mod math_value;
 mod particle;
+mod rank;
 
 pub(crate) use math_value::ContextualReadingContext;
 
@@ -1272,6 +1273,8 @@ impl LatticeWorkspace {
             &protected,
             |surface| unit_reading(surface).is_some_and(is_katakana_str),
         );
+        rank::apply_explicit_names(out, first, dict, &protected, contextual_readings)?;
+        rank::apply(&mut out[first..], dict, &protected, contextual_readings)?;
         apply_contextual_readings_with_protection(
             &mut out[first..],
             &protected,

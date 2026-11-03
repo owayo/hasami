@@ -36,7 +36,22 @@ impl<'a> ContextualReadingContext<'a> {
         }
     }
 
-    fn identifier_boundary(&self, absolute_start: usize) -> bool {
+    pub(super) fn source(&self) -> (&'a str, usize) {
+        (self.input, self.origin)
+    }
+
+    pub(super) fn record(&mut self, token: &Token) {
+        if let Some(spans) = self.spans.as_deref_mut() {
+            let span = crate::ContextualReadingSpan {
+                start: token.start,
+                end: token.end,
+                pronunciation: token.pronunciation.to_string(),
+            };
+            spans.push(span);
+        }
+    }
+
+    pub(super) fn identifier_boundary(&self, absolute_start: usize) -> bool {
         let Some(relative_start) = absolute_start.checked_sub(self.origin) else {
             return false;
         };
@@ -478,13 +493,7 @@ pub(super) fn apply(
         let reading: Arc<str> = Arc::from("アタイ");
         tokens[i].reading = Arc::clone(&reading);
         tokens[i].pronunciation = reading;
-        if let Some(spans) = context.spans.as_deref_mut() {
-            spans.push(crate::ContextualReadingSpan {
-                start: tokens[i].start,
-                end: tokens[i].end,
-                pronunciation: tokens[i].pronunciation.to_string(),
-            });
-        }
+        context.record(&tokens[i]);
     }
 }
 
