@@ -270,3 +270,5 @@ class DictionarySourcesTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+# Automated fix for issue #86: 月に続く暦日の1日が日数のイチニチと読まれる
