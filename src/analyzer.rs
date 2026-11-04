@@ -126,7 +126,7 @@ impl Analyzer {
     /// テキストを形態素解析する。辞書に不正な参照を見つけたらエラーを返す
     pub fn try_tokenize(&mut self, input: &str) -> Result<Vec<Token>, DictError> {
         let mut tokens = Vec::with_capacity(input.len() / 3);
-        let plan = crate::numeric::AsciiPlan::new(input, 0);
+        let plan = crate::numeric::AsciiPlan::with_dictionary(input, 0, &self.dict)?;
         let mut context = ContextualReadingContext::new(input, 0, None);
         self.tokenize_chunks(input, 0, &mut tokens, &plan, &mut 0, &mut context)?;
         Ok(tokens)
@@ -149,7 +149,7 @@ impl Analyzer {
     ) -> Result<Vec<ContextualReadingSpan>, DictError> {
         let mut tokens = Vec::with_capacity(input.len() / 3);
         let mut spans = Vec::new();
-        let plan = crate::numeric::AsciiPlan::new(input, 0);
+        let plan = crate::numeric::AsciiPlan::with_dictionary(input, 0, &self.dict)?;
         let mut context = ContextualReadingContext::new(input, 0, Some(&mut spans));
         self.tokenize_chunks(input, 0, &mut tokens, &plan, &mut 0, &mut context)?;
         // 判定ごとの収集順は別でも、公開照会は元入力の座標順に返す。
@@ -263,7 +263,7 @@ impl Analyzer {
         options: &SplitOptions<'_>,
     ) -> Result<Vec<(Sentence, Vec<Token>)>, DictError> {
         let splitter = Splitter::new(options);
-        let plan = crate::numeric::AsciiPlan::new(text, 0);
+        let plan = crate::numeric::AsciiPlan::with_dictionary(text, 0, &self.dict)?;
         let mut cursor = 0;
         let mut out = Vec::new();
         let mut context = ContextualReadingContext::new(text, 0, None);

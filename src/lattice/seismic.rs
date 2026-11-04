@@ -92,7 +92,7 @@ fn left_boundary(tokens: &[Token], start: usize, input: &str, origin: usize) -> 
 }
 
 /// 外側の範囲だけを保持し、未閉鎖の引用は末尾まで保護する。
-fn quotation_ranges(input: &str) -> Vec<Range<usize>> {
+pub(crate) fn quotation_ranges(input: &str) -> Vec<Range<usize>> {
     let mut ranges = Vec::new();
     let mut stack = Vec::new();
     let mut start = 0;

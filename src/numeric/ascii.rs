@@ -4,6 +4,8 @@ use crate::lattice::Token;
 use std::ops::Range;
 use std::sync::Arc;
 
+mod distance_duration;
+
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Number {
     integer: u64,
@@ -150,6 +152,7 @@ struct Candidate {
     number: Range<usize>,
     envelope: Range<usize>,
     parsed: Option<Number>,
+    strict_number: bool,
 }
 
 #[derive(Default, Debug)]
@@ -164,6 +167,7 @@ pub(crate) struct AsciiPlan {
     negative_decimals: Vec<Range<usize>>,
     unit_frames: Vec<super::units::Frame>,
     scaled_bad_ends: Vec<usize>,
+    distance_boundaries: Vec<Range<usize>>,
 }
 
 fn envelope_byte(b: u8) -> bool {
@@ -291,6 +295,95 @@ fn negative_decimals(input: &str, offset: usize) -> Vec<Range<usize>> {
 }
 
 impl AsciiPlan {
+    /// 明示された距離・所要時間で、健全な単位だけがまたぐ境界を辞書と照合する。
+    pub(crate) fn with_dictionary(
+        input: &str,
+        offset: usize,
+        dict: &crate::Dictionary,
+    ) -> Result<Self, crate::DictError> {
+        let mut plan = Self::new(input, offset);
+        if plan.candidates.is_empty() {
+            return Ok(plan);
+        }
+        let mut accepted = Vec::new();
+        let mut quote_ranges = None;
+        for frame in distance_duration::frames(input, offset) {
+            let index = plan
+                .candidates
+                .partition_point(|c| c.number.start < frame.number.start);
+            let Some(candidate) = plan.candidates.get(index) else {
+                continue;
+            };
+            if candidate.number != frame.number
+                || candidate.envelope != (frame.number.start..frame.minutes.end)
+                || candidate.parsed.is_some()
+            {
+                continue;
+            }
+            let ranges =
+                quote_ranges.get_or_insert_with(|| crate::lattice::quotation_ranges(input));
+            let start = frame.label_start - offset;
+            let end = frame.end - offset;
+            let quote = ranges.partition_point(|range| range.end <= start);
+            if ranges.get(quote).is_some_and(|range| range.start < end)
+                || !distance_duration::canonical_crossings(input, offset, &frame, dict)?
+            {
+                continue;
+            }
+            accepted.push((index, frame));
+        }
+        // 反復する測定値でも、候補の途中へのinsertを繰り返して二乗時間にしない。
+        if !accepted.is_empty() {
+            let candidates = std::mem::take(&mut plan.candidates);
+            plan.candidates = Vec::with_capacity(candidates.len() + accepted.len());
+            let mut accepted = accepted.into_iter().peekable();
+            for (index, candidate) in candidates.into_iter().enumerate() {
+                if !accepted.peek().is_some_and(|(at, _)| *at == index) {
+                    plan.candidates.push(candidate);
+                    continue;
+                }
+                let (_, frame) = accepted.next().unwrap();
+                plan.candidates.push(Candidate {
+                    number: frame.number.clone(),
+                    envelope: frame.number.start..frame.unit_end,
+                    parsed: parse(&input[frame.number.start - offset..frame.number.end - offset]),
+                    strict_number: true,
+                });
+                plan.candidates.push(Candidate {
+                    number: frame.minutes.clone(),
+                    envelope: frame.minutes.clone(),
+                    parsed: parse(&input[frame.minutes.start - offset..frame.minutes.end - offset]),
+                    strict_number: true,
+                });
+                plan.unit_frames.push(super::units::Frame {
+                    number: frame.number,
+                    end: frame.unit_end,
+                    reading: "メートル",
+                    allow_unknown_pos: true,
+                });
+                plan.distance_boundaries
+                    .push(frame.label_start..frame.unit_end);
+            }
+            plan.unit_frames.sort_unstable_by_key(|f| f.number.start);
+        }
+        Ok(plan)
+    }
+
+    pub(crate) fn distance_crosses_boundary(&self, start: usize, end: usize) -> bool {
+        let index = self
+            .distance_boundaries
+            .partition_point(|boundary| boundary.end <= start);
+        self.distance_boundaries
+            .get(index)
+            .is_some_and(|boundary| boundary.start <= start && boundary.end < end)
+    }
+
+    fn distance_unit_end(&self, end: usize) -> bool {
+        self.distance_boundaries
+            .binary_search_by_key(&end, |boundary| boundary.end)
+            .is_ok()
+    }
+
     /// 既存の識別子保護候補が、指定した全体範囲と一致するか。
     pub(crate) fn identifier_envelope_exact(&self, start: usize, end: usize) -> bool {
         self.candidates
@@ -440,6 +533,7 @@ impl AsciiPlan {
                         number: offset + start + first..offset + start + end,
                         envelope: offset + start + usize::from(comma_delimiter)..offset + pos,
                         parsed,
+                        strict_number: false,
                     });
                 }
                 prefix = block.bytes().any(|b| b.is_ascii_alphanumeric());
@@ -477,6 +571,7 @@ impl AsciiPlan {
                             number: range.clone(),
                             envelope: range,
                             parsed: None,
+                            strict_number: false,
                         });
                     }
                     prefix = true;
@@ -612,9 +707,10 @@ pub(crate) fn apply(
                 .iter()
                 .all(|t| number_pos(t) || matches!(t.surface.as_ref(), "," | "."))
             && out[start..limit].windows(2).all(|p| p[0].end == p[1].start)
-            && (!super::units::requires_frame(
+            && (!(super::units::requires_frame(
                 &input[candidate.number.end - offset..candidate.envelope.end - offset],
-            ) || out[start..limit].iter().all(super::units::number_piece))
+            ) || candidate.strict_number)
+                || out[start..limit].iter().all(super::units::number_piece))
             && ((candidate.envelope == candidate.number
                 && candidate.parsed.is_some_and(|number| number.dot.is_some()))
                 || out.get(limit).is_some_and(|t| {
@@ -622,7 +718,9 @@ pub(crate) fn apply(
                         && quantity(t, &unit)
                         && (candidate.envelope.end == candidate.number.end
                             || t.end == candidate.envelope.end)
-                        && (!unit(&t.surface) || unit_boundary(input, offset, t))
+                        && (!unit(&t.surface)
+                            || unit_boundary(input, offset, t)
+                            || plan.distance_unit_end(t.end))
                 }));
         if !eligible {
             protected.push(candidate.envelope.clone());

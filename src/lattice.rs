@@ -41,6 +41,7 @@ mod rank;
 mod seismic;
 
 pub(crate) use math_value::ContextualReadingContext;
+pub(crate) use seismic::quotation_ranges;
 
 /// トークン（形態素解析結果の1単位）
 #[derive(Debug, Clone)]
@@ -1004,7 +1005,7 @@ impl LatticeWorkspace {
         offset: usize,
         out: &mut Vec<Token>,
     ) -> Result<(), DictError> {
-        let plan = crate::numeric::AsciiPlan::new(input, offset);
+        let plan = crate::numeric::AsciiPlan::with_dictionary(input, offset, dict)?;
         self.tokenize_into_prepared(input, dict, offset, out, &plan, &mut 0)
     }
 
