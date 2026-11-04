@@ -38,6 +38,7 @@ mod idiom;
 mod math_value;
 mod particle;
 mod rank;
+mod seismic;
 
 pub(crate) use math_value::ContextualReadingContext;
 
@@ -299,6 +300,11 @@ fn apply_contextual_readings_with_protection(
             }
         }
         if !is_alphabet(&tokens[i].surface) {
+            if tokens[i].surface.as_ref() == "震度7"
+                && seismic::apply(tokens, i, protected, contextual_readings)
+            {
+                continue;
+            }
             // 「々」は記号として辞書に入っていて読みを持たない。「日々」「人々」のように
             // 辞書にある語なら 1 トークンになるが、「前々項」のような語は
             // 「前」「々」「項」に割れ、「々」がそこだけ無音になる。

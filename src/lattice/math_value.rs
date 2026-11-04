@@ -15,12 +15,13 @@ use std::{ops::Range, sync::Arc};
 
 /// 一度の解析の元入力と、その入力に対応する絶対バイト位置。
 /// 全文解析・文別解析では元全文とorigin=0、独立Workspaceではその一入力とoffset。
-/// 引用状態や解析をまたぐ状態は持たない。
+/// 引用の範囲は必要になったときだけ全文から一度索引を作り、別の解析には持ち越さない。
 #[derive(Default)]
 pub(crate) struct ContextualReadingContext<'a> {
     input: &'a str,
     origin: usize,
     spans: Option<&'a mut Vec<crate::ContextualReadingSpan>>,
+    pub(super) quote_ranges: Option<Vec<Range<usize>>>,
 }
 
 impl<'a> ContextualReadingContext<'a> {
@@ -33,6 +34,7 @@ impl<'a> ContextualReadingContext<'a> {
             input,
             origin,
             spans,
+            quote_ranges: None,
         }
     }
 
