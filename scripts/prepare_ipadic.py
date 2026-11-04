@@ -39,7 +39,8 @@
    句読点と同じ記号として扱われるので、「％」と同じ品詞・文脈 ID・コストの語として読み付きで足す。
 
 usage: python3 scripts/prepare_ipadic.py <mecab-ipadic のディレクトリ> <出力ディレクトリ>
-       変えた内容を 1 行で標準出力に書く (辞書のメタデータ `ipadic_patch` に入れる)
+       変えた内容を UTF-8 の 1 行で標準出力に書く
+       (辞書のメタデータ `ipadic_patch` に入れる)
 """
 
 import os
@@ -332,6 +333,9 @@ def main() -> None:
         "".join(f"{row}\n" for row in units), encoding="utf-8"
     )
 
+    # Bashのコマンド置換からネイティブCLIのUTF-8メタデータへ渡す。
+    # WindowsのCP932を継承しない。
+    sys.stdout.reconfigure(encoding="utf-8")
     print(
         f"char.def {SYMBOL_CHAR_DEF}, {', '.join(CATEGORY_CHAR_DEF.values())}, "
         f"U+30FB/U+00D7/U+00F7 SYMBOL, 0x000D SPACE (not 0x00D0); unk.def SYMBOL=記号,一般; "
