@@ -36,6 +36,46 @@ fn assert_reading(text: &str, tokens: &[Token], surface: &str, reading: &str, sp
 }
 
 #[test]
+#[ignore = "配布辞書3種が必要"]
+fn distributed_terminal_four_years_keep_the_reading_before_calendar_months() {
+    let dir = std::env::var("HASAMI_TEST_DICT_DIR")
+        .unwrap_or_else(|_| format!("{}/dict", env!("CARGO_MANIFEST_DIR")));
+    for name in ["ipadic", "ipadic-neologd", "ipadic-neologd-sudachi"] {
+        let mut analyzer = Analyzer::load(format!("{dir}/{name}.hsd")).unwrap();
+        for _ in 0..2 {
+            for text in [
+                "開始は2024年11月1日です。次は2024年11月です。",
+                "開始は2024年１１月１日です。",
+                "開始は2024年。次は二〇二四年十一月です。",
+            ] {
+                let tokens = analyzer.try_tokenize(text).unwrap();
+                let speech = tokens
+                    .iter()
+                    .find(|t| t.is_known && t.surface.as_ref() == "2024年")
+                    .map_or("ニセンニジューヨネン", |t| {
+                        t.pronunciation.as_ref()
+                    });
+                // 一語の既知語は辞書の発音を保つ。数詞から合成した年は長音の発音を使う。
+                assert!(matches!(
+                    speech,
+                    "ニセンニジュウヨネン" | "ニセンニジューヨネン"
+                ));
+                assert_reading(text, &tokens, "2024年", "ニセンニジュウヨネン", speech);
+                if text.contains("二〇二四年") {
+                    assert_reading(
+                        text,
+                        &tokens,
+                        "二〇二四年",
+                        "ニセンニジュウヨネン",
+                        "ニセンニジューヨネン",
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
 #[ignore = "配布辞書2種が必要"]
 fn distributed_counter_sentences_keep_tens_distinct_from_six_hundred_and_thousand() {
     let dir = std::env::var("HASAMI_TEST_DICT_DIR")
