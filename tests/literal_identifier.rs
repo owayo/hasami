@@ -5,6 +5,53 @@ use hasami::Analyzer;
 
 #[test]
 #[ignore = "配布辞書3種が必要"]
+fn distributed_identifiers_keep_selected_english_digits_beside_word_expansions() {
+    let dir = std::env::var("HASAMI_TEST_DICT_DIR")
+        .unwrap_or_else(|_| format!("{}/dict", env!("CARGO_MANIFEST_DIR")));
+    for name in ["ipadic", "ipadic-neologd", "ipadic-neologd-sudachi"] {
+        let mut analyzer = Analyzer::load(format!("{dir}/{name}.hsd")).unwrap();
+        for _ in 0..2 {
+            for (text, tail) in [
+                ("ZXP2D-7Q", "ナナキュー"),
+                ("ZXP2D_1B_7Q", "イチビーナナキュー"),
+            ] {
+                let before = analyzer.try_tokenize(text).unwrap();
+                let digit = if name == "ipadic" {
+                    "ニ"
+                } else {
+                    assert!(before.iter().any(|t| t.is_known
+                        && t.surface.as_ref() == "2D"
+                        && t.pronunciation.as_ref() == "ツーディー"));
+                    if text.contains("1B") {
+                        assert!(before.iter().any(|t| t.is_known
+                            && t.surface.as_ref() == "1B"
+                            && t.pronunciation.as_ref() == "ファーストベースマン"));
+                    }
+                    "ツー"
+                };
+                let expected = format!("ゼットエックスピー{digit}ディー{tail}");
+                assert_eq!(
+                    analyzer.normalize_identifier(text).unwrap().as_deref(),
+                    Some(expected.as_str()),
+                    "{name}: {text}: {before:?}"
+                );
+                assert_eq!(
+                    format!("{before:?}"),
+                    format!("{:?}", analyzer.try_tokenize(text).unwrap())
+                );
+            }
+            if name != "ipadic" {
+                assert_eq!(
+                    analyzer.normalize_identifier("2D").unwrap().as_deref(),
+                    Some("2D")
+                );
+            }
+        }
+    }
+}
+
+#[test]
+#[ignore = "配布辞書3種が必要"]
 fn distributed_literal_identifiers_keep_default_tokens_and_quantity_guards() {
     let dir = std::env::var("HASAMI_TEST_DICT_DIR")
         .unwrap_or_else(|_| format!("{}/dict", env!("CARGO_MANIFEST_DIR")));
