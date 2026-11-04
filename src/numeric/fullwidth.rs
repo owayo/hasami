@@ -5,6 +5,9 @@ use crate::lattice::Token;
 use std::ops::Range;
 use std::sync::Arc;
 
+mod calendar;
+pub(super) use calendar::ranges as calendar_years;
+
 fn digit(c: char) -> Option<u64> {
     matches!(c, '０'..='９').then(|| u64::from(c as u32 - '０' as u32))
 }
@@ -171,6 +174,7 @@ fn candidate<'a>(
     out: &[Token],
     range: Range<usize>,
     protected: &[Range<usize>],
+    calendar: Option<&Range<usize>>,
 ) -> Option<(&'a str, u64)> {
     let first = &out[range.start];
     let last = &out[range.end - 1];
@@ -188,7 +192,25 @@ fn candidate<'a>(
             .is_some_and(|p| p.start < suffix.end)
         || input.get(suffix.start.checked_sub(offset)?..suffix.end.checked_sub(offset)?)
             != Some(suffix.surface.as_ref())
-        || !ascii::unit_boundary(input, offset, suffix)
+        || (!ascii::unit_boundary(input, offset, suffix) && calendar.is_none())
+        || calendar.is_some_and(|calendar| {
+            calendar.start != first.start
+                || calendar.end != suffix.end
+                || suffix.surface.as_ref() != "年"
+                || suffix.base_form != suffix.surface
+                || suffix.pos.as_ref() != "名詞,接尾,助数詞,*"
+                || !suffix.is_known
+                || suffix.reading.as_ref() != "ネン"
+                || suffix.pronunciation.as_ref() != "ネン"
+                || !suffix.conj_type.is_empty()
+                || !suffix.conj_form.is_empty()
+                || out[range.clone()].iter().any(|token| {
+                    token.base_form != token.surface
+                        || token.pos.as_ref() != "名詞,数,*,*"
+                        || !token.conj_type.is_empty()
+                        || !token.conj_form.is_empty()
+                })
+        })
         || !out[range].iter().all(|t| {
             t.start
                 .checked_sub(offset)
@@ -229,7 +251,14 @@ pub(super) fn apply(
                 read += 1;
             }
             if plan.kanji_number_start(out[start].start)
-                && let Some((raw, number)) = candidate(input, offset, out, start..read, protected)
+                && let Some((raw, number)) = candidate(
+                    input,
+                    offset,
+                    out,
+                    start..read,
+                    protected,
+                    plan.fullwidth_calendar_year(out[start].start),
+                )
             {
                 let (reading, pronunciation) = ascii::integer_readings(number);
                 let cost: i64 = out[start..read]

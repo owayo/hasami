@@ -153,7 +153,7 @@ fn trailing_frame(rest: &str) -> bool {
             })
 }
 
-fn eleven_right_allowed(rest: &str, includes_day: bool) -> bool {
+pub(super) fn eleven_right_allowed(rest: &str, includes_day: bool) -> bool {
     if trailing_frame(rest)
         || rest.trim_start().chars().next().is_some_and(closing_quote)
         || [
