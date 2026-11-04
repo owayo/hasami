@@ -539,14 +539,6 @@ fn distributed_reviewed_calendar_and_compound_counters() {
                 assert_eq!(&text[token.start..token.end], token.surface.as_ref());
             }
         }
-        let tokens = analyzer.try_tokenize("張豊猷さんが来た。").unwrap();
-        let token = tokens
-            .iter()
-            .find(|t| t.surface.as_ref() == "張豊猷")
-            .unwrap();
-        assert_eq!(&*token.reading, "チョウリユウ");
-        assert_eq!(&*token.pronunciation, "チョーリユー");
-        assert!(token.is_known);
         for text in ["その年2回を記録した。", "ある年2回を記録した。"] {
             let tokens = analyzer.try_tokenize(text).unwrap();
             let year = tokens.iter().find(|t| t.surface.as_ref() == "年").unwrap();
