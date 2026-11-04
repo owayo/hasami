@@ -21,14 +21,35 @@ fn distributed_modern_lexical_readings_keep_dictionary_features() {
                 .filter(|(end, _)| *end == surface.len())
                 .flat_map(|(_, entries)| entries)
                 .collect();
-            for input in [
+            // 独自登録と上流変換を二重にマージして同じ読みの候補を増やさない。
+            // 別の品詞・原形・読みの正当な候補まで一律に制限しない。
+            assert_eq!(
+                entries
+                    .iter()
+                    .filter(|entry| {
+                        entry.surface.as_ref() == surface
+                            && entry.base_form.as_ref() == surface
+                            && entry.pos.as_ref() == pos
+                            && entry.reading.as_ref() == reading
+                            && entry.pronunciation.as_ref() == pronunciation
+                    })
+                    .count(),
+                1,
+                "{name}: {surface}: the canonical candidate must be merged once"
+            );
+            let mut inputs = vec![
                 surface.to_owned(),
                 format!("{surface}を調べる。"),
                 format!("「{surface}」を確認する。"),
-            ] {
+                format!("ID_{surface}_12"),
+            ];
+            if surface == "頸飾り" {
+                inputs.push("頸飾りを選ぶ。".to_owned());
+            }
+            for input in inputs.iter().cycle().take(inputs.len() * 2) {
                 let start = input.find(surface).unwrap();
                 let end = start + surface.len();
-                let tokens = analyzer.try_tokenize(&input).unwrap();
+                let tokens = analyzer.try_tokenize(input).unwrap();
                 let focal: Vec<_> = tokens
                     .iter()
                     .filter(|t| t.start < end && start < t.end)
@@ -58,6 +79,26 @@ fn distributed_modern_lexical_readings_keep_dictionary_features() {
                     assert!(previous <= token.start && token.start < token.end);
                     assert_eq!(&input[token.start..token.end], token.surface.as_ref());
                     previous = token.end;
+                }
+                assert_eq!(tokens.first().unwrap().start, 0);
+                assert_eq!(tokens.last().unwrap().end, input.len());
+                assert!(tokens.windows(2).all(|pair| pair[0].end == pair[1].start));
+                if input.starts_with("ID_") {
+                    let digits: Vec<_> = tokens.iter().filter(|t| t.start > end).collect();
+                    assert_eq!(
+                        digits
+                            .iter()
+                            .map(|t| t.surface.as_ref())
+                            .collect::<Vec<_>>(),
+                        ["1", "2"]
+                    );
+                    assert_eq!(
+                        digits
+                            .iter()
+                            .map(|t| t.pronunciation.as_ref())
+                            .collect::<String>(),
+                        "イチニ"
+                    );
                 }
             }
         }
