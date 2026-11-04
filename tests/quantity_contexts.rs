@@ -95,6 +95,104 @@ fn distributed_horsepower_has_katakana_units_and_complete_scalars_in_context() {
 }
 
 #[test]
+#[ignore = "配布辞書2種が必要"]
+fn distributed_horse_lengths_keep_half_in_all_thirty_registered_numbers() {
+    const NUMBERS: [&str; 30] = [
+        "イチ",
+        "ニ",
+        "サン",
+        "ヨン",
+        "ゴ",
+        "ロク",
+        "ナナ",
+        "ハチ",
+        "キュウ",
+        "ジュウ",
+        "ジュウイチ",
+        "ジュウニ",
+        "ジュウサン",
+        "ジュウヨン",
+        "ジュウゴ",
+        "ジュウロク",
+        "ジュウナナ",
+        "ジュウハチ",
+        "ジュウキュウ",
+        "ニジュウ",
+        "ニジュウイチ",
+        "ニジュウニ",
+        "ニジュウサン",
+        "ニジュウヨン",
+        "ニジュウゴ",
+        "ニジュウロク",
+        "ニジュウナナ",
+        "ニジュウハチ",
+        "ニジュウキュウ",
+        "サンジュウ",
+    ];
+    let dir = std::env::var("HASAMI_TEST_DICT_DIR")
+        .unwrap_or_else(|_| format!("{}/dict", env!("CARGO_MANIFEST_DIR")));
+    for name in ["ipadic-neologd", "ipadic-neologd-sudachi"] {
+        let mut analyzer = Analyzer::load(format!("{dir}/{name}.hsd")).unwrap();
+        for (index, number) in NUMBERS.into_iter().enumerate() {
+            for suffix in ["", "差"] {
+                let quantity = format!("{}馬身半{suffix}", index + 1);
+                let old_reading = format!("{number}バシンサ");
+                for (end, rows) in analyzer.dictionary().lookup(&quantity).unwrap() {
+                    if end == quantity.len() {
+                        assert!(
+                            rows.iter()
+                                .all(|row| !(row.pos.as_ref() == "名詞,固有名詞,一般,*"
+                                    && row.reading.as_ref() == old_reading
+                                    && row.pronunciation.as_ref() == old_reading)),
+                            "{name}: {quantity}: half-less registration remains"
+                        );
+                    }
+                }
+                let reading = format!(
+                    "{number}バシンハン{}",
+                    if suffix.is_empty() { "" } else { "サ" }
+                );
+                let speech = reading
+                    .replace("ジュウ", "ジュー")
+                    .replace("キュウ", "キュー");
+                for text in [quantity.clone(), format!("着差は{quantity}で確定した。")] {
+                    let tokens = analyzer.try_tokenize(&text).unwrap();
+                    let start = text.find(&quantity).unwrap();
+                    let end = start + quantity.len();
+                    let actual_speech = tokens
+                        .iter()
+                        .filter(|t| start <= t.start && t.end <= end)
+                        .map(|t| &*t.pronunciation)
+                        .collect::<String>();
+                    // 既知の複合数量は長音を「ウ」で書く辞書の発音も保持する。
+                    let expected_speech = if actual_speech == reading {
+                        &reading
+                    } else {
+                        &speech
+                    };
+                    assert_reading(&text, &tokens, &quantity, &reading, expected_speech);
+                }
+            }
+        }
+        let text = "差は二馬身半差。次は2馬身差。別案は2馬身。差は2.5馬身。最後は31馬身半。";
+        let tokens = analyzer.try_tokenize(text).unwrap();
+        for (quantity, reading, speech) in [
+            ("二馬身半差", "ニバシンハンサ", "ニバシンハンサ"),
+            ("2馬身差", "ニバシンサ", "ニバシンサ"),
+            ("2馬身。", "ニバシン。", "ニバシン。"),
+            ("2.5馬身", "ニテンゴバシン", "ニテンゴバシン"),
+            (
+                "31馬身半",
+                "サンジュウイチバシンハン",
+                "サンジューイチバシンハン",
+            ),
+        ] {
+            assert_reading(text, &tokens, quantity, reading, speech);
+        }
+    }
+}
+
+#[test]
 #[ignore = "配布辞書3種が必要"]
 fn distributed_unknown_ascii_units_are_not_organizations_in_quantities() {
     let dir = std::env::var("HASAMI_TEST_DICT_DIR")
