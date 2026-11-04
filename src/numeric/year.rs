@@ -92,7 +92,8 @@ pub(super) fn number_starts(
         let raw = &input[start..end];
         let rest = &input[end..];
         if !scalar(raw).is_some_and(|n| n % 10 == 4)
-            || !super::japanese_boundary::single_year_tail(rest)
+            || !(super::japanese_boundary::single_year_tail(rest)
+                || super::japanese_boundary::calendar_year_tail(rest))
             || !(allowed(&input[..start]) || comma_boundary(&input[..start]))
         {
             continue;
@@ -333,6 +334,79 @@ mod tests {
         apply(text, 51, &mut out[1..], &AsciiPlan::new(text, 51), &[]);
         assert_eq!(format!("{:?}", out[0]), format!("{previous:?}"));
         assert_eq!(out[1].reading.as_ref(), "ヨ");
+    }
+
+    #[test]
+    fn calendar_month_and_day_allow_only_the_year_reading_to_change() {
+        for tail in [
+            "11月",
+            "11月1日",
+            "11月01日",
+            "01月1日",
+            "１１月１日",
+            "11月1日。",
+            "11月1日です。",
+        ] {
+            let text = format!("2024年{tail}");
+            let mut out = tokens("2024", "ニセンニジュウヨン", "ニセンニジューヨン", 53);
+            let mut expected = out.clone();
+            expected[0].reading = "ニセンニジュウヨ".into();
+            expected[0].pronunciation = "ニセンニジューヨ".into();
+            apply(&text, 53, &mut out, &AsciiPlan::new(&text, 53), &[]);
+            assert_eq!(format!("{out:?}"), format!("{expected:?}"), "{text}");
+        }
+    }
+
+    #[test]
+    fn calendar_tail_keeps_invalid_dates_and_identifier_boundaries() {
+        for tail in [
+            "0月",
+            "13月",
+            "001月",
+            "1１月",
+            "１1月",
+            "11月0日",
+            "11月32日",
+            "11月001日",
+            "11月1１日",
+            "11月１1日",
+            "11月1",
+            "11月1.5日",
+            "11.5月",
+            "11月A",
+            "11月１日Ａ",
+            "11月1日2",
+            "11月1日-2",
+            "11月1日_",
+            "11月1日/2",
+            "11月1日.2",
+            "11月1日²",
+        ] {
+            let text = format!("2024年{tail}");
+            let mut out = tokens("2024", "ニセンニジュウヨン", "ニセンニジューヨン", 53);
+            let before = format!("{out:?}");
+            apply(&text, 53, &mut out, &AsciiPlan::new(&text, 53), &[]);
+            assert_eq!(format!("{out:?}"), before, "{text}");
+        }
+        for prefix in ["ID", "第", "コード", "ISO ,"] {
+            let local = "2024年11月1日";
+            let full = format!("{prefix}{local}");
+            let mut out = tokens(
+                "2024",
+                "ニセンニジュウヨン",
+                "ニセンニジューヨン",
+                prefix.len(),
+            );
+            let before = format!("{out:?}");
+            apply(
+                local,
+                prefix.len(),
+                &mut out,
+                &AsciiPlan::new(&full, 0),
+                &[],
+            );
+            assert_eq!(format!("{out:?}"), before, "{full}");
+        }
     }
 }
 
