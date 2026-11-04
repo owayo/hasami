@@ -145,27 +145,6 @@ pub(crate) fn quotation_ranges(input: &str) -> Vec<Range<usize>> {
     ranges
 }
 
-fn unquoted(context: &mut ContextualReadingContext<'_>, range: &Range<usize>) -> bool {
-    let (input, origin) = context.source();
-    let Some((start, end)) = range
-        .start
-        .checked_sub(origin)
-        .zip(range.end.checked_sub(origin))
-    else {
-        return false;
-    };
-    if input.get(start..end).is_none() {
-        return false;
-    }
-    let ranges = context
-        .quote_ranges
-        .get_or_insert_with(|| quotation_ranges(input));
-    let index = ranges.partition_point(|r| r.end <= start);
-    !ranges
-        .get(index)
-        .is_some_and(|r| r.start < end && start < r.end)
-}
-
 pub(super) fn apply(
     tokens: &mut [Token],
     i: usize,
@@ -259,7 +238,7 @@ pub(super) fn apply(
     if protected
         .iter()
         .any(|r| r.start < range.end && range.start < r.end && *r != digit)
-        || !unquoted(context, &range)
+        || !context.unquoted(&range)
     {
         return false;
     }

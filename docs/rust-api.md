@@ -68,6 +68,10 @@ match analyzer.try_tokenize("東京都に住んでいる") {
 `Token` のフィールドは `surface`・`start`・`end`（入力のバイト位置）・`pos`（品詞 4 階層）・`conj_type`・`conj_form`・
 `base_form`・`reading`・`pronunciation`・`word_cost`・`is_known`。
 
+`is_known=false` は未知語のほか、規則で数詞・単位の素性を合成した結果も表す。
+明確な面積構文のカタカナ数量では、数詞の原形は検証したASCII整数、単位の原形は「平方メートル」とし、
+表層形・UTF-8範囲は元入力を保持する。適用範囲とコストの扱いは [解析の仕組み](architecture.md#読みと字幅) を参照。
+
 辞書は mmap で読み込むので、読み込み中の辞書ファイルを書き換えたり切り詰めたりしてはいけない。
 辞書を差し替えるときは別名で書いてから rename する（`hasami build` / `merge` / `repair` の出力はそうしている）。
 
