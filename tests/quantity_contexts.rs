@@ -37,6 +37,69 @@ fn assert_reading(text: &str, tokens: &[Token], surface: &str, reading: &str, sp
 
 #[test]
 #[ignore = "配布辞書3種が必要"]
+fn distributed_ascii_units_keep_complete_unit_boundaries_and_scalar_readings() {
+    let dir = std::env::var("HASAMI_TEST_DICT_DIR")
+        .unwrap_or_else(|_| format!("{}/dict", env!("CARGO_MANIFEST_DIR")));
+    for name in ["ipadic", "ipadic-neologd", "ipadic-neologd-sudachi"] {
+        let mut analyzer = Analyzer::load(format!("{dir}/{name}.hsd")).unwrap();
+        for _ in 0..2 {
+            let text = "幅は64bit。速さは37mph。速度は4.5mph。熱量は1,500kcal。";
+            let tokens = analyzer.try_tokenize(text).unwrap();
+            for (number, unit, reading, speech) in [
+                ("64", "bit", "ロクジュウヨンビット", "ロクジューヨンビット"),
+                (
+                    "37",
+                    "mph",
+                    "サンジュウナナエムピーエイチ",
+                    "サンジューナナエムピーエイチ",
+                ),
+                (
+                    "4.5",
+                    "mph",
+                    "ヨンテンゴエムピーエイチ",
+                    "ヨンテンゴエムピーエイチ",
+                ),
+                (
+                    "1,500",
+                    "kcal",
+                    "センゴヒャクキロカロリー",
+                    "センゴヒャクキロカロリー",
+                ),
+            ] {
+                let surface = format!("{number}{unit}");
+                assert_reading(text, &tokens, &surface, reading, speech);
+                let start = text.find(&surface).unwrap();
+                let scalar = tokens.iter().find(|t| t.start == start).unwrap();
+                assert_eq!(scalar.surface.as_ref(), number);
+                assert_eq!(scalar.base_form.as_ref(), number);
+                assert_eq!(scalar.pos.as_ref(), "名詞,数,*,*");
+                assert!(!scalar.is_known);
+                let suffix = tokens.iter().find(|t| t.start == scalar.end).unwrap();
+                assert_eq!(suffix.surface.as_ref(), unit);
+                assert_eq!(suffix.end, start + surface.len());
+            }
+            for (text, number, reading) in [
+                ("ID64bit", "64", "ロクジュウヨン"),
+                ("64bitX", "64", "ロクジュウヨン"),
+                ("37mph_2", "37", "サンジュウナナ"),
+                ("６４bit", "６４", "ロクジュウヨン"),
+                ("64ｂｉｔ", "64", "ロクジュウヨン"),
+                ("1,500kcalX", "1,500", "センゴヒャク"),
+            ] {
+                let tokens = analyzer.try_tokenize(text).unwrap();
+                assert!(
+                    tokens.iter().all(|t| t.surface.as_ref() != number
+                        || t.is_known
+                        || t.reading.as_ref() != reading),
+                    "{name}: {text}: {tokens:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+#[ignore = "配布辞書3種が必要"]
 fn distributed_zero_digits_before_large_units_keep_positional_readings_in_sentences() {
     let dir = std::env::var("HASAMI_TEST_DICT_DIR")
         .unwrap_or_else(|_| format!("{}/dict", env!("CARGO_MANIFEST_DIR")));
