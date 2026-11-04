@@ -141,6 +141,7 @@ pub(crate) struct Frame {
     pub number: Range<usize>,
     pub end: usize,
     pub reading: &'static str,
+    pub allow_unknown_pos: bool,
 }
 
 pub(crate) fn crosses_boundary(
@@ -286,6 +287,18 @@ pub(crate) fn coalesce_units(
         {
             continue;
         }
+        let allow_unknown_pos = frame.allow_unknown_pos
+            && out[begin..finish]
+                .windows(2)
+                .all(|p| p[0].end == p[1].start)
+            && out[begin..finish].iter().all(|token| {
+                token
+                    .start
+                    .checked_sub(offset)
+                    .zip(token.end.checked_sub(offset))
+                    .and_then(|(a, b)| input.get(a..b))
+                    == Some(token.surface.as_ref())
+            });
         while read < out.len() && out[read].end <= frame.number.end {
             out.swap(write, read);
             write += 1;
@@ -312,6 +325,18 @@ pub(crate) fn coalesce_units(
         }
         // 選択された一語の単位は、辞書の素性と明示された読みを保持する。
         if limit - start == 1 {
+            let token = &mut out[start];
+            // 標準の数量に直結した未知英字の組織名だけを、合成した単位と同じ品詞にする。
+            // 読みの補完は後段で行い、他の素性・既知語・独自読みは変更しない。
+            if allow_unknown_pos
+                && !token.is_known
+                && token.pos.as_ref() == "名詞,固有名詞,組織,*"
+                && token.base_form == token.surface
+                && token.surface.bytes().all(|b| b.is_ascii_alphabetic())
+                && unit_piece(token)
+            {
+                token.pos = Arc::from("名詞,接尾,助数詞,*");
+            }
             // 完全な面積・体積フレームの中で、空欄または標準の単位読みだけを補完する。
             // 独自読み・人名・原形の異なる語は、単位表記と同形でも上書きしない。
             if let Some((reading, pronunciation)) = area {
@@ -512,6 +537,91 @@ mod tests {
             pronunciation: reading.into(),
             word_cost: 123,
             is_known: true,
+        }
+    }
+
+    fn unknown_power_unit(offset: usize) -> Vec<Token> {
+        let mut number = token("75", offset, "ナナジュウゴ");
+        number.pos = "名詞,数,*,*".into();
+        number.pronunciation = "ナナジューゴ".into();
+        let mut unit = token("kW", offset + 2, "");
+        unit.pos = "名詞,固有名詞,組織,*".into();
+        unit.is_known = false;
+        vec![number, unit]
+    }
+
+    #[test]
+    fn unknown_ascii_unit_changes_only_organization_pos() {
+        let text = "75kW";
+        let mut out = unknown_power_unit(31);
+        let prior = token("前", 0, "マエ");
+        out.insert(0, prior);
+        let mut expected = out.clone();
+        expected[2].pos = "名詞,接尾,助数詞,*".into();
+        coalesce_units(
+            text,
+            31,
+            &mut out,
+            1,
+            &super::super::AsciiPlan::new(text, 31),
+        );
+        assert_eq!(format!("{out:?}"), format!("{expected:?}"));
+    }
+
+    #[test]
+    fn unknown_unit_pos_preserves_nonstandard_fields_and_known_units() {
+        for mutation in 0..9 {
+            let mut out = unknown_power_unit(31);
+            match mutation {
+                0 => out[1].is_known = true,
+                1 => out[1].reading = "カスタム".into(),
+                2 => out[1].base_form = "別の原形".into(),
+                3 => out[1].conj_type = "custom".into(),
+                4 => out[1].pos = "名詞,固有名詞,人名,姓".into(),
+                5 => out[0].reading = "ナナゴ".into(),
+                6 => out[0].base_form = "76".into(),
+                7 => out[1].start += 1,
+                8 => out[1].pos = "名詞,一般,*,*".into(),
+                _ => unreachable!(),
+            }
+            let before = format!("{out:?}");
+            coalesce_units(
+                "75kW",
+                31,
+                &mut out,
+                0,
+                &super::super::AsciiPlan::new("75kW", 31),
+            );
+            assert_eq!(format!("{out:?}"), before, "mutation {mutation}");
+        }
+    }
+
+    #[test]
+    fn unknown_unit_pos_uses_full_input_identifier_guards_across_chunks() {
+        for (full, offset) in [
+            ("ID75kW", 2),
+            ("型番75kW", 6),
+            ("コード75kW", 9),
+            ("型番(75kW)", 7),
+            ("第75kW", 3),
+            ("075kW", 1),
+            ("75kWX", 0),
+            ("75kW_2", 0),
+            ("75kWＡ", 0),
+            ("75kW－2", 0),
+            ("75kW＿2", 0),
+            ("75kW．2", 0),
+        ] {
+            let mut out = unknown_power_unit(offset);
+            let before = format!("{out:?}");
+            coalesce_units(
+                "75kW",
+                offset,
+                &mut out,
+                0,
+                &super::super::AsciiPlan::new(full, 0),
+            );
+            assert_eq!(format!("{out:?}"), before, "{full}");
         }
     }
 
