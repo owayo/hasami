@@ -175,3 +175,44 @@ fn distributed_eleven_month_keeps_known_dates_quotes_and_name_contexts() {
         }
     }
 }
+
+#[test]
+#[ignore = "配布辞書3種が必要"]
+fn distributed_finite_kanji_pairs_keep_approximate_days_and_identifier_contexts() {
+    let dir = std::env::var("HASAMI_TEST_DICT_DIR")
+        .unwrap_or_else(|_| format!("{}/dict", env!("CARGO_MANIFEST_DIR")));
+    for name in ["ipadic", "ipadic-neologd", "ipadic-neologd-sudachi"] {
+        let mut analyzer = Analyzer::load(format!("{dir}/{name}.hsd")).unwrap();
+        for _ in 0..2 {
+            let text = "期間は一八か月で、年齢は二一歳だ。一一歳も記録した。";
+            let tokens = analyzer.try_tokenize(text).unwrap();
+            for (surface, reading, speech) in [
+                ("一八か月", "ジュウハッカゲツ", "ジューハッカゲツ"),
+                ("二一歳", "ニジュウイッサイ", "ニジューイッサイ"),
+                ("一一歳", "ジュウイッサイ", "ジューイッサイ"),
+            ] {
+                assert_reading(text, &tokens, surface, reading, speech);
+            }
+            let text = "二三日で終わる。";
+            let tokens = analyzer.try_tokenize(text).unwrap();
+            assert_reading(text, &tokens, "二三日", "ニサンニチ", "ニサンニチ");
+            for text in ["ID二一歳", "二一歳A", "二一", "〇一歳", "1一歳"] {
+                let tokens = analyzer.try_tokenize(text).unwrap();
+                assert!(
+                    tokens.iter().all(|t| {
+                        t.is_known
+                            || t.pos.as_ref() != "名詞,数,*,*"
+                            || !matches!(t.surface.as_ref(), "二一" | "〇一" | "1一")
+                    }),
+                    "{name}: {text}: {tokens:?}"
+                );
+                for token in &tokens {
+                    assert_eq!(
+                        text.get(token.start..token.end),
+                        Some(token.surface.as_ref())
+                    );
+                }
+            }
+        }
+    }
+}
