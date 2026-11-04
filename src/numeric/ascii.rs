@@ -163,6 +163,7 @@ pub(crate) struct AsciiPlan {
     contiguous_months: Vec<super::month::ContiguousMonth>,
     kanji_starts: Vec<usize>,
     year_starts: Vec<usize>,
+    fullwidth_calendar_years: Vec<Range<usize>>,
 
     comma_year_starts: Vec<usize>,
     negative_decimals: Vec<Range<usize>>,
@@ -407,6 +408,15 @@ impl AsciiPlan {
         &self.year_starts
     }
 
+    pub(super) fn fullwidth_calendar_year(&self, start: usize) -> Option<&Range<usize>> {
+        let index = self
+            .fullwidth_calendar_years
+            .partition_point(|range| range.start < start);
+        self.fullwidth_calendar_years
+            .get(index)
+            .filter(|range| range.start == start)
+    }
+
     pub(super) fn has_kanji_in(&self, start: usize, end: usize) -> bool {
         let i = self.kanji_starts.partition_point(|&s| s < start);
         self.kanji_starts.get(i).is_some_and(|&s| s < end)
@@ -475,7 +485,13 @@ impl AsciiPlan {
     }
 
     pub(crate) fn new(input: &str, offset: usize) -> Self {
-        let kanji_starts = super::kanji::number_starts(input, offset);
+        let mut kanji_starts = super::kanji::number_starts(input, offset);
+        let fullwidth_calendar_years = super::fullwidth::calendar_years(input, offset);
+        if !fullwidth_calendar_years.is_empty() {
+            kanji_starts.extend(fullwidth_calendar_years.iter().map(|range| range.start));
+            kanji_starts.sort_unstable();
+            kanji_starts.dedup();
+        }
 
         let comma_year_starts = super::kanji::comma_year_starts(input, offset, &kanji_starts);
         let mut plan = Self {
@@ -483,6 +499,7 @@ impl AsciiPlan {
             month_starts: super::month::number_starts(input, offset),
             contiguous_months: super::month::contiguous_frames(input, offset),
             kanji_starts,
+            fullwidth_calendar_years,
             year_starts: super::year::number_starts(input, offset, |prefix| {
                 !super::kanji::identifier_prefix(prefix)
             }),
