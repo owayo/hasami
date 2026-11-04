@@ -37,6 +37,65 @@ fn assert_reading(text: &str, tokens: &[Token], surface: &str, reading: &str, sp
 
 #[test]
 #[ignore = "配布辞書3種が必要"]
+fn distributed_horsepower_has_katakana_units_and_complete_scalars_in_context() {
+    let dir = std::env::var("HASAMI_TEST_DICT_DIR")
+        .unwrap_or_else(|_| format!("{}/dict", env!("CARGO_MANIFEST_DIR")));
+    for name in ["ipadic", "ipadic-neologd", "ipadic-neologd-sudachi"] {
+        let mut analyzer = Analyzer::load(format!("{dir}/{name}.hsd")).unwrap();
+        let standalone = analyzer.try_tokenize("hp").unwrap();
+        assert_reading("hp", &standalone, "hp", "エイチピー", "エイチピー");
+        for _ in 0..2 {
+            for text in ["12hp", "6.4hp", "出力は12hp。別案は6.4hp。"] {
+                let tokens = analyzer.try_tokenize(text).unwrap();
+                for (number, reading, speech) in [
+                    ("12", "ジュウニバリキ", "ジューニバリキ"),
+                    ("6.4", "ロクテンヨンバリキ", "ロクテンヨンバリキ"),
+                ] {
+                    let quantity = format!("{number}hp");
+                    if !text.contains(&quantity) {
+                        continue;
+                    }
+                    assert_reading(text, &tokens, &quantity, reading, speech);
+                    let start = text.find(&quantity).unwrap();
+                    let scalar = tokens.iter().find(|t| t.start == start).unwrap();
+                    assert_eq!(scalar.surface.as_ref(), number);
+                    assert_eq!(scalar.base_form.as_ref(), number);
+                    assert_eq!(scalar.pos.as_ref(), "名詞,数,*,*");
+                    assert!(!scalar.is_known);
+                    let unit = tokens.iter().find(|t| t.start == scalar.end).unwrap();
+                    assert_eq!(unit.surface.as_ref(), "hp");
+                    assert_eq!(unit.end, start + quantity.len());
+                    assert_eq!(unit.reading.as_ref(), "バリキ");
+                    assert_eq!(unit.pronunciation.as_ref(), "バリキ");
+                    assert!(unit.conj_type.is_empty() && unit.conj_form.is_empty());
+                    assert_eq!(
+                        analyzer
+                            .quantity_pronunciation(&quantity)
+                            .unwrap()
+                            .as_deref(),
+                        Some(speech)
+                    );
+                }
+            }
+            for text in ["ID12hp", "12hpX", "１２hp"] {
+                let tokens = analyzer.try_tokenize(text).unwrap();
+                assert!(
+                    tokens
+                        .iter()
+                        .all(|t| t.surface.as_ref() != "12" || t.is_known),
+                    "{name}: {text}: {tokens:?}"
+                );
+            }
+            assert_eq!(
+                format!("{standalone:?}"),
+                format!("{:?}", analyzer.try_tokenize("hp").unwrap())
+            );
+        }
+    }
+}
+
+#[test]
+#[ignore = "配布辞書3種が必要"]
 fn distributed_unknown_ascii_units_are_not_organizations_in_quantities() {
     let dir = std::env::var("HASAMI_TEST_DICT_DIR")
         .unwrap_or_else(|_| format!("{}/dict", env!("CARGO_MANIFEST_DIR")));
