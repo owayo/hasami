@@ -7,7 +7,9 @@
 #
 # 上流の版は scripts/dictionary-sources.json から読み、git は commit、ダウンロードは SHA-256 で検証する。
 # Actions の Update Dictionary Sources が最新版を取得・検証し、変更した版と SHA-256 を自動コミットする。
-# 取得物は --src の下に置き、2 回目以降は再取得しない。中間成果物 (整えた IPAdic のソース・展開した
+# 取得物は --src の下に置く。Gitキャッシュは独立checkout・clean・必要入力を検査し、同じcommitなら再取得しない。
+# dirtyや未確認のpathは保持して止める。cleanな別版は削除せず、前のHEADを専用refに残して固定commitへ移る。
+# 中間成果物 (整えた IPAdic のソース・展開した
 # NEologd の seed・SudachiDict の変換結果・repair 前の辞書) は実行ごとの作業ディレクトリに作り、終了時に消す。
 # 前回の中間辞書を使い回すと、hasami や scripts/*.py を直した後も古い土台から作ってしまうため。
 #
@@ -99,17 +101,7 @@ fi
 # ---------------------------------------------------------------- 取得
 
 # git リポジトリの一部 (sparse checkout) を指定の commit で取り出す
-fetch_git() {
-  local repo=$1 commit=$2 dir=$3 path=$4
-  if [ -d "$dir/.git" ] && [ "$(git -C "$dir" rev-parse HEAD)" = "$commit" ]; then
-    return
-  fi
-  log "fetch $repo @ ${commit:0:12} ($path)"
-  rm -rf "$dir"
-  git clone --quiet --filter=blob:none --no-checkout "$repo" "$dir"
-  git -C "$dir" sparse-checkout set "$path"
-  git -C "$dir" checkout --quiet "$commit"
-}
+source scripts/dictionary_source_cache.sh
 
 # URL のファイルを取得し、SHA-256 を検証する
 fetch_url() {
