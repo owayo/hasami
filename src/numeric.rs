@@ -23,6 +23,31 @@ pub(crate) use kanji::apply as apply_kanji_quantities;
 pub(crate) use month::apply as apply_spaced_months;
 pub(crate) use year::apply as apply_year_readings;
 
+/// ASCII原形を持つ既知のカタカナ別表記だけを、既存の標準位取りと照合する。
+pub(crate) fn katakana_alias_readings(token: &Token) -> Option<(String, String)> {
+    if !token.is_known
+        || token.pos.as_ref() != "名詞,固有名詞,一般,*"
+        || !token.conj_type.is_empty()
+        || !token.conj_form.is_empty()
+        || token.base_form.is_empty()
+        || !token.base_form.bytes().all(|b| b.is_ascii_digit())
+        || token.surface.is_empty()
+        || !token
+            .surface
+            .chars()
+            .all(|c| matches!(c, 'ァ'..='ヺ' | 'ー'))
+        || (token.surface != token.reading && token.surface != token.pronunciation)
+    {
+        return None;
+    }
+    let number = ascii::parse(&token.base_form)?;
+    let (reading, pronunciation) = ascii::readings(&token.base_form, number);
+    // 辞書別表記では仮名遣いの「ウ」が発音にも入る。生成した標準の2表記だけを認める。
+    let standard = [reading.as_str(), pronunciation.as_str()];
+    (standard.contains(&token.reading.as_ref()) && standard.contains(&token.pronunciation.as_ref()))
+        .then_some((reading, pronunciation))
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Ending {
     One,

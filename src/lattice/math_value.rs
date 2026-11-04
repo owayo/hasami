@@ -42,6 +42,26 @@ impl<'a> ContextualReadingContext<'a> {
         (self.input, self.origin)
     }
 
+    pub(super) fn unquoted(&mut self, range: &Range<usize>) -> bool {
+        let Some((start, end)) = range
+            .start
+            .checked_sub(self.origin)
+            .zip(range.end.checked_sub(self.origin))
+        else {
+            return false;
+        };
+        if self.input.get(start..end).is_none() {
+            return false;
+        }
+        let ranges = self
+            .quote_ranges
+            .get_or_insert_with(|| super::quotation_ranges(self.input));
+        let index = ranges.partition_point(|r| r.end <= start);
+        !ranges
+            .get(index)
+            .is_some_and(|r| r.start < end && start < r.end)
+    }
+
     pub(super) fn record(&mut self, token: &Token) {
         if let Some(spans) = self.spans.as_deref_mut() {
             let span = crate::ContextualReadingSpan {

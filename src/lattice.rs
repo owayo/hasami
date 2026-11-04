@@ -35,6 +35,7 @@ use crate::kana::{to_katakana, unvoice, voice};
 use std::sync::Arc;
 
 mod idiom;
+mod katakana_area;
 mod math_value;
 mod particle;
 mod rank;
@@ -64,9 +65,10 @@ pub struct Token {
     pub reading: Arc<str>,
     /// 発音
     pub pronunciation: Arc<str>,
-    /// 単語コスト。合成した ASCII 数詞は元トークンのコストの総和（i16 の範囲に飽和）
+    /// 単語コスト。複数語から合成した数詞・単位は元コストの総和をi16の範囲に一度だけ飽和する。
+    /// 一語のカタカナ数詞別表記を数詞へ補正した場合は、その元コストを保つ。
     pub word_cost: i16,
-    /// 辞書由来 (true=辞書, false=未知語または合成した ASCII 数詞)
+    /// 辞書由来。falseは未知語、または規則で数詞・単位の素性を合成したトークン。
     pub is_known: bool,
 }
 
@@ -1280,6 +1282,7 @@ impl LatticeWorkspace {
             &protected,
             |surface| unit_reading(surface).is_some_and(is_katakana_str),
         );
+        katakana_area::apply(out, first, dict, &protected, contextual_readings)?;
         rank::apply_explicit_names(out, first, dict, &protected, contextual_readings)?;
         rank::apply(&mut out[first..], dict, &protected, contextual_readings)?;
         apply_contextual_readings_with_protection(
