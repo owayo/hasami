@@ -37,6 +37,67 @@ fn assert_reading(text: &str, tokens: &[Token], surface: &str, reading: &str, sp
 
 #[test]
 #[ignore = "配布辞書3種が必要"]
+fn distributed_unknown_ascii_units_are_not_organizations_in_quantities() {
+    let dir = std::env::var("HASAMI_TEST_DICT_DIR")
+        .unwrap_or_else(|_| format!("{}/dict", env!("CARGO_MANIFEST_DIR")));
+    for name in ["ipadic", "ipadic-neologd", "ipadic-neologd-sudachi"] {
+        let mut analyzer = Analyzer::load(format!("{dir}/{name}.hsd")).unwrap();
+        for _ in 0..2 {
+            for text in ["75kW", "出力は75kW。幅は64bit。速度は4.5mph。"] {
+                let tokens = analyzer.try_tokenize(text).unwrap();
+                assert_reading(
+                    text,
+                    &tokens,
+                    "75kW",
+                    "ナナジュウゴキロワット",
+                    "ナナジューゴキロワット",
+                );
+                let unit = tokens.iter().find(|t| t.surface.as_ref() == "kW").unwrap();
+                assert!(!unit.is_known, "{name}: {text}: {tokens:?}");
+                assert!(!unit.pos.contains(",組織,"), "{name}: {text}: {tokens:?}");
+                assert_eq!(unit.base_form.as_ref(), "kW");
+                assert!(unit.conj_type.is_empty() && unit.conj_form.is_empty());
+                for unit in tokens
+                    .iter()
+                    .filter(|t| !t.is_known && matches!(t.surface.as_ref(), "bit" | "mph"))
+                {
+                    assert!(!unit.pos.contains(",組織,"), "{name}: {text}: {tokens:?}");
+                }
+            }
+            for (text, speech) in [
+                ("10cm", "ジュッセンチメートル"),
+                ("170cm", "ヒャクナナジュッセンチメートル"),
+                ("6kg", "ロッキログラム"),
+            ] {
+                let tokens = analyzer.try_tokenize(text).unwrap();
+                // 一語の既知語や既知の単位は辞書の読みを保つ。未知の単位の経路を検査する。
+                if tokens
+                    .last()
+                    .is_some_and(|t| !t.is_known && matches!(t.surface.as_ref(), "cm" | "kg"))
+                {
+                    assert_reading(text, &tokens, text, speech, speech);
+                    assert_eq!(
+                        analyzer.quantity_pronunciation(text).unwrap().as_deref(),
+                        Some(speech)
+                    );
+                }
+            }
+            for text in ["ID75kW", "型番75kW", "75kWX", "75kW_2", "75kWＡ", "75kW－2"] {
+                let tokens = analyzer.try_tokenize(text).unwrap();
+                assert!(
+                    tokens
+                        .iter()
+                        .filter(|t| !t.is_known && t.surface.as_ref() == "kW")
+                        .all(|t| t.pos.as_ref() != "名詞,接尾,助数詞,*"),
+                    "{name}: {text}: {tokens:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+#[ignore = "配布辞書3種が必要"]
 fn distributed_ascii_units_keep_complete_unit_boundaries_and_scalar_readings() {
     let dir = std::env::var("HASAMI_TEST_DICT_DIR")
         .unwrap_or_else(|_| format!("{}/dict", env!("CARGO_MANIFEST_DIR")));

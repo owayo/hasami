@@ -529,6 +529,12 @@ impl AsciiPlan {
                     number: c.number.clone(),
                     end: c.envelope.end,
                     reading: super::units::reading(suffix)?,
+                    // 読みの既存の認可を広げず、未知単位の品詞補正には全文の境界も要求する。
+                    allow_unknown_pos: super::month::eleven_prefix_allowed(&input[..c.number.start - offset])
+                        && unit_boundary_after(&input[c.envelope.end - offset..])
+                        && !input[c.envelope.end - offset..].starts_with([
+                            '＿', '＾', '＊', '＝', '．', '／', '∕', '÷', '×', '＋', '－', '−', '‐', '‑', '‒', '–', '—', '―',
+                        ]),
                 })
             })
             .collect();
@@ -552,9 +558,13 @@ pub(super) fn unit_boundary(input: &str, offset: usize, t: &Token) -> bool {
     let Some(end) = t.end.checked_sub(offset) else {
         return false;
     };
-    input.get(end..).is_some_and(|rest| rest.chars().next().is_none_or(|c| {
+    input.get(end..).is_some_and(unit_boundary_after)
+}
+
+fn unit_boundary_after(rest: &str) -> bool {
+    rest.chars().next().is_none_or(|c| {
         !c.is_ascii_alphanumeric() && !matches!(c, '_' | '^' | '/' | '*' | '+' | '-' | '=' | '²' | '³' | 'Ａ'..='Ｚ' | 'ａ'..='ｚ' | '０'..='９')
-    }))
+    })
 }
 
 /// 範囲 first.. だけを線形に圧縮する。保護した範囲は後段の数詞補正にも渡す。
