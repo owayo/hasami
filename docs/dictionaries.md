@@ -165,7 +165,18 @@ raw の版と ZIP の SHA-256）。ビルドはこの記録を読み、同じ取
 独自 CSV は `scripts/dictionary-inputs.json` の取得ブランチ（main）を使い、辞書用 CI は毎回その HEAD を取得する。
 CSV の変更は非公開側の main にコミット・push するだけで、公開側の SHA 指定の更新は不要。
 生成した `.hsd` のメタデータ `user_dictionary` には、実際に使った checkout のコミットを記録する。
-取得物は `.dict-src/` に置き、2 回目以降は再取得しない。中間成果物（repair を掛ける前の辞書、SudachiDict の
+取得物は `.dict-src/` に置く。Git のキャッシュは `scripts/dictionary_source_cache.sh` で使う前に検査し、同じ
+コミットで clean なものだけを通信せず再利用する。追跡ファイルの変更・削除、staged、untracked、ignored の
+ファイルがあれば、取得や checkout の前に内容を保持して停止する。通常の `.git` ディレクトリを持つ独立した
+checkout に限り、Git でないディレクトリ・ファイル、親リポジトリ配下のディレクトリ、symlink、linked worktree、
+別の Git common directory を使うものは変更しない。
+必要な入力ディレクトリ（`mecab-ipadic` または `seed`）は、指定版の追跡ファイルが通常ファイルとして実在する
+ことを確かめる。assume-unchanged は拒否し、必要入力の skip-worktree も拒否する。入力外の sparse 除外は許す。
+これは Git の状態と必要入力の実在を検査するもので、任意の Git filter や設定を含めて全内容の同一性を証明するものではない。
+clean な別版を更新するときもリポジトリを削除しない。以前の HEAD は `refs/hasami/source-cache/<元SHA>` に残し、
+必要なら指定の取得元から固定コミットを fetch して detached HEAD へ移る。既存の origin、ローカルブランチは変更しない。
+停止した場合はキャッシュを調べるか、別の `--src` を指定する。初回の取得が失敗した場合も残った path は自動削除しない。
+中間成果物（repair を掛ける前の辞書、SudachiDict の
 変換結果など）は実行ごとの作業ディレクトリに作って終了時に消すので、`dict/` の配布辞書のほかには残らない。
 repair を手で試し直すために repair 前の辞書が要るときは、`scripts/build-dict.sh --keep-intermediate` で
 `.dict-src/build/*.base.hsd` に残す。
