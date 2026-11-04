@@ -89,3 +89,95 @@ fn distributed_lexical_readings_survive_independent_sentence_contexts() {
         );
     }
 }
+
+#[test]
+#[ignore = "配布辞書3種が必要"]
+fn distributed_mode_lexeme_keeps_readings_and_other_uses() {
+    let dir = std::env::var("HASAMI_TEST_DICT_DIR")
+        .unwrap_or_else(|_| format!("{}/dict", env!("CARGO_MANIFEST_DIR")));
+    for name in ["ipadic", "ipadic-neologd", "ipadic-neologd-sudachi"] {
+        let mut analyzer = Analyzer::load(format!("{dir}/{name}.hsd")).unwrap();
+        for _ in 0..2 {
+            for text in [
+                "最頻値",
+                "最頻値は一つだ。",
+                "最頻値を調べる。",
+                "この表では最頻値が二つある。",
+                "度数を数えて最頻値を求める。",
+            ] {
+                let start = text.find("最頻値").unwrap();
+                let end = start + "最頻値".len();
+                let tokens = analyzer.try_tokenize(text).unwrap();
+                let focal: Vec<_> = tokens
+                    .iter()
+                    .filter(|t| t.start < end && start < t.end)
+                    .collect();
+                assert_eq!(focal.len(), 1, "{name}: {text}: {tokens:?}");
+                let token = focal[0];
+                assert_eq!(token.surface.as_ref(), "最頻値", "{name}: {text}");
+                assert_eq!((token.start, token.end), (start, end));
+                assert_eq!(token.pos.as_ref(), "名詞,一般,*,*");
+                assert_eq!(token.base_form, token.surface);
+                assert_eq!(token.reading.as_ref(), "サイヒンチ");
+                assert_eq!(token.pronunciation.as_ref(), "サイヒンチ");
+                assert!(token.is_known);
+                assert!(token.conj_type.is_empty() && token.conj_form.is_empty());
+                assert!(
+                    analyzer
+                        .dictionary()
+                        .lookup("最頻値")
+                        .unwrap()
+                        .into_iter()
+                        .any(|(end, rows)| {
+                            end == "最頻値".len()
+                                && rows.iter().any(|entry| {
+                                    entry.pos == token.pos
+                                        && entry.base_form == token.base_form
+                                        && entry.reading == token.reading
+                                        && entry.pronunciation == token.pronunciation
+                                        && entry.cost == token.word_cost
+                                        && matches!(entry.conj_type.as_ref(), "" | "*")
+                                        && matches!(entry.conj_form.as_ref(), "" | "*")
+                                })
+                        }),
+                    "{name}: selected metadata must come from a dictionary entry"
+                );
+                for token in &tokens {
+                    assert_eq!(
+                        text.get(token.start..token.end),
+                        Some(token.surface.as_ref())
+                    );
+                }
+                assert!(tokens.windows(2).all(|pair| pair[0].end == pair[1].start));
+            }
+            let tokens = analyzer.try_tokenize("品物の値が上がる。").unwrap();
+            let price = tokens.iter().find(|t| t.surface.as_ref() == "値").unwrap();
+            assert_eq!(price.reading.as_ref(), "ネ", "{name}: {tokens:?}");
+            assert_eq!(price.pronunciation.as_ref(), "ネ");
+            assert_eq!(price.base_form.as_ref(), "値");
+            assert_eq!(price.pos.as_ref(), "名詞,一般,*,*");
+            assert!(price.is_known);
+            for (surface, speech) in [("頻", "シキ"), ("頻る", "シキル")] {
+                assert!(
+                    analyzer
+                        .dictionary()
+                        .lookup(surface)
+                        .unwrap()
+                        .into_iter()
+                        .any(|(end, rows)| {
+                            end == surface.len()
+                                && rows.iter().any(|entry| {
+                                    entry.base_form.as_ref() == "頻る"
+                                        && entry.pos.as_ref() == "動詞,自立,*,*"
+                                        && entry.reading.as_ref() == speech
+                                        && entry.pronunciation.as_ref() == speech
+                                        && entry.conj_type.as_ref() == "五段・ラ行"
+                                        && !entry.conj_form.is_empty()
+                                })
+                        }),
+                    "{name}: the healthy verb candidate must remain: {surface}"
+                );
+            }
+        }
+    }
+}
