@@ -6,8 +6,10 @@ use std::ops::Range;
 use std::sync::Arc;
 
 mod contiguous;
+mod first_day;
 pub(crate) use contiguous::apply as apply_contiguous;
 pub(super) use contiguous::{Frame as ContiguousMonth, frames as contiguous_frames};
+pub(crate) use first_day::apply as apply_first_day;
 
 const MONTHS: [([&str; 3], &str, &str); 12] = [
     (["1", "１", "一"], "イチ", "イチ"),

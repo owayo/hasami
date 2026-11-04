@@ -380,7 +380,19 @@ fn distributed_ascii_calendar_months_preserve_existing_known_month_names() {
                         Some(token.surface.as_ref())
                     );
                 }
-                assert!(analyzer.contextual_reading_spans(&text).unwrap().is_empty());
+                let receipts = analyzer.contextual_reading_spans(&text).unwrap();
+                if text[end..].starts_with("1日") {
+                    assert_eq!(
+                        receipts,
+                        [hasami::ContextualReadingSpan {
+                            start: end,
+                            end: end + "1日".len(),
+                            pronunciation: "ツイタチ".into(),
+                        }]
+                    );
+                } else {
+                    assert!(receipts.is_empty());
+                }
             }
         }
         let known = analyzer.try_tokenize("１１月").unwrap();

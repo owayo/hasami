@@ -1,7 +1,8 @@
 //! 最良パスの数詞と助数詞の読み。ASCII・純全角整数・位を省いた漢数字の数量は数詞列を合成する。
 //!
 //! 音便は助数詞ごとの対応表で決め、読み以外の情報を保持する。人・日の和語読みは数詞列全体を見る。
-//! 一日は日付と期間を区別できないので変更せず、二十日は単一数詞にまとまったときだけ読む。
+//! 初日は標準の月日が直結する暦日だけを合成し、裸の一日と期間は保持する。
+//! 二十日は単一数詞にまとまったときだけ読む。
 
 use crate::lattice::Token;
 use std::ops::Range;
@@ -22,6 +23,7 @@ pub(crate) use ascii::{AsciiPlan, apply as apply_ascii_quantities};
 pub(crate) use kanji::apply as apply_kanji_quantities;
 pub(crate) use month::apply as apply_spaced_months;
 pub(crate) use month::apply_contiguous as apply_contiguous_months;
+pub(crate) use month::apply_first_day as apply_calendar_first_day;
 pub(crate) use year::apply as apply_year_readings;
 
 /// ASCII原形を持つ既知のカタカナ別表記だけを、既存の標準位取りと照合する。
