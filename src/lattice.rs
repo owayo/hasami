@@ -65,10 +65,10 @@ pub struct Token {
     pub reading: Arc<str>,
     /// 発音
     pub pronunciation: Arc<str>,
-    /// 単語コスト。複数語から合成した数詞・単位は元コストの総和をi16の範囲に一度だけ飽和する。
+    /// 単語コスト。複数語から合成した数詞・単位・暦日は元コストの総和をi16の範囲に一度だけ飽和する。
     /// 一語のカタカナ数詞別表記を数詞へ補正した場合は、その元コストを保つ。
     pub word_cost: i16,
-    /// 辞書由来。falseは未知語、または規則で数詞・単位の素性を合成したトークン。
+    /// 辞書由来。falseは未知語、または規則で数詞・単位・暦日の素性を合成したトークン。
     pub is_known: bool,
 }
 
@@ -1293,6 +1293,7 @@ impl LatticeWorkspace {
         crate::numeric::apply_year_readings(input, offset, &mut out[first..], plan, &protected);
         crate::numeric::apply_spaced_months(input, offset, out, first, plan, &protected);
         crate::numeric::apply_contiguous_months(input, offset, out, first, dict, plan, &protected)?;
+        crate::numeric::apply_calendar_first_day(out, first, &protected, contextual_readings);
         Ok(())
     }
 }

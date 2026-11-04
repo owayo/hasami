@@ -38,11 +38,11 @@ impl<'a> ContextualReadingContext<'a> {
         }
     }
 
-    pub(super) fn source(&self) -> (&'a str, usize) {
+    pub(crate) fn source(&self) -> (&'a str, usize) {
         (self.input, self.origin)
     }
 
-    pub(super) fn unquoted(&mut self, range: &Range<usize>) -> bool {
+    pub(crate) fn unquoted(&mut self, range: &Range<usize>) -> bool {
         let Some((start, end)) = range
             .start
             .checked_sub(self.origin)
@@ -62,7 +62,7 @@ impl<'a> ContextualReadingContext<'a> {
             .is_some_and(|r| r.start < end && start < r.end)
     }
 
-    pub(super) fn record(&mut self, token: &Token) {
+    pub(crate) fn record(&mut self, token: &Token) {
         if let Some(spans) = self.spans.as_deref_mut() {
             let span = crate::ContextualReadingSpan {
                 start: token.start,

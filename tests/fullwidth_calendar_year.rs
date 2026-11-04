@@ -119,7 +119,15 @@ fn each_calendar_component_can_have_its_own_uniform_width_without_changing_month
             .cloned()
             .collect();
         assert_eq!(format!("{actual:?}"), format!("{expected:?}"), "{text}");
-        assert!(analyzer.contextual_reading_spans(&text).unwrap().is_empty());
+        let mut expected_receipts = analyzer.contextual_reading_spans(tail).unwrap();
+        for receipt in &mut expected_receipts {
+            receipt.start += "日付は２０１６年".len();
+            receipt.end += "日付は２０１６年".len();
+        }
+        assert_eq!(
+            analyzer.contextual_reading_spans(&text).unwrap(),
+            expected_receipts
+        );
         assert_eq!(analyzer.quantity_pronunciation(&text).unwrap(), None);
         assert!(
             analyzer

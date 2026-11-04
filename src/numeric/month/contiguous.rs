@@ -12,7 +12,7 @@ pub(crate) struct Frame {
     value: usize,
 }
 
-fn prefix_allowed(prefix: &str) -> bool {
+pub(super) fn prefix_allowed(prefix: &str) -> bool {
     let prefix = if let Some(year) = prefix.strip_suffix('年') {
         let before =
             year.trim_end_matches(|c| super::digit(c).is_some() || super::place(c).is_some());
