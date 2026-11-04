@@ -130,3 +130,48 @@ fn distributed_fullwidth_quantities_keep_original_surfaces_and_identifier_guards
         }
     }
 }
+
+#[test]
+#[ignore = "配布辞書3種が必要"]
+fn distributed_eleven_month_keeps_known_dates_quotes_and_name_contexts() {
+    let dir = std::env::var("HASAMI_TEST_DICT_DIR")
+        .unwrap_or_else(|_| format!("{}/dict", env!("CARGO_MANIFEST_DIR")));
+    for name in ["ipadic", "ipadic-neologd", "ipadic-neologd-sudachi"] {
+        let mut analyzer = Analyzer::load(format!("{dir}/{name}.hsd")).unwrap();
+        for text in [
+            "一一月",
+            "締切は一一月です。",
+            "確認した。締切は一一月です。",
+        ] {
+            let tokens = analyzer.try_tokenize(text).unwrap();
+            assert_reading(text, &tokens, "一一月", "ジュウイチガツ", "ジューイチガツ");
+        }
+        for text in ["「一一月」という識別子。", "名前は一一月。", "ID一一月"]
+        {
+            let tokens = analyzer.try_tokenize(text).unwrap();
+            assert_reading(text, &tokens, "一一月", "イチイチガツ", "イチイチガツ");
+        }
+        let text = "締切は十一月です。";
+        let tokens = analyzer.try_tokenize(text).unwrap();
+        assert_reading(text, &tokens, "十一月", "ジュウイチガツ", "ジューイチガツ");
+        if name != "ipadic" {
+            // 既知の「一月一日」を切り直さず、日付の読みを含めて保持する。
+            let text = "発売は一一月一日です。";
+            let tokens = analyzer.try_tokenize(text).unwrap();
+            assert_reading(
+                text,
+                &tokens,
+                "一一月一日",
+                "ジュウイチガツツイタチ",
+                "ジューイチガツツイタチ",
+            );
+            let day_word = tokens
+                .iter()
+                .find(|t| t.surface.as_ref() == "一月一日")
+                .unwrap();
+            assert!(day_word.is_known);
+            assert_eq!(day_word.reading.as_ref(), "イチガツツイタチ");
+            assert_eq!(day_word.pronunciation.as_ref(), "イチガツツイタチ");
+        }
+    }
+}
