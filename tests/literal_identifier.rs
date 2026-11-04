@@ -5,6 +5,62 @@ use hasami::Analyzer;
 
 #[test]
 #[ignore = "配布辞書3種が必要"]
+fn distributed_numeric_literal_ids_avoid_partial_minus_without_changing_tokens() {
+    let dir = std::env::var("HASAMI_TEST_DICT_DIR")
+        .unwrap_or_else(|_| format!("{}/dict", env!("CARGO_MANIFEST_DIR")));
+    for name in ["ipadic", "ipadic-neologd", "ipadic-neologd-sudachi"] {
+        let mut analyzer = Analyzer::load(format!("{dir}/{name}.hsd")).unwrap();
+        for _ in 0..2 {
+            for (text, expected) in [
+                ("123-4567", "イチニサンヨンゴロクナナ"),
+                ("03-1234-5678", "ゼロサンイチニサンヨンゴロクナナハチ"),
+                (
+                    "090-1234-5678",
+                    "ゼロキューゼロイチニサンヨンゴロクナナハチ",
+                ),
+            ] {
+                let before = analyzer.try_tokenize(text).unwrap();
+                if name == "ipadic-neologd" && text == "123-4567" {
+                    assert!(before.iter().any(|t| t.is_known
+                        && t.surface.as_ref() == "-4"
+                        && t.pronunciation.as_ref() == "マイナスヨン"));
+                }
+                assert_eq!(
+                    analyzer.normalize_identifier(text).unwrap().as_deref(),
+                    Some(expected),
+                    "{name}: {text}: {before:?}"
+                );
+                assert_eq!(
+                    format!("{before:?}"),
+                    format!("{:?}", analyzer.try_tokenize(text).unwrap())
+                );
+            }
+            for text in [
+                "2025-01-09",
+                "978-4-1234-5678-0",
+                "12-34",
+                "123",
+                "123-4567+8",
+                "１２３-４５６７",
+                "123−4567",
+            ] {
+                let before = analyzer.try_tokenize(text).unwrap();
+                assert_eq!(
+                    analyzer.normalize_identifier(text).unwrap(),
+                    None,
+                    "{name}: {text}"
+                );
+                assert_eq!(
+                    format!("{before:?}"),
+                    format!("{:?}", analyzer.try_tokenize(text).unwrap())
+                );
+            }
+        }
+    }
+}
+
+#[test]
+#[ignore = "配布辞書3種が必要"]
 fn distributed_identifiers_keep_selected_english_digits_beside_word_expansions() {
     let dir = std::env::var("HASAMI_TEST_DICT_DIR")
         .unwrap_or_else(|_| format!("{}/dict", env!("CARGO_MANIFEST_DIR")));
