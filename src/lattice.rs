@@ -1292,6 +1292,7 @@ impl LatticeWorkspace {
         );
         crate::numeric::apply_year_readings(input, offset, &mut out[first..], plan, &protected);
         crate::numeric::apply_spaced_months(input, offset, out, first, plan, &protected);
+        crate::numeric::apply_contiguous_months(input, offset, out, first, dict, plan, &protected)?;
         Ok(())
     }
 }
