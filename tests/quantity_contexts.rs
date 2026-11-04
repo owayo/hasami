@@ -37,6 +37,79 @@ fn assert_reading(text: &str, tokens: &[Token], surface: &str, reading: &str, sp
 
 #[test]
 #[ignore = "配布辞書3種が必要"]
+fn distributed_annual_frequencies_keep_noun_grammar_and_modifier_readings() {
+    let dir = std::env::var("HASAMI_TEST_DICT_DIR")
+        .unwrap_or_else(|_| format!("{}/dict", env!("CARGO_MANIFEST_DIR")));
+    for name in ["ipadic", "ipadic-neologd", "ipadic-neologd-sudachi"] {
+        let mut analyzer = Analyzer::load(format!("{dir}/{name}.hsd")).unwrap();
+        for _ in 0..2 {
+            for text in [
+                "年2回",
+                "年十二冊",
+                "年0回",
+                "回数は年2回だ。冊数も年十二冊だ。",
+            ] {
+                let tokens = analyzer.try_tokenize(text).unwrap();
+                for (quantity, reading, speech) in [
+                    ("年2回", "ネンニカイ", "ネンニカイ"),
+                    ("年十二冊", "ネンジュウニサツ", "ネンジューニサツ"),
+                    ("年0回", "ネンゼロカイ", "ネンゼロカイ"),
+                ] {
+                    if text.contains(quantity) {
+                        assert_reading(text, &tokens, quantity, reading, speech);
+                    }
+                }
+                for year in tokens.iter().filter(|t| t.surface.as_ref() == "年") {
+                    assert_eq!(year.pos.as_ref(), "名詞,一般,*,*");
+                    assert_eq!(year.base_form.as_ref(), "年");
+                    assert!(year.is_known);
+                    assert!(year.conj_type.is_empty() && year.conj_form.is_empty());
+                    assert!(
+                        analyzer
+                            .dictionary()
+                            .lookup("年")
+                            .unwrap()
+                            .iter()
+                            .any(|(end, rows)| *end == "年".len()
+                                && rows.iter().any(|row| row.pos == year.pos
+                                    && row.base_form == year.base_form
+                                    && row.cost == year.word_cost
+                                    && matches!(row.reading.as_ref(), "トシ" | "ネン")
+                                    && row.pronunciation == row.reading
+                                    && matches!(row.conj_type.as_ref(), "" | "*")
+                                    && matches!(row.conj_form.as_ref(), "" | "*"))),
+                        "{name}: original year features missing: {year:?}"
+                    );
+                }
+            }
+            for text in ["その年2冊を読んだ。", "ある年2回開催した。"] {
+                let tokens = analyzer.try_tokenize(text).unwrap();
+                assert_reading(text, &tokens, "年", "トシ", "トシ");
+                let year = tokens.iter().find(|t| t.surface.as_ref() == "年").unwrap();
+                assert_eq!(year.pos.as_ref(), "名詞,一般,*,*");
+            }
+            for (text, compound, speech) in [
+                ("前年2回", "前年", "ゼンネン"),
+                ("年末2回", "年末", "ネンマツ"),
+            ] {
+                let tokens = analyzer.try_tokenize(text).unwrap();
+                assert_reading(text, &tokens, compound, speech, speech);
+                assert!(
+                    tokens
+                        .iter()
+                        .any(|t| t.is_known && t.surface.as_ref() == compound)
+                );
+            }
+            let tokens = analyzer.try_tokenize("2000年2月").unwrap();
+            let year = tokens.iter().find(|t| t.surface.as_ref() == "年").unwrap();
+            assert_eq!(year.pos.as_ref(), "名詞,接尾,助数詞,*");
+            assert_eq!(year.pronunciation.as_ref(), "ネン");
+        }
+    }
+}
+
+#[test]
+#[ignore = "配布辞書3種が必要"]
 fn distributed_horsepower_has_katakana_units_and_complete_scalars_in_context() {
     let dir = std::env::var("HASAMI_TEST_DICT_DIR")
         .unwrap_or_else(|_| format!("{}/dict", env!("CARGO_MANIFEST_DIR")));
