@@ -163,3 +163,98 @@ fn distributed_rank_and_surname_contexts_keep_real_dictionary_features() {
         }
     }
 }
+
+#[test]
+#[ignore = "配布辞書3種が必要"]
+fn distributed_rank_documents_keep_chunk_offsets_and_separate_contexts() {
+    let dir = std::env::var("HASAMI_TEST_DICT_DIR")
+        .unwrap_or_else(|_| format!("{}/dict", env!("CARGO_MANIFEST_DIR")));
+    let pieces = [
+        "段位は「八段」です。\n",
+        "姓は「八段」です。\n",
+        "8段を目指す。\n",
+        "ID_八段_12\n",
+        "段位は未定。\n",
+        "八段太郎が来た。\n",
+    ];
+    for name in ["ipadic", "ipadic-neologd", "ipadic-neologd-sudachi"] {
+        let mut analyzer = Analyzer::load(format!("{dir}/{name}.hsd")).unwrap();
+        let bare = format!("{:?}", analyzer.try_tokenize("八段").unwrap());
+        let isolated: Vec<_> = pieces
+            .iter()
+            .map(|piece| {
+                (
+                    analyzer.try_tokenize(piece).unwrap(),
+                    analyzer.contextual_reading_spans(piece).unwrap(),
+                )
+            })
+            .collect();
+        // 長文の比較先も、段位・姓の独立した読みを満たす実解析に限定する。
+        for (index, speech) in [(0, "ハチダン"), (1, "ハッタン"), (5, "ハッタン")] {
+            if name == "ipadic" && index != 0 {
+                continue; // IPAdicには姓候補がなく、姓の正解とは扱わない。
+            }
+            let start = pieces[index].find("八段").unwrap();
+            let end = start + "八段".len();
+            assert_eq!(
+                isolated[index]
+                    .0
+                    .iter()
+                    .filter(|t| t.start < end && start < t.end)
+                    .map(|t| t.pronunciation.as_ref())
+                    .collect::<String>(),
+                speech,
+                "{name}: {}",
+                pieces[index]
+            );
+        }
+        let mut text = String::new();
+        let mut expected_tokens = Vec::new();
+        let mut expected_spans = Vec::new();
+        for _ in 0..16 {
+            for (piece, (tokens, spans)) in pieces.iter().zip(&isolated) {
+                let offset = text.len();
+                expected_tokens.extend(tokens.iter().cloned().map(|mut token| {
+                    token.start += offset;
+                    token.end += offset;
+                    token
+                }));
+                expected_spans.extend(spans.iter().cloned().map(|mut span| {
+                    span.start += offset;
+                    span.end += offset;
+                    span
+                }));
+                text.push_str(piece);
+            }
+        }
+        for _ in 0..2 {
+            let actual = analyzer.try_tokenize(&text).unwrap();
+            assert_eq!(
+                format!("{actual:?}"),
+                format!("{expected_tokens:?}"),
+                "{name}"
+            );
+            assert_eq!(
+                analyzer.contextual_reading_spans(&text).unwrap(),
+                expected_spans
+            );
+            let sentences: Vec<_> = analyzer
+                .try_tokenize_sentences(&text, &Default::default())
+                .unwrap()
+                .into_iter()
+                .flat_map(|(_, tokens)| tokens)
+                .collect();
+            assert_eq!(format!("{actual:?}"), format!("{sentences:?}"), "{name}");
+            for token in &actual {
+                assert_eq!(
+                    text.get(token.start..token.end),
+                    Some(token.surface.as_ref())
+                );
+            }
+            assert_eq!(
+                format!("{:?}", analyzer.try_tokenize("八段").unwrap()),
+                bare
+            );
+        }
+    }
+}
