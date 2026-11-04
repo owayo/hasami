@@ -717,6 +717,111 @@ mod tests {
         apply(text, 0, out, 0, &AsciiPlan::new(text, 0), &[], |_| false);
     }
 
+    fn scaled_tokens(text: &str, offset: usize) -> Vec<Token> {
+        let mut out = tokens(text, offset);
+        for token in &mut out {
+            token.base_form = token.surface.clone();
+            token.conj_type = "".into();
+            token.conj_form = "".into();
+            let reading = match token.surface.as_ref() {
+                "万" => "マン",
+                "億" => "オク",
+                _ => continue,
+            };
+            token.pos = "名詞,数,*,*".into();
+            token.reading = reading.into();
+            token.pronunciation = reading.into();
+        }
+        out
+    }
+
+    #[test]
+    fn scaled_zero_digits_keep_cost_metadata_counter_and_prior_output() {
+        for (text, reading, speech, expected_cost) in [
+            ("一〇〇〇万円", "センマン", "センマン", 30200),
+            ("一零零零万円", "センマン", "センマン", 30200),
+            ("二〇億円", "ニジュウオク", "ニジューオク", 30000),
+        ] {
+            let mut out = scaled_tokens(text, 81);
+            for (token, cost) in out.iter_mut().zip([30000, 30000, -30000]) {
+                token.word_cost = cost;
+            }
+            let suffix = format!("{:?}", out.last().unwrap());
+            let prior = tokens("前", 0).remove(0);
+            let previous = format!("{prior:?}");
+            out.insert(0, prior);
+            apply(
+                text,
+                81,
+                &mut out,
+                1,
+                &AsciiPlan::new(text, 81),
+                &[],
+                |_| false,
+            );
+            assert_eq!(out.len(), 3, "{text}: {out:?}");
+            assert_eq!(format!("{:?}", out[0]), previous);
+            assert_eq!(format!("{:?}", out[2]), suffix);
+            let number = &out[1];
+            assert_eq!(number.surface.as_ref(), text.strip_suffix('円').unwrap());
+            assert_eq!(number.base_form, number.surface);
+            assert_eq!((number.start, number.end), (81, 81 + text.len() - 3));
+            assert_eq!(number.reading.as_ref(), reading);
+            assert_eq!(number.pronunciation.as_ref(), speech);
+            assert_eq!(number.word_cost, expected_cost);
+            assert_eq!(number.pos.as_ref(), "名詞,数,*,*");
+            assert!(!number.is_known);
+            assert!(number.conj_type.is_empty() && number.conj_form.is_empty());
+        }
+    }
+
+    #[test]
+    fn scaled_quantities_require_standard_metadata_and_full_input_boundaries() {
+        for mutation in 0..8 {
+            let text = "二〇億円";
+            let mut out = scaled_tokens(text, 31);
+            let mut protected = Vec::new();
+            match mutation {
+                0 => out[0].reading = "ニノ".into(),
+                1 => out[0].base_form = "三".into(),
+                2 => out[1].conj_form = "custom".into(),
+                3 => out[2].pos = "名詞,固有名詞,一般,*".into(),
+                4 => out[3].is_known = false,
+                5 => out[3].pronunciation = "マル".into(),
+                6 => out[1].start += 1,
+                7 => protected.push(31..34),
+                _ => unreachable!(),
+            }
+            let before = format!("{out:?}");
+            apply(
+                text,
+                31,
+                &mut out,
+                0,
+                &AsciiPlan::new(text, 31),
+                &protected,
+                |_| false,
+            );
+            assert_eq!(format!("{out:?}"), before, "mutation {mutation}");
+        }
+        for text in [
+            "ID二〇億円",
+            "第 二〇億円",
+            "〇一億円",
+            "一〇2万円",
+            "一〇.〇万円",
+            "二三億円",
+            "「二〇億円」",
+            "二〇億円A",
+            "二〇億円/2",
+        ] {
+            let mut out = scaled_tokens(text, 0);
+            let before = format!("{out:?}");
+            apply_to(text, &mut out);
+            assert_eq!(format!("{out:?}"), before, "{text}");
+        }
+    }
+
     fn twenty_tokens(text: &str, offset: usize, single: bool) -> Vec<Token> {
         let mut out = tokens(text, offset);
         for t in &mut out {
