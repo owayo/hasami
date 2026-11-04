@@ -74,20 +74,12 @@ fn distributed_negative_decimal_magnitudes_keep_places_points_and_fraction_digit
     for name in ["ipadic", "ipadic-neologd", "ipadic-neologd-sudachi"] {
         let mut analyzer = Analyzer::load(format!("{dir}/{name}.hsd")).unwrap();
         for _ in 0..2 {
-            // NEologd の既知語「-1」が先頭を覆うケースは #92 で別に追う。
-            let texts = if name == "ipadic-neologd" {
-                [
-                    "-0.5",
-                    "=-0.045",
-                    "測定値は=-0.045。次は=-0.5。最後は=-0.045。",
-                ]
-            } else {
-                [
-                    "-0.5",
-                    "=-123.045",
-                    "測定値は=-123.045。次は=-0.5。最後は=-123.045。",
-                ]
-            };
+            let texts = [
+                "-0.5",
+                "=-0.045",
+                "=-123.045",
+                "測定値は=-123.045。次は=-0.5。最後は=-123.045。",
+            ];
             for text in texts {
                 let tokens = analyzer.try_tokenize(text).unwrap();
                 for (surface, reading, speech) in [
@@ -100,21 +92,44 @@ fn distributed_negative_decimal_magnitudes_keep_places_points_and_fraction_digit
                     ),
                 ] {
                     for (start, _) in text.match_indices(surface) {
-                        let i = tokens.iter().position(|t| t.start == start).unwrap();
+                        let i = tokens
+                            .iter()
+                            .position(|t| {
+                                t.start == start
+                                    || t.start + 1 == start
+                                        && t.end == start + surface.len()
+                                        && t.surface.starts_with('-')
+                            })
+                            .unwrap();
                         let body = &tokens[i];
-                        assert_eq!(body.surface.as_ref(), surface, "{name}: {text}: {tokens:?}");
-                        assert_eq!(body.base_form.as_ref(), surface);
+                        let signed = body.start + 1 == start;
+                        let expected_surface = if signed {
+                            format!("-{surface}")
+                        } else {
+                            surface.to_owned()
+                        };
+                        assert_eq!(
+                            body.surface.as_ref(),
+                            expected_surface,
+                            "{name}: {text}: {tokens:?}"
+                        );
+                        assert_eq!(body.base_form, body.surface);
                         assert_eq!(body.end, start + surface.len());
                         assert_eq!(body.pos.as_ref(), "名詞,数,*,*");
                         assert!(!body.is_known);
                         assert!(body.conj_type.is_empty() && body.conj_form.is_empty());
-                        assert_eq!(body.reading.as_ref(), reading);
-                        assert_eq!(body.pronunciation.as_ref(), speech);
-                        let sign = &tokens[i - 1];
-                        assert_eq!(sign.end, start);
-                        assert_eq!(sign.surface.as_ref(), "-");
-                        assert_eq!(sign.reading.as_ref(), "マイナス");
-                        assert_eq!(sign.pronunciation.as_ref(), "マイナス");
+                        if signed {
+                            assert_eq!(body.reading.as_ref(), format!("マイナス{reading}"));
+                            assert_eq!(body.pronunciation.as_ref(), format!("マイナス{speech}"));
+                        } else {
+                            assert_eq!(body.reading.as_ref(), reading);
+                            assert_eq!(body.pronunciation.as_ref(), speech);
+                            let sign = &tokens[i - 1];
+                            assert_eq!(sign.end, start);
+                            assert_eq!(sign.surface.as_ref(), "-");
+                            assert_eq!(sign.reading.as_ref(), "マイナス");
+                            assert_eq!(sign.pronunciation.as_ref(), "マイナス");
+                        }
                     }
                 }
                 for token in &tokens {

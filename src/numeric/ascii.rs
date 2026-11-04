@@ -5,6 +5,7 @@ use std::ops::Range;
 use std::sync::Arc;
 
 mod distance_duration;
+mod signed_decimal;
 
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Number {
@@ -167,6 +168,7 @@ pub(crate) struct AsciiPlan {
 
     comma_year_starts: Vec<usize>,
     negative_decimals: Vec<Range<usize>>,
+    known_negative_decimals: Vec<Range<usize>>,
     unit_frames: Vec<super::units::Frame>,
     scaled_bad_ends: Vec<usize>,
     distance_boundaries: Vec<Range<usize>>,
@@ -520,6 +522,8 @@ impl AsciiPlan {
             return plan;
         }
         plan.negative_decimals = negative_decimals(input, offset);
+        plan.known_negative_decimals =
+            signed_decimal::ranges(input, offset, &plan.negative_decimals);
         let bytes = input.as_bytes();
         let (mut pos, mut prefix) = (0, false);
         while pos < bytes.len() {
@@ -803,6 +807,7 @@ pub(crate) fn apply(
         write += 1;
     }
     out.truncate(write);
+    signed_decimal::apply(input, offset, out, first, plan);
     apply_negative_decimals(input, offset, out, first, plan);
     protected
 }
