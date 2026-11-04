@@ -116,9 +116,14 @@ make dict-clean
 
 | 辞書 | 作り方 |
 | --- | --- |
-| `ipadic.hsd` | IPAdic を `scripts/prepare_ipadic.py` で整えて build し、外国人名の姓・名を除き、`dict/user/ascii-numerals.csv` の半角数字を足す（発音の修復は掛けない） |
+| `ipadic.hsd` | IPAdic を `scripts/prepare_ipadic.py` で整えて build し、外国人名の姓・名を除き、`dict/user/ascii-numerals.csv` の半角数字と、共通のユーザー辞書から選んだ「最頻値」を足す（発音の修復は掛けない） |
 | `ipadic-neologd.hsd` | IPAdic に NEologd の seed を merge し、repair 一式（範囲外 ID・表記ゆれ・漢数字の人名・`dict/user-remove/*.csv`・文や句の名詞・数と単位の組の名詞・一般語の固有名詞の降格）を掛けてから `dict/user/*.csv` を足す |
 | `ipadic-neologd-sudachi.hsd` | IPAdic + NEologd に SudachiDict の raw 辞書を `scripts/convert_sudachi_raw.py` で変換して merge し、同じ repair 一式を掛ける |
+
+IPAdicへの一般語の追加は現在「最頻値」だけに限定する。`scripts/select_dictionary_words.py` が
+ユーザー辞書の正本から対象の全エントリを選び、読み・発音・品詞・文脈ID・コストなど13列を保持した
+一時CSVを作る。登録不足や選択した行の不正があればビルドを止める。ユーザー辞書全体をIPAdicへ取り込まず、
+NEologd系2辞書の生成手順も変えない。「値」の価格読みや「頻る」の登録はそのまま残す。
 
 `scripts/prepare_ipadic.py` は上流の IPAdic を書き換えずに、次の 5 点を変えたソースを作る（何を変えたかは
 辞書のメタデータ `ipadic_patch` に残る）。

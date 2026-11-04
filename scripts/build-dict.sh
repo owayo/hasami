@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 上流の辞書ソースから配布辞書 (dict/*.hsd) を作り直す
 #
-#   ipadic.hsd                   IPAdic。外国人名の姓・名を除き、半角数字の数詞を補う
+#   ipadic.hsd                   IPAdic。外国人名の姓・名を除き、半角数字の数詞と最頻値を補う
 #   ipadic-neologd.hsd           IPAdic + NEologd + dict/user。repair 一式を適用
 #   ipadic-neologd-sudachi.hsd   上の IPAdic + NEologd に SudachiDict を足したもの。repair 一式を適用
 #
@@ -201,11 +201,15 @@ ensure_neologd_base() {
 
 build_ipadic() {
   ensure_ipadic_base
+  # 共通の正本から必要な語だけを選ぶ。別読みと全素性を保持し、未登録ならここで止める。
+  python3 scripts/select_dictionary_words.py --input-dir dict/user --word 最頻値 \
+    --output "$WORK/ipadic-extra.csv"
   # IPAdic 単体は発音の修復を掛けない (記号の読みを残す)。外国人名の姓・名だけを除く
   "$HASAMI" repair --dict "$WORK/ipadic.base.hsd" --output "$WORK/ipadic.tmp.hsd" \
     --meta "user_dictionary=$DICTIONARY_REVISION" \
     --drop-invalid-context-ids --no-pronunciation-repair \
-    --remove dict/user-remove/foreign-names.csv --merge dict/user/ascii-numerals.csv
+    --remove dict/user-remove/foreign-names.csv --merge dict/user/ascii-numerals.csv \
+    --merge "$WORK/ipadic-extra.csv"
   install_dict "$WORK/ipadic.tmp.hsd" "$OUT/ipadic.hsd"
 }
 
