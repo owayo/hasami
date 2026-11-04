@@ -1,9 +1,13 @@
-//! 水平空白を挟む暦月と、位を省いた「一一月」の標準読み。
+//! 暦月の読み。水平空白・位を省く漢数字・空白のないASCIIを別の認定規則で扱う。
 
 use super::{AsciiPlan, digit, has_reading, is_numeral, place, pos_has, set_readings};
 use crate::lattice::Token;
 use std::ops::Range;
 use std::sync::Arc;
+
+mod contiguous;
+pub(crate) use contiguous::apply as apply_contiguous;
+pub(super) use contiguous::{Frame as ContiguousMonth, frames as contiguous_frames};
 
 const MONTHS: [([&str; 3], &str, &str); 12] = [
     (["1", "１", "一"], "イチ", "イチ"),

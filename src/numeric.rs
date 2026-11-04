@@ -21,6 +21,7 @@ mod year;
 pub(crate) use ascii::{AsciiPlan, apply as apply_ascii_quantities};
 pub(crate) use kanji::apply as apply_kanji_quantities;
 pub(crate) use month::apply as apply_spaced_months;
+pub(crate) use month::apply_contiguous as apply_contiguous_months;
 pub(crate) use year::apply as apply_year_readings;
 
 /// ASCII原形を持つ既知のカタカナ別表記だけを、既存の標準位取りと照合する。

@@ -160,6 +160,7 @@ pub(crate) struct AsciiPlan {
     input_end: usize,
     candidates: Vec<Candidate>,
     month_starts: Vec<usize>,
+    contiguous_months: Vec<super::month::ContiguousMonth>,
     kanji_starts: Vec<usize>,
     year_starts: Vec<usize>,
 
@@ -424,6 +425,20 @@ impl AsciiPlan {
         self.month_starts.get(i).is_some_and(|&s| s < end)
     }
 
+    pub(super) fn contiguous_months_in(
+        &self,
+        start: usize,
+        end: usize,
+    ) -> &[super::month::ContiguousMonth] {
+        let first = self
+            .contiguous_months
+            .partition_point(|frame| frame.end <= start);
+        let last = self
+            .contiguous_months
+            .partition_point(|frame| frame.number.start < end);
+        &self.contiguous_months[first.min(last)..last]
+    }
+
     pub(super) fn month_number_start(&self, start: usize) -> bool {
         self.month_starts.binary_search(&start).is_ok()
     }
@@ -466,6 +481,7 @@ impl AsciiPlan {
         let mut plan = Self {
             input_end: offset + input.len(),
             month_starts: super::month::number_starts(input, offset),
+            contiguous_months: super::month::contiguous_frames(input, offset),
             kanji_starts,
             year_starts: super::year::number_starts(input, offset, |prefix| {
                 !super::kanji::identifier_prefix(prefix)
