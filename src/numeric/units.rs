@@ -151,12 +151,13 @@ pub(crate) fn crosses_boundary(
     start: usize,
     end: usize,
 ) -> bool {
-    plan.unit_frame_at(start).is_some_and(|frame| {
-        start < frame.number.end
-            && frame.number.end < end
-            && end <= frame.end
-            && !(start <= frame.number.start && frame.end <= end)
-    })
+    plan.distance_crosses_boundary(start, end)
+        || plan.unit_frame_at(start).is_some_and(|frame| {
+            start < frame.number.end
+                && frame.number.end < end
+                && end <= frame.end
+                && !(start <= frame.number.start && frame.end <= end)
+        })
 }
 
 fn unit_piece(token: &Token) -> bool {
