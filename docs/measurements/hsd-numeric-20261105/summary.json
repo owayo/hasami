@@ -1,0 +1,1160 @@
+{
+  "date": "2026-11-05",
+  "baseline_head": "3b95cde736cc618d2e904b5f79deb138434b69c8",
+  "comparison_start": "78f63181f2f436f8dd819fee5e2ff9d422fa1b52",
+  "format": 5,
+  "cpu": "AMD Ryzen 7 5700X",
+  "os": "Microsoft Windows 10.0.26300",
+  "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
+  "python": "3.13.15",
+  "source_sha256": {
+    "scripts/hsd-numeric-probe.rs": "de1cc34cbe8863ed38041b69d61eaccf6126d8c4c730dab05143343f7c68235e",
+    "scripts/hsd-numeric-analyze.py": "b3a2d87827ee8042ffbd7059653dade7493089a463c22407f86b90c59382c1a9",
+    "scripts/hsd-numeric-features.py": "59405c5f1994b1353058a0e973ac2c4e76bf681271e0d2edfc0f14c8ddc32835",
+    "scripts/hsd-numeric-compress.py": "b64964c65e8f125436ae4bfc8ad627501bb16ac9ffee227b508253152de48bfe",
+    "C:/GitHub/hasami/docs/measurements/hsd-numeric-20261105/collect.py": "5fb4f51912896123562e05cccac224087fd46e9d4191bb23995117535f672273",
+    "scripts/hsd-format-eval.rs": "72f344c157b3cd9b26be15ba9c1a44411e9f46de865847f7b228529858d9b0a6"
+  },
+  "source_zip_sha256": "1707463aab2d9c8527a0b514d4dac54d35dd0ed64d870671cba266069a8d40b4",
+  "dictionaries": [
+    {
+      "dictionary": "ipadic",
+      "file_bytes": 16496162,
+      "sha256": "26a0c1b3c5555d7af89a4f81358d96a7b6c556b99b0ac6a7df76d0ec8c7a2369",
+      "version": 5,
+      "sections": {
+        "1": 537,
+        "2": 8704,
+        "3": 47616,
+        "17": 128,
+        "13": 176,
+        "14": 1408,
+        "15": 72,
+        "16": 360,
+        "9": 1941,
+        "10": 1141,
+        "11": 497,
+        "12": 3463720,
+        "4": 3400200,
+        "5": 689962,
+        "6": 2345166,
+        "7": 1563444,
+        "8": 4966173,
+        "18": 4002
+      },
+      "counts": {
+        "keys": 324821,
+        "prefixed_keys": 7817,
+        "equal_context_entries": 390861,
+        "context_pairs": 1315
+      },
+      "numeric": [
+        {
+          "category": "all_prefixed",
+          "keys": 7817,
+          "entries": 9169,
+          "unique_features": 8139,
+          "exclusive_feature_bytes": 87637,
+          "entry_and_offset_bytes": 91690,
+          "distinct_prefixes": 185,
+          "distinct_suffixes": 5674,
+          "top_suffix_counts": [
+            [
+              "",
+              105
+            ],
+            [
+              "日",
+              27
+            ],
+            [
+              "月",
+              25
+            ],
+            [
+              "郎",
+              23
+            ],
+            [
+              "石",
+              20
+            ],
+            [
+              "つ",
+              19
+            ],
+            [
+              "島",
+              18
+            ],
+            [
+              "川",
+              16
+            ],
+            [
+              "子",
+              16
+            ],
+            [
+              "山",
+              15
+            ],
+            [
+              "谷",
+              15
+            ],
+            [
+              "軒",
+              15
+            ],
+            [
+              "木",
+              14
+            ],
+            [
+              "条",
+              14
+            ],
+            [
+              "番",
+              14
+            ],
+            [
+              "条西",
+              13
+            ],
+            [
+              "里",
+              13
+            ],
+            [
+              "男",
+              13
+            ],
+            [
+              "番丁",
+              13
+            ],
+            [
+              "条東",
+              12
+            ]
+          ],
+          "factor_prototype": {
+            "bytes": 134638,
+            "keys_roundtrip": 7817,
+            "possible_cross_product": 1049690,
+            "actual_memberships": 7817
+          },
+          "single_cost_suffixes": 4957,
+          "entry_cost_variants": 1626
+        },
+        {
+          "category": "quantity_suffix",
+          "keys": 271,
+          "entries": 371,
+          "unique_features": 340,
+          "exclusive_feature_bytes": 1933,
+          "entry_and_offset_bytes": 3710,
+          "distinct_prefixes": 59,
+          "distinct_suffixes": 55,
+          "top_suffix_counts": [
+            [
+              "日",
+              27
+            ],
+            [
+              "月",
+              25
+            ],
+            [
+              "つ",
+              19
+            ],
+            [
+              "軒",
+              15
+            ],
+            [
+              "番",
+              14
+            ],
+            [
+              "戸",
+              12
+            ],
+            [
+              "分",
+              10
+            ],
+            [
+              "人",
+              10
+            ],
+            [
+              "本",
+              9
+            ],
+            [
+              "時",
+              9
+            ],
+            [
+              "町",
+              8
+            ],
+            [
+              "村",
+              8
+            ],
+            [
+              "丁",
+              7
+            ],
+            [
+              "社",
+              6
+            ],
+            [
+              "面",
+              6
+            ],
+            [
+              "歳",
+              6
+            ],
+            [
+              "足",
+              5
+            ],
+            [
+              "区",
+              4
+            ],
+            [
+              "位",
+              4
+            ],
+            [
+              "両",
+              4
+            ]
+          ],
+          "factor_prototype": {
+            "bytes": 3370,
+            "keys_roundtrip": 271,
+            "possible_cross_product": 3245,
+            "actual_memberships": 271,
+            "file_bytes": 16500842,
+            "saved_bytes": -4680,
+            "remaining_trie": {
+              "char_blocks": 8704,
+              "char_tables": 47616,
+              "nodes": 3401232,
+              "tails": 690151,
+              "keys": 324550,
+              "build_seconds": 0.0933761,
+              "lookup_checked": 324550
+            },
+            "sha256": "ecf7c5023e8ce38c69c498a2233b0ace9e7deedc5e7c0e3a0664ecfc52805fbb"
+          },
+          "single_cost_suffixes": 13,
+          "entry_cost_variants": 277
+        },
+        {
+          "category": "month",
+          "keys": 25,
+          "entries": 30,
+          "unique_features": 18,
+          "exclusive_feature_bytes": 120,
+          "entry_and_offset_bytes": 300,
+          "distinct_prefixes": 25,
+          "distinct_suffixes": 1,
+          "top_suffix_counts": [
+            [
+              "月",
+              25
+            ]
+          ],
+          "factor_prototype": {
+            "bytes": 521,
+            "keys_roundtrip": 25,
+            "possible_cross_product": 25,
+            "actual_memberships": 25,
+            "file_bytes": 16496137,
+            "saved_bytes": 25,
+            "remaining_trie": {
+              "char_blocks": 8704,
+              "char_tables": 47616,
+              "nodes": 3399592,
+              "tails": 689963,
+              "keys": 324796,
+              "build_seconds": 0.0879994,
+              "lookup_checked": 324796
+            },
+            "sha256": "e1834dadeb99565a2983a2bd34501d9c60c24a9401c6e10e158ef850ce198cbc"
+          },
+          "single_cost_suffixes": 0,
+          "entry_cost_variants": 30
+        }
+      ],
+      "pair_prototype": {
+        "pairs": 1315,
+        "equal_context_entries": 390861,
+        "entries_bytes": 2345166,
+        "packed_bytes": 1563444,
+        "table_bytes": 5260,
+        "file_bytes": 15719756,
+        "saved_bytes": 776406,
+        "roundtrip_all_entries": true,
+        "unchanged_sections_equal": true,
+        "sha256": "1cad42c5d980518ba92c368a23d1c611ad4f8476a786232e86dba5c39b6e1cf2"
+      },
+      "symmetric_prototype": {
+        "file_bytes": 15714402,
+        "saved_bytes": 781760,
+        "roundtrip_all_entries": true,
+        "sha256": "efc6da3eb7103da17e9da229ab9894268ea6650939ad01ef42dc7de4ebc49e83"
+      },
+      "probe_seconds": 1.2161927000270225,
+      "metadata": {
+        "name": "ipadic",
+        "hasami_version": "26.10.107",
+        "pos_scheme": "ipadic"
+      },
+      "numeric_features": {
+        "dictionary": "ipadic",
+        "input_sha256": "26a0c1b3c5555d7af89a4f81358d96a7b6c556b99b0ac6a7df76d0ec8c7a2369",
+        "file_bytes": 16496469,
+        "saved_bytes": -307,
+        "features_before": 4966173,
+        "features_after": 4965866,
+        "prefix_pool_bytes": 425,
+        "template_bytes": 85,
+        "templates": 9,
+        "prefixes": 62,
+        "templated_features": 73,
+        "all_unique_features_roundtrip": 327989,
+        "entry_offset_references_checked": 390861,
+        "sha256": "2378be7f0f9fca79afb5740d5480183b40628a39e89d62c676a4380132621412"
+      },
+      "independent_generation_hashes_equal": true
+    },
+    {
+      "dictionary": "ipadic-neologd",
+      "file_bytes": 206574882,
+      "sha256": "bc27fae64ed21994c3fd7addcd15e6631a412a7c93715ea684b157aa1667814e",
+      "version": 5,
+      "sections": {
+        "1": 1599,
+        "2": 8704,
+        "3": 92672,
+        "17": 128,
+        "13": 176,
+        "14": 1408,
+        "15": 72,
+        "16": 360,
+        "9": 1941,
+        "10": 1141,
+        "11": 497,
+        "12": 3463720,
+        "4": 50862208,
+        "5": 31811250,
+        "6": 27940740,
+        "7": 18627160,
+        "8": 73756247,
+        "18": 4002
+      },
+      "counts": {
+        "keys": 4344063,
+        "prefixed_keys": 168962,
+        "equal_context_entries": 4656790,
+        "context_pairs": 1315
+      },
+      "numeric": [
+        {
+          "category": "all_prefixed",
+          "keys": 168962,
+          "entries": 174382,
+          "unique_features": 157417,
+          "exclusive_feature_bytes": 2852913,
+          "entry_and_offset_bytes": 1743820,
+          "distinct_prefixes": 23038,
+          "distinct_suffixes": 75813,
+          "top_suffix_counts": [
+            [
+              "円",
+              18573
+            ],
+            [
+              "人",
+              4262
+            ],
+            [
+              "kg",
+              2396
+            ],
+            [
+              "人目",
+              2269
+            ],
+            [
+              "hpa",
+              2141
+            ],
+            [
+              "hPa",
+              2141
+            ],
+            [
+              "度",
+              2094
+            ],
+            [
+              "m",
+              2092
+            ],
+            [
+              "年",
+              2065
+            ],
+            [
+              "cm",
+              2001
+            ],
+            [
+              "話",
+              2000
+            ],
+            [
+              "g",
+              1903
+            ],
+            [
+              "k",
+              1368
+            ],
+            [
+              "K",
+              1368
+            ],
+            [
+              "km",
+              1192
+            ],
+            [
+              "倍",
+              1103
+            ],
+            [
+              "回",
+              1092
+            ],
+            [
+              "歳",
+              1014
+            ],
+            [
+              "点",
+              1004
+            ],
+            [
+              "才",
+              1004
+            ]
+          ],
+          "factor_prototype": {
+            "bytes": 3250267,
+            "keys_roundtrip": 168962,
+            "possible_cross_product": 1746579894,
+            "actual_memberships": 168962
+          },
+          "single_cost_suffixes": 71116,
+          "entry_cost_variants": 13644
+        },
+        {
+          "category": "quantity_suffix",
+          "keys": 59814,
+          "entries": 60117,
+          "unique_features": 59798,
+          "exclusive_feature_bytes": 1006149,
+          "entry_and_offset_bytes": 601170,
+          "distinct_prefixes": 22629,
+          "distinct_suffixes": 104,
+          "top_suffix_counts": [
+            [
+              "円",
+              18573
+            ],
+            [
+              "人",
+              4262
+            ],
+            [
+              "kg",
+              2396
+            ],
+            [
+              "人目",
+              2269
+            ],
+            [
+              "hPa",
+              2141
+            ],
+            [
+              "度",
+              2094
+            ],
+            [
+              "m",
+              2092
+            ],
+            [
+              "年",
+              2065
+            ],
+            [
+              "cm",
+              2001
+            ],
+            [
+              "g",
+              1903
+            ],
+            [
+              "K",
+              1368
+            ],
+            [
+              "km",
+              1192
+            ],
+            [
+              "倍",
+              1103
+            ],
+            [
+              "回",
+              1092
+            ],
+            [
+              "歳",
+              1014
+            ],
+            [
+              "点",
+              1004
+            ],
+            [
+              "才",
+              1004
+            ],
+            [
+              "mm",
+              1002
+            ],
+            [
+              "t",
+              1001
+            ],
+            [
+              "mA",
+              1001
+            ]
+          ],
+          "factor_prototype": {
+            "bytes": 767703,
+            "keys_roundtrip": 59814,
+            "possible_cross_product": 2353416,
+            "actual_memberships": 59814,
+            "file_bytes": 206507479,
+            "saved_bytes": 67403,
+            "remaining_trie": {
+              "char_blocks": 8704,
+              "char_tables": 92672,
+              "nodes": 50132056,
+              "tails": 31706126,
+              "keys": 4284249,
+              "build_seconds": 1.1954368,
+              "lookup_checked": 4284249
+            },
+            "sha256": "e442f5628bb57d4134a8ef76b46d39c49c7f144d867efed4ccc597ff83056d10"
+          },
+          "single_cost_suffixes": 13,
+          "entry_cost_variants": 515
+        },
+        {
+          "category": "month",
+          "keys": 39,
+          "entries": 44,
+          "unique_features": 32,
+          "exclusive_feature_bytes": 221,
+          "entry_and_offset_bytes": 440,
+          "distinct_prefixes": 39,
+          "distinct_suffixes": 1,
+          "top_suffix_counts": [
+            [
+              "月",
+              39
+            ]
+          ],
+          "factor_prototype": {
+            "bytes": 766,
+            "keys_roundtrip": 39,
+            "possible_cross_product": 39,
+            "actual_memberships": 39,
+            "file_bytes": 206576510,
+            "saved_bytes": -1628,
+            "remaining_trie": {
+              "char_blocks": 8704,
+              "char_tables": 92672,
+              "nodes": 50862872,
+              "tails": 31811287,
+              "keys": 4344024,
+              "build_seconds": 1.2311196,
+              "lookup_checked": 4344024
+            },
+            "sha256": "02e0abc7df2b482e5ff90034afba33b0cdd7b41fdb6543871cd48259837a5f24"
+          },
+          "single_cost_suffixes": 0,
+          "entry_cost_variants": 43
+        }
+      ],
+      "pair_prototype": {
+        "pairs": 1315,
+        "equal_context_entries": 4656790,
+        "entries_bytes": 27940740,
+        "packed_bytes": 18627160,
+        "table_bytes": 5260,
+        "file_bytes": 197266636,
+        "saved_bytes": 9308246,
+        "roundtrip_all_entries": true,
+        "unchanged_sections_equal": true,
+        "sha256": "05fafbb7f68c21db023de3599f3518156088c54a0e7fba7b3c90a8a287ceda83"
+      },
+      "symmetric_prototype": {
+        "file_bytes": 197261282,
+        "saved_bytes": 9313600,
+        "roundtrip_all_entries": true,
+        "sha256": "ec0f3b788abae67ad0f887e606539662bc77b5f8fce7460e4afc030c10aad68e"
+      },
+      "probe_seconds": 25.468546799966134,
+      "metadata": {
+        "name": "ipadic-neologd",
+        "hasami_version": "26.10.107",
+        "pos_scheme": "ipadic"
+      },
+      "numeric_features": {
+        "dictionary": "ipadic-neologd",
+        "input_sha256": "bc27fae64ed21994c3fd7addcd15e6631a412a7c93715ea684b157aa1667814e",
+        "file_bytes": 206466048,
+        "saved_bytes": 108834,
+        "features_before": 73756247,
+        "features_after": 73262352,
+        "prefix_pool_bytes": 384484,
+        "template_bytes": 448,
+        "templates": 47,
+        "prefixes": 22360,
+        "templated_features": 37776,
+        "all_unique_features_roundtrip": 3039242,
+        "entry_offset_references_checked": 4656790,
+        "sha256": "b6635f29a97c14c37262452938e50b8d279a59ba7c242777c0e3a238b8ed4d74"
+      },
+      "independent_generation_hashes_equal": true
+    },
+    {
+      "dictionary": "ipadic-neologd-sudachi",
+      "file_bytes": 220985250,
+      "sha256": "4110fcf6bb8d7c98be12894066f592117ce24f920e49ff6102e32308d74637d8",
+      "version": 5,
+      "sections": {
+        "1": 1661,
+        "2": 8704,
+        "3": 94720,
+        "17": 128,
+        "13": 176,
+        "14": 1408,
+        "15": 72,
+        "16": 360,
+        "9": 1941,
+        "10": 1141,
+        "11": 497,
+        "12": 3463720,
+        "4": 54823768,
+        "5": 32787186,
+        "6": 30341034,
+        "7": 20227356,
+        "8": 79226529,
+        "18": 4002
+      },
+      "counts": {
+        "keys": 4713074,
+        "prefixed_keys": 172715,
+        "equal_context_entries": 5056839,
+        "context_pairs": 1315
+      },
+      "numeric": [
+        {
+          "category": "all_prefixed",
+          "keys": 172715,
+          "entries": 178179,
+          "unique_features": 160875,
+          "exclusive_feature_bytes": 2906821,
+          "entry_and_offset_bytes": 1781790,
+          "distinct_prefixes": 23050,
+          "distinct_suffixes": 78882,
+          "top_suffix_counts": [
+            [
+              "円",
+              18573
+            ],
+            [
+              "人",
+              4262
+            ],
+            [
+              "kg",
+              2396
+            ],
+            [
+              "人目",
+              2274
+            ],
+            [
+              "hpa",
+              2141
+            ],
+            [
+              "hPa",
+              2141
+            ],
+            [
+              "度",
+              2094
+            ],
+            [
+              "m",
+              2092
+            ],
+            [
+              "年",
+              2065
+            ],
+            [
+              "cm",
+              2001
+            ],
+            [
+              "話",
+              2000
+            ],
+            [
+              "g",
+              1903
+            ],
+            [
+              "k",
+              1368
+            ],
+            [
+              "K",
+              1368
+            ],
+            [
+              "km",
+              1192
+            ],
+            [
+              "倍",
+              1103
+            ],
+            [
+              "回",
+              1092
+            ],
+            [
+              "歳",
+              1014
+            ],
+            [
+              "点",
+              1004
+            ],
+            [
+              "才",
+              1004
+            ]
+          ],
+          "factor_prototype": {
+            "bytes": 3355861,
+            "keys_roundtrip": 172715,
+            "possible_cross_product": 1818230100,
+            "actual_memberships": 172715
+          },
+          "single_cost_suffixes": 73960,
+          "entry_cost_variants": 14473
+        },
+        {
+          "category": "quantity_suffix",
+          "keys": 59828,
+          "entries": 60131,
+          "unique_features": 59812,
+          "exclusive_feature_bytes": 1006141,
+          "entry_and_offset_bytes": 601310,
+          "distinct_prefixes": 22629,
+          "distinct_suffixes": 105,
+          "top_suffix_counts": [
+            [
+              "円",
+              18573
+            ],
+            [
+              "人",
+              4262
+            ],
+            [
+              "kg",
+              2396
+            ],
+            [
+              "人目",
+              2274
+            ],
+            [
+              "hPa",
+              2141
+            ],
+            [
+              "度",
+              2094
+            ],
+            [
+              "m",
+              2092
+            ],
+            [
+              "年",
+              2065
+            ],
+            [
+              "cm",
+              2001
+            ],
+            [
+              "g",
+              1903
+            ],
+            [
+              "K",
+              1368
+            ],
+            [
+              "km",
+              1192
+            ],
+            [
+              "倍",
+              1103
+            ],
+            [
+              "回",
+              1092
+            ],
+            [
+              "歳",
+              1014
+            ],
+            [
+              "点",
+              1004
+            ],
+            [
+              "才",
+              1004
+            ],
+            [
+              "mm",
+              1002
+            ],
+            [
+              "t",
+              1001
+            ],
+            [
+              "mA",
+              1001
+            ]
+          ],
+          "factor_prototype": {
+            "bytes": 767822,
+            "keys_roundtrip": 59828,
+            "possible_cross_product": 2376045,
+            "actual_memberships": 59828,
+            "file_bytes": 220867086,
+            "saved_bytes": 118164,
+            "remaining_trie": {
+              "char_blocks": 8704,
+              "char_tables": 94720,
+              "nodes": 54042728,
+              "tails": 32682147,
+              "keys": 4653246,
+              "build_seconds": 1.3472807,
+              "lookup_checked": 4653246
+            },
+            "sha256": "dc76a57bfe64e0c7e5e912d030b0acdda6e7b0733fb3cf6a1eac86683c0f4754"
+          },
+          "single_cost_suffixes": 14,
+          "entry_cost_variants": 527
+        },
+        {
+          "category": "month",
+          "keys": 39,
+          "entries": 44,
+          "unique_features": 32,
+          "exclusive_feature_bytes": 221,
+          "entry_and_offset_bytes": 440,
+          "distinct_prefixes": 39,
+          "distinct_suffixes": 1,
+          "top_suffix_counts": [
+            [
+              "月",
+              39
+            ]
+          ],
+          "factor_prototype": {
+            "bytes": 766,
+            "keys_roundtrip": 39,
+            "possible_cross_product": 39,
+            "actual_memberships": 39,
+            "file_bytes": 220987646,
+            "saved_bytes": -2396,
+            "remaining_trie": {
+              "char_blocks": 8704,
+              "char_tables": 94720,
+              "nodes": 54825256,
+              "tails": 32787223,
+              "keys": 4713035,
+              "build_seconds": 1.4307077000000001,
+              "lookup_checked": 4713035
+            },
+            "sha256": "87ce9c129fe1b09ca8ac2cea06e7741a03edb83b7ccbea5cf41a7beb854a99a7"
+          },
+          "single_cost_suffixes": 0,
+          "entry_cost_variants": 43
+        }
+      ],
+      "pair_prototype": {
+        "pairs": 1315,
+        "equal_context_entries": 5056839,
+        "entries_bytes": 30341034,
+        "packed_bytes": 20227356,
+        "table_bytes": 5260,
+        "file_bytes": 210876940,
+        "saved_bytes": 10108310,
+        "roundtrip_all_entries": true,
+        "unchanged_sections_equal": true,
+        "sha256": "8fce6326d9de906d6c133f2b9c86cfb6477f65ffca35ea81e2753513665b5c4c"
+      },
+      "symmetric_prototype": {
+        "file_bytes": 210871586,
+        "saved_bytes": 10113664,
+        "roundtrip_all_entries": true,
+        "sha256": "a8591342e87587f6ec186ccd9e796bbcd8ede051391d35ea50458ca5708eac1a"
+      },
+      "probe_seconds": 28.052571400010493,
+      "metadata": {
+        "name": "ipadic-neologd-sudachi",
+        "hasami_version": "26.10.107",
+        "pos_scheme": "ipadic"
+      },
+      "numeric_features": {
+        "dictionary": "ipadic-neologd-sudachi",
+        "input_sha256": "4110fcf6bb8d7c98be12894066f592117ce24f920e49ff6102e32308d74637d8",
+        "file_bytes": 220876487,
+        "saved_bytes": 108763,
+        "features_before": 79226529,
+        "features_after": 78732622,
+        "prefix_pool_bytes": 384526,
+        "template_bytes": 455,
+        "templates": 48,
+        "prefixes": 22366,
+        "templated_features": 37783,
+        "all_unique_features_roundtrip": 3358670,
+        "entry_offset_references_checked": 5056839,
+        "sha256": "c41cf34fd29ef944af0476bc3e28f2fa0d00fdaf955aa2324d00dc801e193e1a"
+      },
+      "independent_generation_hashes_equal": true
+    }
+  ],
+  "compression": [
+    {
+      "dictionary": "ipadic",
+      "variant": "v5",
+      "zstd": "*** Zstandard CLI (64-bit) v1.5.7, by Yann Collet ***",
+      "file_bytes": 16496162,
+      "source_sha256": "26a0c1b3c5555d7af89a4f81358d96a7b6c556b99b0ac6a7df76d0ec8c7a2369",
+      "compressed_bytes": 5818761,
+      "compressed_sha256": "a9c00ab35ad32ce38b6df156f79006856e8be83befa170d08c7b654e2b248bfe",
+      "compress_seconds": 3.7243939000181854,
+      "decompressed_sha256": "26a0c1b3c5555d7af89a4f81358d96a7b6c556b99b0ac6a7df76d0ec8c7a2369"
+    },
+    {
+      "dictionary": "ipadic",
+      "variant": "symmetric",
+      "zstd": "*** Zstandard CLI (64-bit) v1.5.7, by Yann Collet ***",
+      "file_bytes": 15714402,
+      "source_sha256": "efc6da3eb7103da17e9da229ab9894268ea6650939ad01ef42dc7de4ebc49e83",
+      "compressed_bytes": 5806790,
+      "compressed_sha256": "7bf0b35614cdb6caf294ff4f40c9fb4d66dfe65dd22fecf05333bd525ae014df",
+      "compress_seconds": 3.1868352000019513,
+      "decompressed_sha256": "efc6da3eb7103da17e9da229ab9894268ea6650939ad01ef42dc7de4ebc49e83"
+    },
+    {
+      "dictionary": "ipadic",
+      "variant": "features",
+      "zstd": "*** Zstandard CLI (64-bit) v1.5.7, by Yann Collet ***",
+      "file_bytes": 16496469,
+      "source_sha256": "2378be7f0f9fca79afb5740d5480183b40628a39e89d62c676a4380132621412",
+      "compressed_bytes": 5709792,
+      "compressed_sha256": "997a23912c1d8afae77e9fb97dd22a5233d58841dd01f1f673a577659bf2448e",
+      "compress_seconds": 3.454312999965623,
+      "decompressed_sha256": "2378be7f0f9fca79afb5740d5480183b40628a39e89d62c676a4380132621412"
+    },
+    {
+      "dictionary": "ipadic",
+      "variant": "quantity_suffix-factor",
+      "zstd": "*** Zstandard CLI (64-bit) v1.5.7, by Yann Collet ***",
+      "file_bytes": 16500842,
+      "source_sha256": "ecf7c5023e8ce38c69c498a2233b0ace9e7deedc5e7c0e3a0664ecfc52805fbb",
+      "compressed_bytes": 5706004,
+      "compressed_sha256": "e73f6d2296684000d1927fe1e8cf31281c63bc3f410bd4eca394aa438cf0fd0d",
+      "compress_seconds": 3.5475978000322357,
+      "decompressed_sha256": "ecf7c5023e8ce38c69c498a2233b0ace9e7deedc5e7c0e3a0664ecfc52805fbb"
+    },
+    {
+      "dictionary": "ipadic",
+      "variant": "month-factor",
+      "zstd": "*** Zstandard CLI (64-bit) v1.5.7, by Yann Collet ***",
+      "file_bytes": 16496137,
+      "source_sha256": "e1834dadeb99565a2983a2bd34501d9c60c24a9401c6e10e158ef850ce198cbc",
+      "compressed_bytes": 5705569,
+      "compressed_sha256": "be0faa9c7a22a0f9977384c016895493c80f923955352cc775cceba3dc161c8a",
+      "compress_seconds": 3.3653132999897934,
+      "decompressed_sha256": "e1834dadeb99565a2983a2bd34501d9c60c24a9401c6e10e158ef850ce198cbc"
+    },
+    {
+      "dictionary": "ipadic-neologd",
+      "variant": "v5",
+      "zstd": "*** Zstandard CLI (64-bit) v1.5.7, by Yann Collet ***",
+      "file_bytes": 206574882,
+      "source_sha256": "bc27fae64ed21994c3fd7addcd15e6631a412a7c93715ea684b157aa1667814e",
+      "compressed_bytes": 66909873,
+      "compressed_sha256": "43f81e06cac7e25afedb643d70fd93ac2039bfd5ca03cdd6d0b9cbc38f4ae709",
+      "compress_seconds": 64.35636010003509,
+      "decompressed_sha256": "bc27fae64ed21994c3fd7addcd15e6631a412a7c93715ea684b157aa1667814e"
+    },
+    {
+      "dictionary": "ipadic-neologd",
+      "variant": "symmetric",
+      "zstd": "*** Zstandard CLI (64-bit) v1.5.7, by Yann Collet ***",
+      "file_bytes": 197261282,
+      "source_sha256": "ec0f3b788abae67ad0f887e606539662bc77b5f8fce7460e4afc030c10aad68e",
+      "compressed_bytes": 66778470,
+      "compressed_sha256": "b8d5fd20e6ad494e5a9e4ef15253b60e604af10981f8a5430fd609185c520407",
+      "compress_seconds": 58.61616869998397,
+      "decompressed_sha256": "ec0f3b788abae67ad0f887e606539662bc77b5f8fce7460e4afc030c10aad68e"
+    },
+    {
+      "dictionary": "ipadic-neologd",
+      "variant": "features",
+      "zstd": "*** Zstandard CLI (64-bit) v1.5.7, by Yann Collet ***",
+      "file_bytes": 206466048,
+      "source_sha256": "b6635f29a97c14c37262452938e50b8d279a59ba7c242777c0e3a238b8ed4d74",
+      "compressed_bytes": 67017344,
+      "compressed_sha256": "6c5b67d636f6c1484f62f816f1c9283421318e71c4b0f7c287cb070d4dd57e19",
+      "compress_seconds": 58.393422099994496,
+      "decompressed_sha256": "b6635f29a97c14c37262452938e50b8d279a59ba7c242777c0e3a238b8ed4d74"
+    },
+    {
+      "dictionary": "ipadic-neologd",
+      "variant": "quantity_suffix-factor",
+      "zstd": "*** Zstandard CLI (64-bit) v1.5.7, by Yann Collet ***",
+      "file_bytes": 206507479,
+      "source_sha256": "e442f5628bb57d4134a8ef76b46d39c49c7f144d867efed4ccc597ff83056d10",
+      "compressed_bytes": 66792853,
+      "compressed_sha256": "af23499abc0e8748598d919ec8eef2100c987e6ed7675bc2eea481234557b63b",
+      "compress_seconds": 57.48677429999225,
+      "decompressed_sha256": "e442f5628bb57d4134a8ef76b46d39c49c7f144d867efed4ccc597ff83056d10"
+    },
+    {
+      "dictionary": "ipadic-neologd",
+      "variant": "month-factor",
+      "zstd": "*** Zstandard CLI (64-bit) v1.5.7, by Yann Collet ***",
+      "file_bytes": 206576510,
+      "source_sha256": "02e0abc7df2b482e5ff90034afba33b0cdd7b41fdb6543871cd48259837a5f24",
+      "compressed_bytes": 66917217,
+      "compressed_sha256": "899b83e7c2c033ec0afb956b85cd7dc77d7df9825723b7407ed567519d6e86b1",
+      "compress_seconds": 60.66812020004727,
+      "decompressed_sha256": "02e0abc7df2b482e5ff90034afba33b0cdd7b41fdb6543871cd48259837a5f24"
+    },
+    {
+      "dictionary": "ipadic-neologd-sudachi",
+      "variant": "v5",
+      "zstd": "*** Zstandard CLI (64-bit) v1.5.7, by Yann Collet ***",
+      "file_bytes": 220985250,
+      "source_sha256": "4110fcf6bb8d7c98be12894066f592117ce24f920e49ff6102e32308d74637d8",
+      "compressed_bytes": 71763030,
+      "compressed_sha256": "4501be1168bea0dc0ba38976b29d654426d38030c9434906ff827420819fbbef",
+      "compress_seconds": 64.42753529996844,
+      "decompressed_sha256": "4110fcf6bb8d7c98be12894066f592117ce24f920e49ff6102e32308d74637d8"
+    },
+    {
+      "dictionary": "ipadic-neologd-sudachi",
+      "variant": "symmetric",
+      "zstd": "*** Zstandard CLI (64-bit) v1.5.7, by Yann Collet ***",
+      "file_bytes": 210871586,
+      "source_sha256": "a8591342e87587f6ec186ccd9e796bbcd8ede051391d35ea50458ca5708eac1a",
+      "compressed_bytes": 71613954,
+      "compressed_sha256": "71b09e191c31a913e8d3bf965b1b72f68602b7e8a08957038417f224542d2bb8",
+      "compress_seconds": 56.30160569999134,
+      "decompressed_sha256": "a8591342e87587f6ec186ccd9e796bbcd8ede051391d35ea50458ca5708eac1a"
+    },
+    {
+      "dictionary": "ipadic-neologd-sudachi",
+      "variant": "features",
+      "zstd": "*** Zstandard CLI (64-bit) v1.5.7, by Yann Collet ***",
+      "file_bytes": 220876487,
+      "source_sha256": "c41cf34fd29ef944af0476bc3e28f2fa0d00fdaf955aa2324d00dc801e193e1a",
+      "compressed_bytes": 71856721,
+      "compressed_sha256": "4b7a4670444712df4c853fcff4e9a2d30283d14dd8f788a77f0939a51fe90f31",
+      "compress_seconds": 58.88117159996182,
+      "decompressed_sha256": "c41cf34fd29ef944af0476bc3e28f2fa0d00fdaf955aa2324d00dc801e193e1a"
+    },
+    {
+      "dictionary": "ipadic-neologd-sudachi",
+      "variant": "quantity_suffix-factor",
+      "zstd": "*** Zstandard CLI (64-bit) v1.5.7, by Yann Collet ***",
+      "file_bytes": 220867086,
+      "source_sha256": "dc76a57bfe64e0c7e5e912d030b0acdda6e7b0733fb3cf6a1eac86683c0f4754",
+      "compressed_bytes": 71667007,
+      "compressed_sha256": "17c1d73ab57764f1d013d16adc62b1298c4643089db2c4a358ead206aec45860",
+      "compress_seconds": 59.52363010001136,
+      "decompressed_sha256": "dc76a57bfe64e0c7e5e912d030b0acdda6e7b0733fb3cf6a1eac86683c0f4754"
+    },
+    {
+      "dictionary": "ipadic-neologd-sudachi",
+      "variant": "month-factor",
+      "zstd": "*** Zstandard CLI (64-bit) v1.5.7, by Yann Collet ***",
+      "file_bytes": 220987646,
+      "source_sha256": "87ce9c129fe1b09ca8ac2cea06e7741a03edb83b7ccbea5cf41a7beb854a99a7",
+      "compressed_bytes": 71753776,
+      "compressed_sha256": "bca75f51ce13f0e753adc1ab536a8dd0b0c678711dfe85f5f301addc041e51a1",
+      "compress_seconds": 59.104750900005456,
+      "decompressed_sha256": "87ce9c129fe1b09ca8ac2cea06e7741a03edb83b7ccbea5cf41a7beb854a99a7"
+    }
+  ],
+  "analyzer_variant_benchmark": "not implemented or measured",
+  "memory_comparison": "not measured",
+  "production_format_changed": false
+}
