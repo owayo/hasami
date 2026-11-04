@@ -181,3 +181,95 @@ fn distributed_mode_lexeme_keeps_readings_and_other_uses() {
         }
     }
 }
+
+#[test]
+#[ignore = "配布辞書2種が必要"]
+fn distributed_playoff_abbreviation_keeps_source_metadata_and_identifier_digits() {
+    let dir = std::env::var("HASAMI_TEST_DICT_DIR")
+        .unwrap_or_else(|_| format!("{}/dict", env!("CARGO_MANIFEST_DIR")));
+    for name in ["ipadic-neologd", "ipadic-neologd-sudachi"] {
+        let mut analyzer = Analyzer::load(format!("{dir}/{name}.hsd")).unwrap();
+        let cases = [
+            "挑決",
+            "挑決を観戦する。",
+            "挑決の結果を待つ。",
+            "次の挑決は来週だ。",
+            "ID_挑決_12",
+        ];
+        let initial: Vec<_> = cases
+            .iter()
+            .map(|text| format!("{:?}", analyzer.try_tokenize(text).unwrap()))
+            .collect();
+        for _ in 0..2 {
+            for (index, text) in cases.iter().enumerate() {
+                let start = text.find("挑決").unwrap();
+                let end = start + "挑決".len();
+                let tokens = analyzer.try_tokenize(text).unwrap();
+                assert_eq!(format!("{tokens:?}"), initial[index], "{name}: {text}");
+                let focal: Vec<_> = tokens
+                    .iter()
+                    .filter(|t| t.start < end && start < t.end)
+                    .collect();
+                assert_eq!(focal.len(), 1, "{name}: {text}: {tokens:?}");
+                let token = focal[0];
+                assert_eq!(token.surface.as_ref(), "挑決");
+                assert_eq!((token.start, token.end), (start, end));
+                assert_eq!(token.pos.as_ref(), "名詞,一般,*,*");
+                assert_eq!(token.base_form, token.surface);
+                assert_eq!(token.reading.as_ref(), "チョウケツ");
+                assert_eq!(token.pronunciation.as_ref(), "チョーケツ");
+                assert!(token.is_known);
+                assert!(token.conj_type.is_empty() && token.conj_form.is_empty());
+                assert!(
+                    analyzer
+                        .dictionary()
+                        .lookup("挑決")
+                        .unwrap()
+                        .iter()
+                        .any(|(end, rows)| *end == "挑決".len()
+                            && rows.iter().any(|row| {
+                                row.surface == token.surface
+                                    && row.pos == token.pos
+                                    && row.base_form == token.base_form
+                                    && row.reading == token.reading
+                                    && row.pronunciation == token.pronunciation
+                                    && row.cost == token.word_cost
+                                    && matches!(row.conj_type.as_ref(), "" | "*")
+                                    && matches!(row.conj_form.as_ref(), "" | "*")
+                            })),
+                    "{name}: selected metadata must match a dictionary entry"
+                );
+                for token in &tokens {
+                    assert_eq!(
+                        text.get(token.start..token.end),
+                        Some(token.surface.as_ref())
+                    );
+                }
+                assert_eq!(tokens.first().unwrap().start, 0);
+                assert_eq!(tokens.last().unwrap().end, text.len());
+                assert!(tokens.windows(2).all(|pair| pair[0].end == pair[1].start));
+                assert!(analyzer.contextual_reading_spans(text).unwrap().is_empty());
+                if text.starts_with("ID_") {
+                    let digits: Vec<_> = tokens.iter().filter(|t| t.start > end).collect();
+                    assert_eq!(
+                        digits
+                            .iter()
+                            .map(|t| t.surface.as_ref())
+                            .collect::<Vec<_>>(),
+                        ["1", "2"]
+                    );
+                    assert_eq!(
+                        digits
+                            .iter()
+                            .map(|t| t.pronunciation.as_ref())
+                            .collect::<String>(),
+                        "イチニ"
+                    );
+                    assert!(analyzer.quantity_spans(text).unwrap().is_empty());
+                    assert_eq!(analyzer.quantity_pronunciation(text).unwrap(), None);
+                    assert_eq!(analyzer.normalize_identifier(text).unwrap(), None);
+                }
+            }
+        }
+    }
+}
