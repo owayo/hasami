@@ -37,6 +37,33 @@ fn assert_reading(text: &str, tokens: &[Token], surface: &str, reading: &str, sp
 
 #[test]
 #[ignore = "配布辞書3種が必要"]
+fn distributed_zero_digits_before_large_units_keep_positional_readings_in_sentences() {
+    let dir = std::env::var("HASAMI_TEST_DICT_DIR")
+        .unwrap_or_else(|_| format!("{}/dict", env!("CARGO_MANIFEST_DIR")));
+    for name in ["ipadic", "ipadic-neologd", "ipadic-neologd-sudachi"] {
+        let mut analyzer = Analyzer::load(format!("{dir}/{name}.hsd")).unwrap();
+        for _ in 0..2 {
+            let text = "予算は一〇〇〇万円。次は二〇億円だ。別案は一零零零万円だ。";
+            let tokens = analyzer.try_tokenize(text).unwrap();
+            for (surface, reading, speech) in [
+                ("一〇〇〇万円", "センマンエン", "センマンエン"),
+                ("二〇億円", "ニジュウオクエン", "ニジューオクエン"),
+                ("一零零零万円", "センマンエン", "センマンエン"),
+            ] {
+                assert_reading(text, &tokens, surface, reading, speech);
+                let raw = surface.strip_suffix('円').unwrap();
+                let number = tokens.iter().find(|t| t.surface.as_ref() == raw).unwrap();
+                assert_eq!(number.base_form.as_ref(), raw);
+                assert_eq!(number.pos.as_ref(), "名詞,数,*,*");
+                assert!(!number.is_known);
+                assert!(number.conj_type.is_empty() && number.conj_form.is_empty());
+            }
+        }
+    }
+}
+
+#[test]
+#[ignore = "配布辞書3種が必要"]
 fn distributed_terminal_four_years_keep_the_reading_before_calendar_months() {
     let dir = std::env::var("HASAMI_TEST_DICT_DIR")
         .unwrap_or_else(|_| format!("{}/dict", env!("CARGO_MANIFEST_DIR")));
