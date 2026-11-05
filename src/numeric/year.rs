@@ -121,8 +121,7 @@ pub(crate) fn apply(
             || t.base_form.as_ref() != "年"
             || !pos_has(&t.pos, "名詞,接尾,助数詞")
             || !has_reading(t, &["ネン"])
-            || !t.conj_type.is_empty()
-            || !t.conj_form.is_empty()
+            || !t.is_uninflected()
         {
             continue;
         }
@@ -166,8 +165,7 @@ pub(crate) fn apply(
             scalar(&t.surface).is_some_and(|v| scalar(&t.base_form) == Some(v))
                 && !t.reading.is_empty()
                 && !t.pronunciation.is_empty()
-                && t.conj_type.is_empty()
-                && t.conj_form.is_empty()
+                && t.is_uninflected()
         }) {
             continue;
         }

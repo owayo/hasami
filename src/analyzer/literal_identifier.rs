@@ -236,10 +236,7 @@ pub(super) fn normalize(analyzer: &mut Analyzer, input: &str) -> Result<Option<S
     }
     let mut result = String::new();
     for token in &tokens {
-        let mixed_literal = token.is_known
-            && token.base_form == token.surface
-            && token.conj_type.is_empty()
-            && token.conj_form.is_empty()
+        let mixed_literal = token.is_known_base_form()
             && token.surface.bytes().any(|b| b.is_ascii_uppercase())
             && token.surface.bytes().any(|b| b.is_ascii_digit())
             && token

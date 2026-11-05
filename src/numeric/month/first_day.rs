@@ -32,7 +32,7 @@ fn value(raw: &str) -> Option<usize> {
 }
 
 fn empty_conj(t: &Token) -> bool {
-    t.conj_type.is_empty() && t.conj_form.is_empty()
+    t.is_uninflected()
 }
 
 fn month_pos(t: &Token) -> bool {

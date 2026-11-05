@@ -157,8 +157,7 @@ fn candidate(
             }
             || token.base_form != token.surface
             || token.pos.as_ref() != "名詞,数,*,*"
-            || !token.conj_type.is_empty()
-            || !token.conj_form.is_empty()
+            || !token.is_uninflected()
             || !standard_readings(token)
         {
             return None;
@@ -173,8 +172,7 @@ fn candidate(
         || month.surface.as_ref() != "月"
         || month.base_form != month.surface
         || !month.is_known
-        || !month.conj_type.is_empty()
-        || !month.conj_form.is_empty()
+        || !month.is_uninflected()
         || !["名詞,一般,*,*", "名詞,副詞可能,*,*", "名詞,接尾,助数詞,*"]
             .contains(&month.pos.as_ref())
         || month.reading != month.pronunciation

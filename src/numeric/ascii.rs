@@ -813,7 +813,7 @@ pub(crate) fn apply(
 }
 
 fn negative_body_metadata(token: &Token) -> bool {
-    if !token.conj_type.is_empty() || !token.conj_form.is_empty() {
+    if !token.is_uninflected() {
         return false;
     }
     if token.surface.as_ref() == "." {
@@ -831,8 +831,7 @@ fn unspecified_negative_symbol(token: &Token, literal: &str) -> bool {
         && token.end.checked_sub(token.start) == Some(1)
         && token.pos.as_ref() == "記号,一般,*,*"
         && token.base_form == token.surface
-        && token.conj_type.is_empty()
-        && token.conj_form.is_empty()
+        && token.is_uninflected()
         && token.reading.is_empty()
         && token.pronunciation.is_empty()
 }

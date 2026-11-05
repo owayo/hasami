@@ -161,8 +161,7 @@ pub(crate) fn crosses_boundary(
 }
 
 fn unit_piece(token: &Token) -> bool {
-    if !token.conj_type.is_empty()
-        || !token.conj_form.is_empty()
+    if !token.is_uninflected()
         || (token.is_known && token.base_form != token.surface)
         || token.pos.contains(",人名,")
         || token.pos.contains(",地域,")
@@ -200,14 +199,13 @@ fn concentration_unit_piece(token: &Token, unit_start: usize) -> bool {
         && token.surface.as_ref() == "mg"
         && token.base_form.as_ref() == "MG"
         && token.pos.as_ref() == "名詞,固有名詞,人名,一般"
-        && token.conj_type.is_empty()
-        && token.conj_form.is_empty()
+        && token.is_uninflected()
         && token.reading == token.pronunciation
         && matches!(token.reading.as_ref(), "ミリグラム" | "エムジー")
 }
 
 pub(super) fn number_piece(t: &Token) -> bool {
-    if !t.conj_type.is_empty() || !t.conj_form.is_empty() || t.base_form != t.surface {
+    if !t.is_uninflected() || t.base_form != t.surface {
         return false;
     }
     if t.surface.as_ref() == "." || t.surface.as_ref() == "," {
@@ -343,8 +341,7 @@ pub(crate) fn coalesce_units(
             if let Some((reading, pronunciation)) = area {
                 let token = &mut out[start];
                 if token.base_form == token.surface
-                    && token.conj_type.is_empty()
-                    && token.conj_form.is_empty()
+                    && token.is_uninflected()
                     && (super::pos_has(&token.pos, "名詞,一般")
                         || super::pos_has(&token.pos, "名詞,接尾,助数詞")
                         || !token.is_known && super::pos_has(&token.pos, "記号"))
@@ -363,8 +360,7 @@ pub(crate) fn coalesce_units(
             } else if area.is_some()
                 && token.surface.as_ref() == "3"
                 && token.base_form == token.surface
-                && token.conj_type.is_empty()
-                && token.conj_form.is_empty()
+                && token.is_uninflected()
                 && super::pos_has(&token.pos, "名詞,数")
                 && token.reading.as_ref() == "サン"
                 && token.pronunciation.as_ref() == "サン"
@@ -417,8 +413,7 @@ pub(crate) fn quantity_pronunciation(input: &str, tokens: &[Token]) -> Option<St
         || suffix.end != input.len()
         || !super::pos_has(&number.pos, "名詞,数")
         || number.base_form != number.surface
-        || !number.conj_type.is_empty()
-        || !number.conj_form.is_empty()
+        || !number.is_uninflected()
         || input.get(..number.end) != Some(number.surface.as_ref())
         || input.get(suffix.start..) != Some(suffix.surface.as_ref())
     {
@@ -435,17 +430,11 @@ pub(crate) fn quantity_pronunciation(input: &str, tokens: &[Token]) -> Option<St
                 || (suffix.surface.is_ascii()
                     && suffix.base_form.is_ascii()
                     && suffix.surface.eq_ignore_ascii_case(&suffix.base_form)))
-            || !suffix.conj_type.is_empty()
-            || !suffix.conj_form.is_empty()
+            || !suffix.is_uninflected()
         {
             return None;
         }
-    } else if !(suffix.is_known
-        && suffix.base_form == suffix.surface
-        && suffix.conj_type.is_empty()
-        && suffix.conj_form.is_empty()
-        && counter.is_some())
-    {
+    } else if !(suffix.is_known_base_form() && counter.is_some()) {
         return None;
     }
     let (r, p) = super::ascii::readings(&number.surface, parsed);

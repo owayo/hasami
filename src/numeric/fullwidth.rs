@@ -202,13 +202,11 @@ fn candidate<'a>(
                 || !suffix.is_known
                 || suffix.reading.as_ref() != "ネン"
                 || suffix.pronunciation.as_ref() != "ネン"
-                || !suffix.conj_type.is_empty()
-                || !suffix.conj_form.is_empty()
+                || !suffix.is_uninflected()
                 || out[range.clone()].iter().any(|token| {
                     token.base_form != token.surface
                         || token.pos.as_ref() != "名詞,数,*,*"
-                        || !token.conj_type.is_empty()
-                        || !token.conj_form.is_empty()
+                        || !token.is_uninflected()
                 })
         })
         || !out[range].iter().all(|t| {

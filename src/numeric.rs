@@ -30,8 +30,7 @@ pub(crate) use year::apply as apply_year_readings;
 pub(crate) fn katakana_alias_readings(token: &Token) -> Option<(String, String)> {
     if !token.is_known
         || token.pos.as_ref() != "名詞,固有名詞,一般,*"
-        || !token.conj_type.is_empty()
-        || !token.conj_form.is_empty()
+        || !token.is_uninflected()
         || token.base_form.is_empty()
         || !token.base_form.bytes().all(|b| b.is_ascii_digit())
         || token.surface.is_empty()
@@ -221,11 +220,7 @@ fn has_reading(token: &Token, allowed: &[&str]) -> bool {
 }
 
 fn known_counter_form(token: &Token, readings: &[&str]) -> bool {
-    token.is_known
-        && token.base_form == token.surface
-        && token.conj_type.is_empty()
-        && token.conj_form.is_empty()
-        && has_reading(token, readings)
+    token.is_known_base_form() && has_reading(token, readings)
 }
 
 fn counter(token: &Token) -> Option<Counter> {
@@ -398,14 +393,7 @@ fn counter(token: &Token) -> Option<Counter> {
         "節" if has_reading(token, &["セツ"]) => Some(Counter::Soft),
         "頭" if has_reading(token, &["トウ", "トー"]) => Some(Counter::Soft),
         "着" if has_reading(token, &["チャク"]) => Some(Counter::Soft),
-        "手" if token.is_known
-            && token.base_form.as_ref() == "手"
-            && token.conj_type.is_empty()
-            && token.conj_form.is_empty()
-            && has_reading(token, &["テ"]) =>
-        {
-            Some(Counter::Soft)
-        }
+        "手" if known_counter_form(token, &["テ"]) => Some(Counter::Soft),
         "足" if has_reading(token, &["ソク"]) => Some(Counter::Soft),
         "歳" | "才" if has_reading(token, &["サイ"]) => Some(Counter::Soft),
         "歳児" if known_counter_form(token, &["サイジ"]) => Some(Counter::Soft),
@@ -429,13 +417,7 @@ fn counter(token: &Token) -> Option<Counter> {
         "歩" if has_reading(token, &["ホ", "ポ"]) => Some(Counter::Step),
         "口" if has_reading(token, &["クチ", "グチ"]) => Some(Counter::Mouth),
         "分" | "ぷん" if has_reading(token, &["フン", "プン"]) => Some(Counter::Minute),
-        "分間"
-            if token.is_known
-                && token.base_form.as_ref() == "分間"
-                && token.conj_type.is_empty()
-                && token.conj_form.is_empty()
-                && has_reading(token, &["フンカン", "プンカン"]) =>
-        {
+        "分間" if known_counter_form(token, &["フンカン", "プンカン"]) => {
             Some(Counter::MinuteSpan)
         }
         "人" if has_reading(token, &["ニン", "リ"]) => Some(Counter::Person),
@@ -942,10 +924,7 @@ fn numeral_before_counter(
                     .or_else(|| numeral_value(std::iter::once(t.surface.as_ref())));
                 let base_value = ascii::integer_value(&t.base_form)
                     .or_else(|| numeral_value(std::iter::once(t.base_form.as_ref())));
-                t.conj_type.is_empty()
-                    && t.conj_form.is_empty()
-                    && surface_value.is_some()
-                    && surface_value == base_value
+                t.is_uninflected() && surface_value.is_some() && surface_value == base_value
             })
         {
             return None;

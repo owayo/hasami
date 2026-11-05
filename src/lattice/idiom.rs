@@ -27,7 +27,7 @@ fn word(token: &Token, surface: &str, pos: &str, base: &str) -> bool {
 }
 
 fn fixed(token: &Token, surface: &str, pos: &str) -> bool {
-    word(token, surface, pos, surface) && token.conj_type.is_empty() && token.conj_form.is_empty()
+    word(token, surface, pos, surface) && token.is_uninflected()
 }
 
 fn noun(token: &Token, surface: &str) -> bool {

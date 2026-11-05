@@ -295,8 +295,7 @@ fn selected(token: &Token, surface: &str, pos: &str, reading: &str) -> bool {
         && token.base_form.as_ref() == surface
         && token.pos.as_ref() == pos
         && token.is_known
-        && token.conj_type.is_empty()
-        && token.conj_form.is_empty()
+        && token.is_uninflected()
         && token.reading.as_ref() == reading
         && token.pronunciation.as_ref() == reading
 }
@@ -441,20 +440,17 @@ fn candidate<'a>(
             || !is_numeral(number)
             || !year_standard
             || number.base_form != number.surface
-            || !number.conj_type.is_empty()
-            || !number.conj_form.is_empty()
+            || !number.is_uninflected()
             || !month.is_known
             || month.base_form != month.surface
-            || !month.conj_type.is_empty()
-            || !month.conj_form.is_empty()
+            || !month.is_uninflected()
             || (end - start == 1 && tokens[start].is_known)
             || protected
                 .iter()
                 .any(|p| p.start < month.end && tokens[start].start < p.end)
             || !tokens[start..end].iter().all(|t| {
                 t.base_form == t.surface
-                    && t.conj_type.is_empty()
-                    && t.conj_form.is_empty()
+                    && t.is_uninflected()
                     && pos_has(&t.pos, "名詞,数")
                     && standard_readings(t)
             })

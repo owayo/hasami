@@ -104,15 +104,14 @@ fn prefix(token: &Token) -> bool {
     let (reading, pronunciation) = integer_readings(value);
     token.is_known
         && token.pos.as_ref() == "名詞,固有名詞,一般,*"
-        && token.conj_type.is_empty()
-        && token.conj_form.is_empty()
+        && token.is_uninflected()
         && token.base_form.as_ref() == format!("−{raw}")
         && token.reading.as_ref() == format!("マイナス{reading}")
         && token.pronunciation.as_ref() == format!("マイナス{pronunciation}")
 }
 
 fn piece(token: &Token) -> bool {
-    if !token.conj_type.is_empty() || !token.conj_form.is_empty() {
+    if !token.is_uninflected() {
         return false;
     }
     if token.surface.as_ref() == "." {

@@ -108,8 +108,7 @@ fn fixed(t: &Token, surface: &str, pos: &str, reading: &str, pronunciation: &str
         && t.pos.as_ref() == pos
         && t.reading.as_ref() == reading
         && t.pronunciation.as_ref() == pronunciation
-        && t.conj_type.is_empty()
-        && t.conj_form.is_empty()
+        && t.is_uninflected()
 }
 
 fn ordinary_value(t: &Token) -> bool {
@@ -167,8 +166,7 @@ fn function_symbol(t: &Token) -> bool {
         _ => return false,
     };
     t.base_form == t.surface
-        && t.conj_type.is_empty()
-        && t.conj_form.is_empty()
+        && t.is_uninflected()
         && t.reading.as_ref() == expected
         && t.pronunciation.as_ref() == expected
         && ((t.is_known && t.pos.as_ref() == "記号,アルファベット,*,*")
@@ -197,8 +195,7 @@ fn parenthesis(t: &Token, surface: &str) -> bool {
     t.surface.as_ref() == surface
         && t.base_form == t.surface
         && t.pos.starts_with("記号,")
-        && t.conj_type.is_empty()
-        && t.conj_form.is_empty()
+        && t.is_uninflected()
         && (t.reading.is_empty() || t.reading == t.surface)
         && (t.pronunciation.is_empty() || t.pronunciation == t.surface)
 }
@@ -211,8 +208,7 @@ fn integer_argument(t: &Token) -> bool {
         && t.surface.len() <= 16
         && t.surface.bytes().all(|b| b.is_ascii_digit())
         && (t.surface.len() == 1 || !t.surface.starts_with('0'))
-        && t.conj_type.is_empty()
-        && t.conj_form.is_empty()
+        && t.is_uninflected()
 }
 
 fn mathematical_head(t: &Token) -> bool {
@@ -351,8 +347,7 @@ fn configuration_head(t: &Token) -> bool {
     t.surface.as_ref() == "コンフィグ"
         && t.reading.as_ref() == "コンフィグ"
         && t.pronunciation.as_ref() == "コンフィグ"
-        && t.conj_type.is_empty()
-        && t.conj_form.is_empty()
+        && t.is_uninflected()
         && ((!t.is_known && t.base_form == t.surface && t.pos.as_ref() == "名詞,一般,*,*")
             || (t.is_known
                 && t.base_form.as_ref() == "config"

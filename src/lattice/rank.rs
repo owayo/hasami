@@ -88,8 +88,7 @@ fn word<'a>(tokens: &'a [Token], start: usize, surface: &str, pos: &str) -> Opti
             && t.surface.as_ref() == surface
             && t.base_form == t.surface
             && t.pos.starts_with(pos)
-            && t.conj_type.is_empty()
-            && t.conj_form.is_empty()
+            && t.is_uninflected()
     })
 }
 
@@ -416,8 +415,7 @@ pub(super) fn apply_explicit_names(
             if !piece.is_known
                 || piece.pos.as_ref() != "名詞,数,*,*"
                 || piece.base_form != piece.surface
-                || !piece.conj_type.is_empty()
-                || !piece.conj_form.is_empty()
+                || !piece.is_uninflected()
                 || !exact(input, origin, piece)
                 || end > i && tokens[end - 1].end != piece.start
                 || piece.end - number.start > 3 * '一'.len_utf8()
@@ -434,8 +432,7 @@ pub(super) fn apply_explicit_names(
             || suffix.surface.as_ref() != "段"
             || suffix.base_form != suffix.surface
             || suffix.pos.as_ref() != "名詞,接尾,助数詞,*"
-            || !suffix.conj_type.is_empty()
-            || !suffix.conj_form.is_empty()
+            || !suffix.is_uninflected()
             || tokens[end - 1].end != suffix.start
             || !exact(input, origin, suffix)
         {
@@ -536,8 +533,7 @@ pub(super) fn apply(
         if !token.is_known
             || token.pos.as_ref() != "名詞,固有名詞,人名,姓"
             || token.base_form != token.surface
-            || !token.conj_type.is_empty()
-            || !token.conj_form.is_empty()
+            || !token.is_uninflected()
             || !rank_surface(&token.surface)
         {
             continue;

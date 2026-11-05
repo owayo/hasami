@@ -72,6 +72,21 @@ pub struct Token {
     pub is_known: bool,
 }
 
+impl Token {
+    /// 活用しない語か（活用型・活用形がどちらも空。未知語も空になる）
+    pub(crate) fn is_uninflected(&self) -> bool {
+        self.conj_type.is_empty() && self.conj_form.is_empty()
+    }
+
+    /// 辞書由来で、原形が表層形と同じ、活用しない標準形か
+    ///
+    /// 活用語（原形が表層形と違う、または活用型・活用形を持つ）と未知語を除く。
+    /// 素性をそのまま信頼して数量・読み・語の並びの判定に使える語だけを通す。
+    pub(crate) fn is_known_base_form(&self) -> bool {
+        self.is_known && self.base_form == self.surface && self.is_uninflected()
+    }
+}
+
 /// アルファベット1文字のカタカナ読みを返す
 fn alpha_to_kana(c: char) -> Option<&'static str> {
     match c.to_ascii_uppercase() {

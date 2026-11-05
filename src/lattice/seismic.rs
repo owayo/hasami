@@ -11,8 +11,7 @@ fn fixed(t: &Token, surface: &str, pos: &str, speech: (&str, &str)) -> bool {
         && t.pos.as_ref() == pos
         && t.reading.as_ref() == speech.0
         && t.pronunciation.as_ref() == speech.1
-        && t.conj_type.is_empty()
-        && t.conj_form.is_empty()
+        && t.is_uninflected()
 }
 
 fn inflected(
@@ -34,10 +33,7 @@ fn inflected(
 }
 
 fn punctuation(t: &Token) -> bool {
-    t.is_known
-        && t.base_form == t.surface
-        && t.conj_type.is_empty()
-        && t.conj_form.is_empty()
+    t.is_known_base_form()
         && matches!(t.surface.as_ref(), "。" | "、" | "！" | "？" | "!" | "?")
         && (t.pos.starts_with("記号,句点,") || t.pos.starts_with("記号,読点,"))
         && (t.reading.is_empty() || t.reading == t.surface)

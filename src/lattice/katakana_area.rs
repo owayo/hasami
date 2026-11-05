@@ -20,8 +20,7 @@ fn fixed(
         && t.pos.as_ref() == pos
         && t.reading.as_ref() == reading
         && t.pronunciation.as_ref() == pronunciation
-        && t.conj_type.is_empty()
-        && t.conj_form.is_empty()
+        && t.is_uninflected()
 }
 
 fn japanese(c: char, dict: &Dictionary) -> bool {

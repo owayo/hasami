@@ -17,8 +17,7 @@ fn fixed(t: &Token, surface: &str, pos: &str, reading: &str) -> bool {
         && &*t.pos == pos
         && &*t.reading == reading
         && &*t.pronunciation == reading
-        && t.conj_type.is_empty()
-        && t.conj_form.is_empty()
+        && t.is_uninflected()
 }
 fn finite(t: &Token) -> bool {
     t.is_known

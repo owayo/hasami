@@ -146,8 +146,7 @@ fn pair2_counter(raw: &str, suffix: &Token) -> bool {
         && suffix.is_known
         && pos_has(&suffix.pos, "名詞,接尾,助数詞")
         && suffix.base_form == suffix.surface
-        && suffix.conj_type.is_empty()
-        && suffix.conj_form.is_empty()
+        && suffix.is_uninflected()
         && pair2_suffix(&suffix.surface).is_some_and(|(surface, reading)| {
             surface == suffix.surface.as_ref()
                 && suffix.reading.as_ref() == reading
@@ -277,8 +276,7 @@ fn candidate<'a>(
                 return false;
             };
             input.get(start..end) == Some(t.surface.as_ref())
-                && t.conj_type.is_empty()
-                && t.conj_form.is_empty()
+                && t.is_uninflected()
                 && standard_kanji_readings(&t.surface, &t.reading, &t.pronunciation)
                 && super::numeral_value(std::iter::once(t.surface.as_ref())).is_some_and(|n| {
                     super::numeral_value(std::iter::once(t.base_form.as_ref())) == Some(n)
@@ -291,10 +289,7 @@ fn candidate<'a>(
     let finite_pair = pair2_counter(raw, suffix);
     if scaled
         && (!plan.scaled_unit_end_allowed(suffix.end)
-            || !(suffix.is_known
-                && suffix.base_form == suffix.surface
-                && suffix.conj_type.is_empty()
-                && suffix.conj_form.is_empty()
+            || !(suffix.is_known_base_form()
                 && (super::counter(suffix).is_some()
                     || (pos_has(&suffix.pos, "名詞,接尾,助数詞")
                         && matches!(suffix.surface.as_ref(), "円" | "エン")
@@ -308,8 +303,7 @@ fn candidate<'a>(
             && suffix.base_form.as_ref() == "年"
             && pos_has(&suffix.pos, "名詞,接尾,助数詞")
             && super::has_reading(suffix, &["ネン"])
-            && suffix.conj_type.is_empty()
-            && suffix.conj_form.is_empty())
+            && suffix.is_uninflected())
     {
         return None;
     }
@@ -358,7 +352,7 @@ fn candidate<'a>(
                             super::numeral_value(std::iter::once(t.base_form.as_ref())) == Some(value)
                         },
                     ))
-                && (!(finite_pair || comma_year || scaled) || (t.conj_type.is_empty() && t.conj_form.is_empty()))
+                && (!(finite_pair || comma_year || scaled) || (t.is_uninflected()))
         })
     {
         return None;

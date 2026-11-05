@@ -13,10 +13,7 @@ use crate::lattice::Token;
 use std::{ops::Range, sync::Arc};
 
 fn boundary(t: &Token) -> bool {
-    t.is_known
-        && t.base_form == t.surface
-        && t.conj_type.is_empty()
-        && t.conj_form.is_empty()
+    t.is_known_base_form()
         && ["記号,読点,", "記号,句点,", "記号,括弧開,", "記号,括弧閉,"]
             .iter()
             .any(|p| t.pos.starts_with(p))
@@ -28,8 +25,7 @@ fn left(t: Option<&Token>) -> bool {
             || (t.is_known
                 && t.pos.as_ref() == "助詞,係助詞,*,*"
                 && t.base_form == t.surface
-                && t.conj_type.is_empty()
-                && t.conj_form.is_empty()
+                && t.is_uninflected()
                 && matches!(
                     (
                         t.surface.as_ref(),
@@ -64,8 +60,7 @@ pub(super) fn apply(
         || !t.is_known
         || t.reading.as_ref() != "トシ"
         || t.pronunciation.as_ref() != "トシ"
-        || !t.conj_type.is_empty()
-        || !t.conj_form.is_empty()
+        || !t.is_uninflected()
         || !left(year.checked_sub(1).map(|i| &tokens[i]))
         || !right(tokens.get(counter + 1))
         || !tokens[year..=counter]
@@ -81,8 +76,7 @@ pub(super) fn apply(
     if !suffix.is_known
         || suffix.pos.as_ref() != "名詞,接尾,助数詞,*"
         || suffix.base_form != suffix.surface
-        || !suffix.conj_type.is_empty()
-        || !suffix.conj_form.is_empty()
+        || !suffix.is_uninflected()
         || !matches!(
             (
                 suffix.surface.as_ref(),
@@ -100,8 +94,7 @@ pub(super) fn apply(
             is_numeral(t)
                 && t.pos.as_ref() == "名詞,数,*,*"
                 && t.base_form == t.surface
-                && t.conj_type.is_empty()
-                && t.conj_form.is_empty()
+                && t.is_uninflected()
         })
     {
         return;
