@@ -1303,7 +1303,7 @@ fn left_id(view: &DictView<'_>, dict: &Dictionary, node: &Node) -> u16 {
     match node.unknown_template() {
         Some(template) => dict.unk_template(template).left_id,
         // エントリはラティスを作るときに範囲を確かめてある
-        None => view.entries[node.entry as usize].left_id(),
+        None => view.entries.get(node.entry as usize).unwrap().left_id(),
     }
 }
 
@@ -1336,7 +1336,7 @@ fn dictionary_word_for_unknown(
     let mut id = group as usize;
     loop {
         // 未知語の開始位置から辞書を引いたときに、群のエントリと文脈 ID の範囲を確かめてある
-        let e = &view.entries[id];
+        let e = view.entries.get(id).unwrap();
         let score = view.matrix_row(e.left_id())[prev_right as usize] as i64
             + e.cost as i64
             + next_row[e.right_id as usize] as i64;

@@ -848,12 +848,14 @@ mod tests {
                 Ok(())
             })
             .unwrap();
-        let entry_at = container::parse(&bytes)
-            .unwrap()
-            .get(SectionId::Entries)
-            .offset
-            + broken_group.unwrap() * 6;
-        bytes[entry_at + 2..entry_at + 4].copy_from_slice(&999u16.to_le_bytes());
+        let layout = container::parse(&bytes).unwrap();
+        let symmetric = layout.flags & container::FLAG_SYMMETRIC_ENTRIES != 0;
+        let width = if symmetric { 4 } else { 6 };
+        let entry_at = layout.get(SectionId::Entries).offset + broken_group.unwrap() * width;
+        let target = entry_at + if symmetric { 0 } else { 2 };
+        let old = u16::from_le_bytes(bytes[target..target + 2].try_into().unwrap());
+        let value = 999 | if symmetric { old & 0x8000 } else { 0 };
+        bytes[target..target + 2].copy_from_slice(&value.to_le_bytes());
         let bad = crate::Dictionary::from_bytes(&bytes).unwrap();
         let mut a = Analyzer::from_dict(bad);
         // 最初のチャンクで補正を集めた後、後段の壊れた素性で失敗する。

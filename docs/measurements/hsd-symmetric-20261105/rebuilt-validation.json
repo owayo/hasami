@@ -1,0 +1,115 @@
+{
+  "dictionaries": {
+    "ipadic": {
+      "v5": {
+        "bytes": 16496162,
+        "sha256": "41c1bc85843b954a5da488ffd0f12d5c93874ea056a1e58f67bed3a426cb893b"
+      },
+      "v6": {
+        "bytes": 15714402,
+        "sha256": "9259202da345a7c2c7a327c0021835e2aee36b9b2dfdc5896ad9f09679d907ae"
+      },
+      "entries": 390861,
+      "all_other_sections_equal": true,
+      "entries_restored_equal": true
+    },
+    "ipadic-neologd": {
+      "v5": {
+        "bytes": 206574882,
+        "sha256": "e7b249cb41a28b683b13faa6549b0f573710c046471b1b438c79ba00a1cbb771"
+      },
+      "v6": {
+        "bytes": 197261282,
+        "sha256": "c607e51c50f08efc8fc12d75ac777ff560b2465dccc5022aeeeec3ec9c2431b3"
+      },
+      "entries": 4656790,
+      "all_other_sections_equal": true,
+      "entries_restored_equal": true
+    },
+    "ipadic-neologd-sudachi": {
+      "v5": {
+        "bytes": 220985250,
+        "sha256": "206f2cd42c584ecf19aa1964c30cf04840d6caee9d3be6af2accd83460b2c228"
+      },
+      "v6": {
+        "bytes": 210871586,
+        "sha256": "b17c17afb357a432502494591d63afff5080e7cba6cd285a7027c9887fa722f3"
+      },
+      "entries": 5056839,
+      "all_other_sections_equal": true,
+      "entries_restored_equal": true
+    }
+  },
+  "all_fields": {
+    "ipadic": {
+      "mixed": {
+        "equal_bytes": 646188151,
+        "sha256": "91424b0f39fe4019b550570f37ae217bc6af4a14cac59ce5b11514e2e81409dc"
+      },
+      "short": {
+        "equal_bytes": 149100008,
+        "sha256": "ffb27c11dfc9e602c6cba5d4e99cca8faf359641da4ceeeb75470c3c4dc2ed3c"
+      },
+      "literature": {
+        "equal_bytes": 224070184,
+        "sha256": "56953134e3fe8f9a0b8c544b8186669ffb49b7abfe67cf2d2c786eb163b18828"
+      },
+      "quantities": {
+        "equal_bytes": 434620,
+        "sha256": "5d9969f7d73f5bddb28b9a3a54e5dca14ddcd603ecf0828de1f4809b896a3d98"
+      }
+    },
+    "ipadic-neologd": {
+      "mixed": {
+        "equal_bytes": 619347538,
+        "sha256": "c17d5b687df5db6195fced55e48292045d5c7ef6f4f08004ae161a8ece29accb"
+      },
+      "short": {
+        "equal_bytes": 139400008,
+        "sha256": "d851d7c7c5d32c055fd4180989fadf76f63395dc66919f2edd3c52afbac66f6c"
+      },
+      "literature": {
+        "equal_bytes": 221517544,
+        "sha256": "661c80a67e4c8bb9aacfaf40180dcde782b5edede6ccf12e1fa2e8193d8a94a7"
+      },
+      "quantities": {
+        "equal_bytes": 418670,
+        "sha256": "14dfa718e661f0674a5000817f0e4620c9d61d6ee62cd69501bc799a82b914af"
+      }
+    },
+    "ipadic-neologd-sudachi": {
+      "mixed": {
+        "equal_bytes": 618266110,
+        "sha256": "ea77be0fb2f13760ca595c1d187dae88b58cd4acb584000bf6294a1e93761fad"
+      },
+      "short": {
+        "equal_bytes": 139400008,
+        "sha256": "d851d7c7c5d32c055fd4180989fadf76f63395dc66919f2edd3c52afbac66f6c"
+      },
+      "literature": {
+        "equal_bytes": 220146248,
+        "sha256": "251bb6d064b3ae7078db115969280c99b5cc198da5716718e9a20aa5bdc45d23"
+      },
+      "quantities": {
+        "equal_bytes": 413501,
+        "sha256": "117bf138422bc16ac009959658d12b7e9d41611a0ac33dc8b502549645762589"
+      }
+    }
+  },
+  "kotonoha": {
+    "ipadic": {
+      "equal_bytes": 87789257,
+      "sha256": "c07758401cbd9ac135c79265ebf2c5f61a6eddc6f37c4ad2ddc99e8740a6c124"
+    },
+    "ipadic-neologd": {
+      "equal_bytes": 86668218,
+      "sha256": "98f02b0719241a3aa5d4872bccc708d78715ad2626062f9b9acfbccab391967a"
+    },
+    "ipadic-neologd-sudachi": {
+      "equal_bytes": 86577015,
+      "sha256": "61ab4378eba64f640ae25c620a087e329730368c37c42d5bb62eb9e55f5c50d0"
+    }
+  },
+  "sentence_exceptions_equal": true,
+  "sentence_exception_source_path_normalized": true
+}

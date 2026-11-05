@@ -1,16 +1,16 @@
-//! v5 辞書の書き出し
+//! v6 辞書の書き出し
 //!
 //! `DictBuilder` が集めたエントリ・接続行列・文字種定義・未知語テンプレートを、
 //! 規範どおりのセクションに組み立てる。同じ入力と同じ hasami からは同じバイト列ができる
 //! （文字符号は出現回数の降順・文字の昇順、素性レコードと文字列表は最初に現れた順、
 //! 文法表は重複を除いた素性での頻度順・同頻度なら 3 番号の辞書順、文字カテゴリは名前順）。
 
-use super::container::{self, FLAG_PRUNED_DOMINATED, SectionId};
+use super::container::{self, FLAG_PRUNED_DOMINATED, FLAG_SYMMETRIC_ENTRIES, SectionId};
 use super::features::{FeatureInput, FeatureTableBuilder};
 use super::meta::{self, Meta};
 use super::records::{
-    CharCategoryRecord, CharRangeRecord, EntryRecord, LAST_IN_GROUP, LEFT_ID_LIMIT, UnkBucket,
-    UnkTemplate,
+    CharCategoryRecord, CharRangeRecord, EntryRecord, LAST_IN_GROUP, LEFT_ID_LIMIT,
+    SymmetricEntryRecord, UnkBucket, UnkTemplate,
 };
 use super::strtab::StringTableBuilder;
 use super::{DictError, trie};
@@ -476,6 +476,20 @@ pub(crate) fn build_sections(
     for offset in &mut feature_offsets {
         *offset = feature_table.offsets[*offset as usize];
     }
+    let symmetric = entry_records.iter().all(|e| e.left_id() == e.right_id);
+    let entry_bytes = if symmetric {
+        let mut bytes = Vec::with_capacity(entry_records.len() * size_of::<SymmetricEntryRecord>());
+        for e in &entry_records {
+            let record = SymmetricEntryRecord {
+                context_and_last: e.left_and_last,
+                cost: e.cost,
+            };
+            bytes.extend_from_slice(bytemuck::bytes_of(&record));
+        }
+        bytes
+    } else {
+        bytemuck::cast_slice(&entry_records).to_vec()
+    };
     let bodies: Vec<(SectionId, Vec<u8>)> = vec![
         (SectionId::Meta, meta.to_bytes()?),
         (
@@ -509,10 +523,7 @@ pub(crate) fn build_sections(
         (SectionId::Matrix, matrix),
         (SectionId::TrieNodes, bytemuck::cast_slice(&nodes).to_vec()),
         (SectionId::TrieTails, tails),
-        (
-            SectionId::Entries,
-            bytemuck::cast_slice(&entry_records).to_vec(),
-        ),
+        (SectionId::Entries, entry_bytes),
         (
             SectionId::FeatureOffsets,
             bytemuck::cast_slice(&feature_offsets).to_vec(),
@@ -524,11 +535,11 @@ pub(crate) fn build_sections(
         ),
     ];
     let mut sections = Sections {
-        flags: if opts.prune_dominated {
+        flags: (if opts.prune_dominated {
             FLAG_PRUNED_DOMINATED
         } else {
             0
-        },
+        }) | if symmetric { FLAG_SYMMETRIC_ENTRIES } else { 0 },
         bodies,
         stats,
     };

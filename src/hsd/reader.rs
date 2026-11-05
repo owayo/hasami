@@ -1,4 +1,4 @@
-//! v5 辞書の読み込みと検証
+//! v6 辞書の読み込みと検証
 //!
 //! 読み込み（[`Dictionary::load`]）では、ヘッダ・セクション表・小さな表（メタデータ、品詞・活用の
 //! 文字列表、共有文法表、文字種定義、未知語テンプレート）と trie の根・行列の寸法だけを検査する
@@ -13,12 +13,12 @@
 //! （[`Dictionary::from_bytes`] が複製する、`DictBuilder::build`）、複製せずに参照する `'static` の
 //! バイト列（[`Dictionary::from_static`]。実行ファイルに埋め込んだ辞書）。どれも同じ検査を通す。
 
-use super::container::{self, FLAG_PRUNED_DOMINATED, Layout, SectionId};
+use super::container::{self, FLAG_PRUNED_DOMINATED, FLAG_SYMMETRIC_ENTRIES, Layout, SectionId};
 use super::features;
 use super::meta::{self, Meta};
 use super::records::{
-    CharCategoryRecord, CharRangeRecord, EntryRecord, GrammarRecord, LEFT_ID_LIMIT, UnkBucket,
-    UnkTemplate,
+    CharCategoryRecord, CharRangeRecord, EntryRecord, EntrySlice, GrammarRecord, LEFT_ID_LIMIT,
+    SymmetricEntryRecord, UnkBucket, UnkTemplate,
 };
 use super::trie::{self, Node, Trie};
 use super::{DictError, strtab};
@@ -86,7 +86,7 @@ pub(crate) struct UnkTemplateInfo {
 #[derive(Clone, Copy)]
 pub(crate) struct DictView<'a> {
     pub trie: Trie<'a>,
-    pub entries: &'a [EntryRecord],
+    pub entries: EntrySlice<'a>,
     pub matrix: &'a [i16],
     pub num_left: usize,
     pub num_right: usize,
@@ -115,7 +115,7 @@ pub struct VerifyReport {
     pub features: usize,
 }
 
-/// v4 辞書（mmap したファイル、メモリ上のバッファ、または埋め込んだ `'static` のバイト列）
+/// v6 辞書（mmap したファイル、メモリ上のバッファ、または埋め込んだ `'static` のバイト列）
 ///
 /// 辞書は読み込み専用で、`Arc` で包んで複数のスレッド・[`crate::Analyzer`] から共有できる。
 pub struct Dictionary {
@@ -339,7 +339,17 @@ impl Dictionary {
         )?;
         let max_code = trie.max_code();
 
-        let entries: &[EntryRecord] = cast(section(SectionId::Entries), SectionId::Entries)?;
+        let entries = if layout.flags & FLAG_SYMMETRIC_ENTRIES != 0 {
+            EntrySlice::Symmetric(cast::<SymmetricEntryRecord>(
+                section(SectionId::Entries),
+                SectionId::Entries,
+            )?)
+        } else {
+            EntrySlice::Full(cast::<EntryRecord>(
+                section(SectionId::Entries),
+                SectionId::Entries,
+            )?)
+        };
         let feature_offsets: &[u32] = cast(
             section(SectionId::FeatureOffsets),
             SectionId::FeatureOffsets,
@@ -511,10 +521,18 @@ impl Dictionary {
         )
     }
 
+    fn entries(&self) -> EntrySlice<'_> {
+        if self.layout.flags & FLAG_SYMMETRIC_ENTRIES != 0 {
+            EntrySlice::Symmetric(self.typed(SectionId::Entries))
+        } else {
+            EntrySlice::Full(self.typed(SectionId::Entries))
+        }
+    }
+
     pub(crate) fn view(&self) -> DictView<'_> {
         DictView {
             trie: self.trie(),
-            entries: self.typed(SectionId::Entries),
+            entries: self.entries(),
             matrix: bytemuck::cast_slice(&self.section(SectionId::Matrix)[8..]),
             num_left: self.num_left,
             num_right: self.num_right,
@@ -660,7 +678,7 @@ impl Dictionary {
         let mut hits: Vec<(usize, u32)> = Vec::new();
         self.trie()
             .common_prefix_search(text, 0, |end, group| hits.push((end, group)))?;
-        let entries: &[EntryRecord] = self.typed(SectionId::Entries);
+        let entries = self.entries();
         let mut out = Vec::with_capacity(hits.len());
         for (end, group) in hits {
             let surface: Arc<str> = Arc::from(&text[..end]);
@@ -670,7 +688,7 @@ impl Dictionary {
                 let e = entries.get(i).ok_or_else(|| {
                     DictError::corrupt(format!("group at {group} runs past the last entry"))
                 })?;
-                list.push(self.entry_at(i, e, &surface)?);
+                list.push(self.entry_at(i, &e, &surface)?);
                 if e.is_last() {
                     break;
                 }
@@ -730,7 +748,7 @@ impl Dictionary {
         &self,
         mut cb: impl FnMut(DictEntry) -> Result<(), DictError>,
     ) -> Result<(), DictError> {
-        let entries: &[EntryRecord] = self.typed(SectionId::Entries);
+        let entries = self.entries();
         let groups = self.groups()?;
         for (start, key) in groups.iter() {
             let surface: Arc<str> = Arc::from(key);
@@ -739,7 +757,7 @@ impl Dictionary {
                 let e = entries.get(i).ok_or_else(|| {
                     DictError::corrupt(format!("group at {start} runs past the last entry"))
                 })?;
-                cb(self.entry_at(i, e, &surface)?)?;
+                cb(self.entry_at(i, &e, &surface)?)?;
                 if e.is_last() {
                     break;
                 }
@@ -797,7 +815,7 @@ impl Dictionary {
     pub fn verify(&self) -> Result<VerifyReport, DictError> {
         let trie = self.trie();
         let trie_stats = trie.verify(self.entry_count as u32)?;
-        let entries: &[EntryRecord] = self.typed(SectionId::Entries);
+        let entries = self.entries();
 
         // 群: trie の値の昇順と、表層形のバイト順が一致し、末尾の印と交互に並ぶ
         let groups = self.groups()?;

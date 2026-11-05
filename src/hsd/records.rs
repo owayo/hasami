@@ -41,6 +41,59 @@ impl EntryRecord {
     }
 }
 
+/// 左右の文脈IDが等しい通常エントリ（4バイト）。MSBは群の末尾。
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Pod, Zeroable)]
+pub struct SymmetricEntryRecord {
+    pub context_and_last: u16,
+    pub cost: i16,
+}
+
+/// ロード時に長さと整列を検査したmmap上の通常エントリ。
+#[derive(Clone, Copy)]
+pub(crate) enum EntrySlice<'a> {
+    Full(&'a [EntryRecord]),
+    Symmetric(&'a [SymmetricEntryRecord]),
+}
+
+impl EntrySlice<'_> {
+    #[inline]
+    pub fn len(self) -> usize {
+        match self {
+            Self::Full(entries) => entries.len(),
+            Self::Symmetric(entries) => entries.len(),
+        }
+    }
+
+    pub fn is_empty(self) -> bool {
+        self.len() == 0
+    }
+
+    #[inline]
+    pub fn get(self, index: usize) -> Option<EntryRecord> {
+        match self {
+            Self::Full(entries) => entries.get(index).copied(),
+            Self::Symmetric(entries) => entries.get(index).map(|e| EntryRecord {
+                left_and_last: e.context_and_last,
+                right_id: e.context_and_last & !LAST_IN_GROUP,
+                cost: e.cost,
+            }),
+        }
+    }
+
+    pub fn iter(self) -> impl Iterator<Item = EntryRecord> {
+        (0..self.len()).map(move |i| self.get(i).unwrap())
+    }
+
+    #[cfg(test)]
+    pub fn as_ptr(self) -> *const u8 {
+        match self {
+            Self::Full(entries) => entries.as_ptr().cast(),
+            Self::Symmetric(entries) => entries.as_ptr().cast(),
+        }
+    }
+}
+
 /// CHAR_CATEGORIES の 1 要素（char.def のカテゴリ定義、16 バイト）
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]

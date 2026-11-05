@@ -1,0 +1,185 @@
+{
+  "baseline_head": "e7a65059272e07087d555575b13b2ed53d1d3e28",
+  "dictionaries": {
+    "ipadic": {
+      "v5": {
+        "bytes": 16496162,
+        "sha256": "26a0c1b3c5555d7af89a4f81358d96a7b6c556b99b0ac6a7df76d0ec8c7a2369"
+      },
+      "symmetric": {
+        "bytes": 15714402,
+        "sha256": "f973ec3b1158eaf49b3ed1275578710ce0f8e46aee1298b14dfd1d152daeed4d"
+      }
+    },
+    "ipadic-neologd": {
+      "v5": {
+        "bytes": 206574882,
+        "sha256": "bc27fae64ed21994c3fd7addcd15e6631a412a7c93715ea684b157aa1667814e"
+      },
+      "symmetric": {
+        "bytes": 197261282,
+        "sha256": "f7f76d1f994fa8259d5db8f41e11a8627296d290683b81f00e4409b29fd94af0"
+      }
+    },
+    "ipadic-neologd-sudachi": {
+      "v5": {
+        "bytes": 220985250,
+        "sha256": "4110fcf6bb8d7c98be12894066f592117ce24f920e49ff6102e32308d74637d8"
+      },
+      "symmetric": {
+        "bytes": 210871586,
+        "sha256": "e16f25444b2ab3f81d572e940a731c925e6e50e2bdefa88861efb73c08507caf"
+      }
+    }
+  },
+  "corpora": {
+    "mixed": {
+      "bytes": 25748320,
+      "sha256": "5ea5828bf422b464c62ab35c78f47abab5248cb358f7b3bbb6c738c61a8e20fd",
+      "lines": 145178
+    },
+    "short": {
+      "bytes": 5500000,
+      "sha256": "1697a3e63e0bb680170b07916d9fe2d6d6307b333d291de13d51947ef7aa1d32",
+      "lines": 100000
+    },
+    "literature": {
+      "bytes": 8488992,
+      "sha256": "954f2e54221d04582d3e6d85b0ad59d4dab571f13c9fe95010ec80957be3260c",
+      "lines": 15424
+    },
+    "quantities": {
+      "bytes": 11616,
+      "sha256": "78610f83dd2d6b75efc8655291b9f4400e70f4ea3c6c95e7f6a2ba8ca348c884",
+      "lines": 360
+    }
+  },
+  "literature": {
+    "source_url": "https://www.aozora.gr.jp/cards/000148/files/752_ruby_2438.zip",
+    "archive": {
+      "bytes": 94410,
+      "sha256": "53c4d86033d0e4590c0354df5fec2709820ef21c09fa402826ff33376ec21228"
+    },
+    "source_lines": 482,
+    "repetitions": 32
+  },
+  "news_archive": {
+    "bytes": 8855190,
+    "sha256": "b17606ed8c670013a3809100a9e6104701baab62cc019abc262111bd2acf1063"
+  },
+  "platform": "Windows-11-10.0.26300-SP0",
+  "rounds": 12,
+  "affinity_mask": 4,
+  "format": {
+    "v5": 5,
+    "patch": 5013
+  },
+  "memory": "Windows PeakWorkingSetSize of the whole process",
+  "cache": "warm pages, one warmup pass per analysis process",
+  "executables": {
+    "v5": {
+      "bytes": 1616384,
+      "sha256": "0f675ea5241f39b3a40189ae3b6f3463ed346a8a5daa1a001de265d2bc5b3175"
+    },
+    "patch": {
+      "bytes": 1617920,
+      "sha256": "798e0542770c5338b14b018ea3336e7bc974cc7d22e54be8f3fca0693bd7dbee"
+    }
+  },
+  "runtime_sources": {
+    "v5/src/hsd/container.rs": {
+      "bytes": 18733,
+      "sha256": "6601528a8105e6bcaea7aeb882c02e1ff9a0a3742858e2ec32ec577f9896ccb5"
+    },
+    "v5/src/hsd/records.rs": {
+      "bytes": 3747,
+      "sha256": "99a93cad7d06c0518d6564b96a4e06da19f9dd7ab2e75a6864c500c2f5fb2a4c"
+    },
+    "v5/src/hsd/reader.rs": {
+      "bytes": 34692,
+      "sha256": "05fb55dd0a72ff48d745506aa9a02b853f225766b2b0c9f85e601769c38c2dea"
+    },
+    "v5/src/hsd/writer.rs": {
+      "bytes": 19942,
+      "sha256": "f31c74e0fbc5a302963c48ddfe60eec6fb22d30942fda0450aeb4437aa36d951"
+    },
+    "v5/src/hsd/mod.rs": {
+      "bytes": 5117,
+      "sha256": "92c850c45d6b424fb7472c73751cf6943a5870cfa302cc935ff66062c2db78f9"
+    },
+    "v5/src/lattice.rs": {
+      "bytes": 97116,
+      "sha256": "79807b8e0203b24199f37735c2cecba97e106df61444390ce3209bb99c70e8e5"
+    },
+    "v5/src/analyzer/contextual_readings.rs": {
+      "bytes": 34250,
+      "sha256": "ece4d2261b8b2bc257785bd34ad8a55597b65393074bd561f6343ac490b955b0"
+    },
+    "v5/src/hsd/tests.rs": {
+      "bytes": 35562,
+      "sha256": "ff53c4e5fbf1238b3d6edcd176593889399ef060c5170f5284ab0635eb8cb891"
+    },
+    "symmetric/src/hsd/container.rs": {
+      "bytes": 18878,
+      "sha256": "d36e8f429cbe39f43e927eb1bccce40b69b712fe1c8c55179153e42b9818e852"
+    },
+    "symmetric/src/hsd/records.rs": {
+      "bytes": 5252,
+      "sha256": "0d8fed60cdff81227e32b0353f067b9eded4cf9593ce2e3fac570b8bcb6cd470"
+    },
+    "symmetric/src/hsd/reader.rs": {
+      "bytes": 35213,
+      "sha256": "6440a005f35ab51c8e879ad595639bc1d1c79cbaa38a9d639c33cee88f673a77"
+    },
+    "symmetric/src/hsd/writer.rs": {
+      "bytes": 20531,
+      "sha256": "ecbf17ba58701a966402b0c5ec9be7cf45d2ee9b1cff3e02bf2b7f144b460add"
+    },
+    "symmetric/src/hsd/mod.rs": {
+      "bytes": 5175,
+      "sha256": "df2b1cc645a71a103d86c37c58cb4295ca9c71bdc94a63f9840a9c4281b49160"
+    },
+    "symmetric/src/lattice.rs": {
+      "bytes": 97141,
+      "sha256": "cf0702582957a1f704188d344c088a0014266650347bcfd30032efb791a005bc"
+    },
+    "symmetric/src/analyzer/contextual_readings.rs": {
+      "bytes": 34569,
+      "sha256": "4e6930b5e752f0c6a9e563bfb4f9e0c419b9b30299d2aa618213c58fece7a18f"
+    },
+    "symmetric/src/hsd/tests.rs": {
+      "bytes": 36661,
+      "sha256": "8383c87a264f7d61e08dcfdb16b9e6568329ccd90b88d5afefa6606d9f717a54"
+    },
+    "symmetric/src/hsd/symmetric_tests.rs": {
+      "bytes": 5571,
+      "sha256": "2de77f9d5472e6d81f1be72cae37679d996f416cb90261dae757bcbe8848ce92"
+    }
+  },
+  "measurement_sources": {
+    "scripts/hsd-format-eval.rs": {
+      "bytes": 7384,
+      "sha256": "72f344c157b3cd9b26be15ba9c1a44411e9f46de865847f7b228529858d9b0a6"
+    },
+    "scripts/hsd-format-compare.py": {
+      "bytes": 1269,
+      "sha256": "0447afac37d6fc4d635a11c5134f7bce66c39cd2afb9ffa03685e99061e7b247"
+    },
+    "scripts/hsd-pronunciation-remeasure.py": {
+      "bytes": 10274,
+      "sha256": "ee154c3016128b3e09af5d5b34f02a5a7d2bb05d203befa5bf5457b3632314ce"
+    },
+    "docs/measurements/hsd-symmetric-20261105/run.py": {
+      "bytes": 11322,
+      "sha256": "1be801318c5dbfaf36ab9527d4b8363afb59c879b561b784b3dba982091f9b75"
+    },
+    "docs/measurements/hsd-symmetric-20261105/prepare.py": {
+      "bytes": 5492,
+      "sha256": "6dde8ea3ec2750b24919d9f12aab4eb39b758c14c18860d1b3cfac165bad5cd9"
+    },
+    "docs/measurements/hsd-symmetric-20261105/design.md": {
+      "bytes": 4234,
+      "sha256": "78511aad52e83cdefd16a4225d18f44440b4160939cc97000c08760e396097f8"
+    }
+  }
+}

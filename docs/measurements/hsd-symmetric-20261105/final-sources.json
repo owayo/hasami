@@ -1,0 +1,242 @@
+{
+  "src/analyzer/contextual_readings.rs": {
+    "bytes": 34569,
+    "sha256": "4e6930b5e752f0c6a9e563bfb4f9e0c419b9b30299d2aa618213c58fece7a18f"
+  },
+  "src/analyzer/literal_identifier.rs": {
+    "bytes": 18994,
+    "sha256": "ba7fa3678e8653ecba67a33fe4717b5920bb29316f75b857a27dd82f72d2e83e"
+  },
+  "src/analyzer/quantity_spans.rs": {
+    "bytes": 12947,
+    "sha256": "75887cf3495ddbc56e743a4501d749ef8952e78ba81881fd9bbca46d0c1179ae"
+  },
+  "src/analyzer.rs": {
+    "bytes": 35570,
+    "sha256": "0671c1cf14893eedae837db9ade0f0f40b9f184e3fd66402f21727b55c92a1b4"
+  },
+  "src/char_class.rs": {
+    "bytes": 25177,
+    "sha256": "4a3c43fd69a1f7b0343b261af10b6bcd42dcc3ad8e0d3cd76a56cfb8a0f0c7ea"
+  },
+  "src/cli/build.rs": {
+    "bytes": 3440,
+    "sha256": "1e67b738610c01b48834d4a6e66d8d0909973aa98119fbffed0318e0cf67f30e"
+  },
+  "src/cli/dict.rs": {
+    "bytes": 26085,
+    "sha256": "31f0f9dbc1863e5be0530fe45985604daa4bfec8b456022b9244492396ac356e"
+  },
+  "src/cli/mod.rs": {
+    "bytes": 195,
+    "sha256": "63b6ac7d9a6241803c0b6ce43b1a96cfed973421c52422537f2dec6ca3de5132"
+  },
+  "src/cli/repair.rs": {
+    "bytes": 11866,
+    "sha256": "86bce9d49b6a9cfc715f16943dd66901f89e6837b487262b18f2f16b75f89ed4"
+  },
+  "src/cli/tokenize.rs": {
+    "bytes": 21055,
+    "sha256": "6cdabf8eaa23cc7cd9b01d33a609bac5387465c0f00a494f7f837bd080fb8fab"
+  },
+  "src/cli/write.rs": {
+    "bytes": 4799,
+    "sha256": "e17cc7443aa3c2e3b89bc194029747aaf23a795dd2b45bbb9d9e9948cd9ccae2"
+  },
+  "src/dict/builder.rs": {
+    "bytes": 94535,
+    "sha256": "28ba956c2387cf1067642f982a2df2fd05d936d2011df8dcac9456a09b7ca913"
+  },
+  "src/dict/mod.rs": {
+    "bytes": 3867,
+    "sha256": "2849b7800f51020ad6ccfdd8eeebf6ddb8ab960e12fe121518ccb90c9d238720"
+  },
+  "src/dict/sentence_like.rs": {
+    "bytes": 58496,
+    "sha256": "69160925d5c4e4586bc731300672afc75c4bcd90f9f29139495931f86847cd50"
+  },
+  "src/download/mod.rs": {
+    "bytes": 57237,
+    "sha256": "98bd20c35070afd669f69395a08f4abd69f71306359a230eebf80a4de8f0cd20"
+  },
+  "src/download/tests.rs": {
+    "bytes": 52031,
+    "sha256": "a9e8dd3cd1e91f72cc818ddc611c0b586f0b01cfb002398c5533d5eadd84dc1e"
+  },
+  "src/ffi.rs": {
+    "bytes": 15019,
+    "sha256": "365af6770e57572b166e512a8564e81f7ca610f64d936848b1b6e11d595750f7"
+  },
+  "src/hsd/container.rs": {
+    "bytes": 18945,
+    "sha256": "00957b12e298b1fbec86b9438d879070cb0ccd5ddaa9717289519e64cd75a2df"
+  },
+  "src/hsd/features.rs": {
+    "bytes": 23484,
+    "sha256": "8bfdd75541e073d28e0e075d117ed3e9ab1399e579998f685e2d2326a553993d"
+  },
+  "src/hsd/meta.rs": {
+    "bytes": 8881,
+    "sha256": "6468b1a6eca3c98697333f88d1122286a6958ac36bb51de78f0e7fd805d1ecb8"
+  },
+  "src/hsd/mod.rs": {
+    "bytes": 5175,
+    "sha256": "3db8313f2759fb3ec9a292d7adca7ae66cbedb470cdefdea28e384d62d5aaf4c"
+  },
+  "src/hsd/reader.rs": {
+    "bytes": 35213,
+    "sha256": "898bbd60d63933f971de791c280748dc3b78536944f5398097d2d7a6d994decc"
+  },
+  "src/hsd/records.rs": {
+    "bytes": 5252,
+    "sha256": "0d8fed60cdff81227e32b0353f067b9eded4cf9593ce2e3fac570b8bcb6cd470"
+  },
+  "src/hsd/strtab.rs": {
+    "bytes": 5863,
+    "sha256": "4b88b3a1cc79fe9b4c503db2967efbdf44152bd6321fe6e3611aa07d4177148b"
+  },
+  "src/hsd/symmetric_tests.rs": {
+    "bytes": 5571,
+    "sha256": "2de77f9d5472e6d81f1be72cae37679d996f416cb90261dae757bcbe8848ce92"
+  },
+  "src/hsd/tests.rs": {
+    "bytes": 36661,
+    "sha256": "ab76cb051f5456b166e8191580bac1cfdf1b50d19ca8d95d7c0fc13845663fa8"
+  },
+  "src/hsd/trie.rs": {
+    "bytes": 95582,
+    "sha256": "8c4ceaa143afbe8f35f4ded43bc81d365556e34a3132c3d40b04d43f5566a6aa"
+  },
+  "src/hsd/writer.rs": {
+    "bytes": 20531,
+    "sha256": "243790d81406945021d52fcbc98c90a4ef70c6f11b4be9888fc7acfe5c38c6f3"
+  },
+  "src/kana.rs": {
+    "bytes": 2486,
+    "sha256": "ee41a7f8c48061f1c361a51b97c58edc9c6572a441a8d0e764ae84e46c833148"
+  },
+  "src/lattice/idiom.rs": {
+    "bytes": 26373,
+    "sha256": "a486dd07cb7a471efe3016642b3692e71be24a4f2555acbd8243097388c80576"
+  },
+  "src/lattice/katakana_area.rs": {
+    "bytes": 7993,
+    "sha256": "8ce6ccd3f3fda19520caa5cd373547d27c9ef1920ed542b6185d5e809369b939"
+  },
+  "src/lattice/math_value.rs": {
+    "bytes": 49137,
+    "sha256": "1ec505df5803b8ec63676401c41391cfc5b354eac245b0fdc4d1cde74eeaf9be"
+  },
+  "src/lattice/particle.rs": {
+    "bytes": 14730,
+    "sha256": "89b574accb89a04100ee3b05a7ddab348f5fdc1d7f5f37ed4fb1566fb26c8f77"
+  },
+  "src/lattice/rank/tests.rs": {
+    "bytes": 34381,
+    "sha256": "8dc6946dd8fcb2086c72c651f138012625788e118222b33e43bd7248c05e01ee"
+  },
+  "src/lattice/rank.rs": {
+    "bytes": 20792,
+    "sha256": "33bbae82ccc479bea345dea5b2e9788574dc9afbafadf9b0d62c9ee9d1db6138"
+  },
+  "src/lattice/seismic.rs": {
+    "bytes": 7717,
+    "sha256": "c73e58d7c9b8420bc79917ac28e57b3833795a6be9a9de716a4745db2ac68651"
+  },
+  "src/lattice.rs": {
+    "bytes": 97141,
+    "sha256": "cf0702582957a1f704188d344c088a0014266650347bcfd30032efb791a005bc"
+  },
+  "src/lib.rs": {
+    "bytes": 3675,
+    "sha256": "eb427c026433a9ad685b5a3b18d6989a43d7ee89bc763a62013963571e96c9ee"
+  },
+  "src/main.rs": {
+    "bytes": 14416,
+    "sha256": "2f01a98426093f0f7a1e863d5e6c77820b42dd217003ea30934f77ed903fdec3"
+  },
+  "src/numeric/annual.rs": {
+    "bytes": 12373,
+    "sha256": "1e63615b94d9c44362bf42a9b00f5fa6fb7a847eff77ee6661a3c111ccbd6832"
+  },
+  "src/numeric/ascii/distance_duration.rs": {
+    "bytes": 7592,
+    "sha256": "5cb830da556628fd2b204b2b6c690fcf5492e4edbcc0596352c25906ed7a73c5"
+  },
+  "src/numeric/ascii/signed_decimal.rs": {
+    "bytes": 11881,
+    "sha256": "856da8f7cede400ec6f4ac8c52e21419efab11ee174e0906e7b9322ba053b0ed"
+  },
+  "src/numeric/ascii.rs": {
+    "bytes": 99014,
+    "sha256": "534a3578b846767e7137aed6dcf54bec9acbfcfb9b25d104a1da58b3cb74f5f4"
+  },
+  "src/numeric/followup_tests.rs": {
+    "bytes": 13852,
+    "sha256": "d068db310642948b010c068bc479e9d4282a9548f9ecd98a539732a29bccb9b1"
+  },
+  "src/numeric/fullwidth/calendar.rs": {
+    "bytes": 6562,
+    "sha256": "eb3e1eb31d3a3ad83e9434131128acc530868cfca3ff4be573adb8018b862f02"
+  },
+  "src/numeric/fullwidth.rs": {
+    "bytes": 25916,
+    "sha256": "f3760f96dbfaf794a7a453dcf2a4c11c573e0568bd68073465d28933f4de01ff"
+  },
+  "src/numeric/japanese_boundary.rs": {
+    "bytes": 3149,
+    "sha256": "ff6e61a0db95285277b87d269d18c8ae218b1567d747695891f5180556242466"
+  },
+  "src/numeric/kanji.rs": {
+    "bytes": 64762,
+    "sha256": "cfa06c5ddd258e7eceb154f6ae28ed95e9371ee22a3e81ac65e9e8a7009e45d5"
+  },
+  "src/numeric/month/contiguous.rs": {
+    "bytes": 9113,
+    "sha256": "903496949ba20be98e1dcffc9af45210c911f4714f432ea860966c369a9a89d9"
+  },
+  "src/numeric/month/first_day.rs": {
+    "bytes": 14718,
+    "sha256": "156b2157c3ccc21e3b4fe1c7353f51dfb6d9313002f025d0840a8175e1a2d95f"
+  },
+  "src/numeric/month.rs": {
+    "bytes": 39303,
+    "sha256": "c622b28075db736761cc45394a95c0a09fa2cef8e0def85801be30c822f36427"
+  },
+  "src/numeric/units/area_tests.rs": {
+    "bytes": 14099,
+    "sha256": "76cedbe6d56a26b165b2fcc3b11acb62ba284a48d9b9ef2cb40e03abbf9251ec"
+  },
+  "src/numeric/units.rs": {
+    "bytes": 64027,
+    "sha256": "d6e8e8e0a3c38cae9ef282d4166c217f55117de4b294dfbd488f5ec5d6feac2a"
+  },
+  "src/numeric/year.rs": {
+    "bytes": 20330,
+    "sha256": "df955242c4eff948cb06fcd298c0d0b074f350771a900efbdb6e3791d0cbee23"
+  },
+  "src/numeric.rs": {
+    "bytes": 151353,
+    "sha256": "034fae5125a2e27fcbf369a4d3a2e4e83ec1a135436cfd7acc5f9133b31d4aab"
+  },
+  "src/pos.rs": {
+    "bytes": 56048,
+    "sha256": "815348c93d1568f81849803dbf6da68bd28e39e69d32ccc47582e6eda5c17036"
+  },
+  "src/sentence/chars.rs": {
+    "bytes": 3011,
+    "sha256": "fe0471dd6d3989dee69d8be0d91c806a38141fd2431f1d31cfeb9f5cb7239522"
+  },
+  "src/sentence/exceptions.rs": {
+    "bytes": 43388,
+    "sha256": "e269677dd900b3c567822081e18a944e543577d6061849a6f783081b6e8694ff"
+  },
+  "src/sentence/index.rs": {
+    "bytes": 11910,
+    "sha256": "8a2d89fb6b0d467a669dafed16ec1b9820489ba731a66602a1210307431376bb"
+  },
+  "src/sentence/mod.rs": {
+    "bytes": 99643,
+    "sha256": "b9e61a3894f36c861799e790abdef2396ac13d57256f9388f7f6cdc11056057e"
+  }
+}

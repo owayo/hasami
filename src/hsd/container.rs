@@ -1,10 +1,10 @@
-//! v5 のコンテナ: 64 バイトのヘッダとセクション表
+//! v6 のコンテナ: 64 バイトのヘッダとセクション表
 //!
 //! | オフセット | 型 | 内容 |
 //! | --- | --- | --- |
 //! | 0 | [u8; 8] | magic `HSMDICT\0` |
-//! | 8 | u32 | version = 5 |
-//! | 12 | u32 | flags。bit0 = 支配エントリを除いた最終辞書。それ以外のビットはエラー |
+//! | 8 | u32 | version = 6 |
+//! | 12 | u32 | flags。bit0 = 支配エントリ除去、bit1 = 左右同一IDの4Bエントリ。それ以外はエラー |
 //! | 16 | u32 | セクション数 (1 以上 64 以下) |
 //! | 20 | u32 | 予約 (0) |
 //! | 24 | u64 | ファイル長 (実際の長さと一致しなければエラー) |
@@ -20,7 +20,7 @@ use super::DictError;
 use std::io::{self, Write};
 
 pub const MAGIC: [u8; 8] = *b"HSMDICT\0";
-pub const VERSION: u32 = 5;
+pub const VERSION: u32 = 6;
 pub const HEADER_LEN: usize = 64;
 pub const SECTION_ENTRY_LEN: usize = 24;
 pub const MAX_SECTIONS: usize = 64;
@@ -31,7 +31,9 @@ const SECTION_SLOTS: usize = SectionId::Grammar as usize + 1;
 
 /// flags の bit0: 支配エントリを除いた最終辞書（repair・merge の入力にできない）
 pub const FLAG_PRUNED_DOMINATED: u32 = 1;
-const KNOWN_FLAGS: u32 = FLAG_PRUNED_DOMINATED;
+/// 全通常エントリの左右文脈IDを1個にまとめた4B形式。
+pub const FLAG_SYMMETRIC_ENTRIES: u32 = 2;
+const KNOWN_CONTAINER_FLAGS: u32 = FLAG_PRUNED_DOMINATED | FLAG_SYMMETRIC_ENTRIES;
 
 /// セクションの種類
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -47,7 +49,7 @@ pub enum SectionId {
     TrieNodes = 4,
     /// trie の末尾レコード
     TrieTails = 5,
-    /// エントリ: `{left_and_last: u16, right: u16, cost: i16}`
+    /// 通常エントリ。bit1なら `{context_and_last: u16, cost: i16}`、それ以外は6B
     Entries = 6,
     /// エントリごとの素性レコードのバイトオフセット: u32
     FeatureOffsets = 7,
@@ -197,7 +199,7 @@ pub fn parse(data: &[u8]) -> Result<Layout, DictError> {
         ));
     }
     let flags = read_u32(data, 12);
-    if flags & !KNOWN_FLAGS != 0 {
+    if flags & !KNOWN_CONTAINER_FLAGS != 0 {
         return Err(DictError::corrupt(format!(
             "unknown header flags: {flags:#x}"
         )));
@@ -309,7 +311,7 @@ pub fn write<W: Write>(
     sections: &[(SectionId, &[u8])],
 ) -> io::Result<u64> {
     assert!(!sections.is_empty() && sections.len() <= MAX_SECTIONS);
-    assert_eq!(flags & !KNOWN_FLAGS, 0);
+    assert_eq!(flags & !KNOWN_CONTAINER_FLAGS, 0);
     let table_end = HEADER_LEN + sections.len() * SECTION_ENTRY_LEN;
     let mut offset = table_end.next_multiple_of(SECTION_ALIGN);
     let mut table = Vec::with_capacity(sections.len() * SECTION_ENTRY_LEN);
@@ -406,7 +408,7 @@ mod tests {
     #[test]
     fn rejects_old_versions_with_rebuild_hint() {
         let mut buf = write_to_vec(0, &all_sections());
-        for version in 1..VERSION {
+        for version in 1u32..=5 {
             buf[8..12].copy_from_slice(&version.to_le_bytes());
             let err = parse(&buf).unwrap_err();
             assert!(matches!(err, DictError::UnsupportedVersion(v) if v == version));
@@ -437,7 +439,7 @@ mod tests {
     fn rejects_unknown_flags_and_nonzero_reserved_bytes() {
         let buf = write_to_vec(0, &all_sections());
         let mut bad = buf.clone();
-        bad[12] = 2;
+        bad[12] = 4;
         assert!(matches!(parse(&bad), Err(DictError::Corrupt(_))));
         let mut bad = buf.clone();
         bad[20] = 1;

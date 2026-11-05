@@ -1,4 +1,4 @@
-//! v5 形式の往復・再現性・検証のテスト
+//! v6 形式の往復・再現性・検証のテスト
 
 use super::container::{self, SectionId};
 use super::meta::{self, Meta, PosScheme};
@@ -793,9 +793,26 @@ fn build_rejects_invalid_input() {
 // --- 壊れたファイル ---
 
 fn sample_bytes() -> Vec<u8> {
+    sample_bytes_with_mode(true)
+}
+
+fn sample_bytes_with_mode(symmetric: bool) -> Vec<u8> {
     let dir = temp_dir();
     let path = dir.join("s.hsd");
-    let builder = sample_builder();
+    let mut builder = sample_builder();
+    if !symmetric {
+        builder.add_entry(entry(
+            "非対称語",
+            1,
+            2,
+            77,
+            "名詞,一般,*,*",
+            ("*", "*"),
+            "非対称語",
+            "ヒタイショウゴ",
+            "ヒタイショーゴ",
+        ));
+    }
     builder
         .write_hsd(&path, &builder.write_options(), |_, _| {})
         .unwrap();
@@ -861,86 +878,92 @@ fn rejects_other_versions_and_files() {
 
 #[test]
 fn detects_broken_references() {
-    let bytes = sample_bytes();
-    for (name, load) in loaders() {
-        // 素性レコードのオフセットを範囲外にする → 解析時にエラー（panic しない）
-        let mut bad = bytes.clone();
-        let offsets = section_range(&bad, SectionId::FeatureOffsets);
-        for chunk in bad[offsets].chunks_mut(4) {
-            chunk.copy_from_slice(&u32::MAX.to_le_bytes());
+    for symmetric in [true, false] {
+        let bytes = sample_bytes_with_mode(symmetric);
+        let entry_width = if symmetric { 4 } else { 6 };
+        for (name, load) in loaders() {
+            // 素性レコードのオフセットを範囲外にする → 解析時にエラー（panic しない）
+            let mut bad = bytes.clone();
+            let offsets = section_range(&bad, SectionId::FeatureOffsets);
+            for chunk in bad[offsets].chunks_mut(4) {
+                chunk.copy_from_slice(&u32::MAX.to_le_bytes());
+            }
+            let dict = load(&bad).unwrap();
+            let mut analyzer = Analyzer::from_dict(dict);
+            assert!(
+                matches!(analyzer.try_tokenize("東京"), Err(DictError::Corrupt(_))),
+                "{name}"
+            );
+            assert!(
+                matches!(
+                    analyzer.contextual_reading_spans("東京"),
+                    Err(DictError::Corrupt(_))
+                ),
+                "{name}"
+            );
+            assert!(analyzer.dictionary().verify().is_err(), "{name}");
+            assert!(
+                analyzer.contextual_reading_spans("").unwrap().is_empty(),
+                "{name}"
+            );
+
+            // 群の最後の印を消す → 群が隣と混ざるので verify で見つかる
+            let mut bad = bytes.clone();
+            let entries = section_range(&bad, SectionId::Entries);
+            for rec in bad[entries].chunks_exact_mut(entry_width) {
+                rec[1] &= 0x7F;
+            }
+            let dict = load(&bad).unwrap();
+            assert!(dict.verify().is_err(), "{name}");
+            // 最後の群が配列の外まで続く → 解析時にエラー
+            let mut analyzer = Analyzer::from_dict(dict);
+            assert!(analyzer.try_tokenize("𠮷野家").is_err(), "{name}");
+            assert!(
+                analyzer.contextual_reading_spans("𠮷野家").is_err(),
+                "{name}"
+            );
+            assert!(
+                analyzer.contextual_reading_spans("").unwrap().is_empty(),
+                "{name}"
+            );
+
+            // 文脈 ID を行列の外にする → 解析時にエラー
+            let mut bad = bytes.clone();
+            let entries = section_range(&bad, SectionId::Entries);
+            for rec in bad[entries].chunks_exact_mut(entry_width) {
+                let target = if symmetric { 0 } else { 2 };
+                let old = u16::from_le_bytes(rec[target..target + 2].try_into().unwrap());
+                let value = 999 | if symmetric { old & 0x8000 } else { 0 };
+                rec[target..target + 2].copy_from_slice(&value.to_le_bytes());
+            }
+            let mut analyzer = Analyzer::from_dict(load(&bad).unwrap());
+            assert!(
+                matches!(analyzer.try_tokenize("東京"), Err(DictError::Corrupt(_))),
+                "{name}"
+            );
+
+            assert!(
+                matches!(
+                    analyzer.contextual_reading_spans("東京"),
+                    Err(DictError::Corrupt(_))
+                ),
+                "{name}"
+            );
+
+            // FEATURE_OFFSETS の件数がエントリと合わない → ロード時にエラー
+            let layout = container::parse(&bytes).unwrap();
+            let r = layout.get(SectionId::FeatureOffsets);
+            let entry_at = (0..SectionId::ALL.len())
+                .map(|i| container::HEADER_LEN + i * container::SECTION_ENTRY_LEN)
+                .find(|&at| {
+                    u32::from_le_bytes(bytes[at..at + 4].try_into().unwrap())
+                        == SectionId::FeatureOffsets as u32
+                })
+                .unwrap();
+            let mut bad = bytes.clone();
+            bad[entry_at + 16..entry_at + 24].copy_from_slice(&((r.len - 4) as u64).to_le_bytes());
+            assert!(matches!(load(&bad), Err(DictError::Corrupt(_))), "{name}");
         }
-        let dict = load(&bad).unwrap();
-        let mut analyzer = Analyzer::from_dict(dict);
-        assert!(
-            matches!(analyzer.try_tokenize("東京"), Err(DictError::Corrupt(_))),
-            "{name}"
-        );
-        assert!(
-            matches!(
-                analyzer.contextual_reading_spans("東京"),
-                Err(DictError::Corrupt(_))
-            ),
-            "{name}"
-        );
-        assert!(analyzer.dictionary().verify().is_err(), "{name}");
-        assert!(
-            analyzer.contextual_reading_spans("").unwrap().is_empty(),
-            "{name}"
-        );
-
-        // 群の最後の印を消す → 群が隣と混ざるので verify で見つかる
-        let mut bad = bytes.clone();
-        let entries = section_range(&bad, SectionId::Entries);
-        for rec in bad[entries].chunks_mut(6) {
-            rec[1] &= 0x7F;
-        }
-        let dict = load(&bad).unwrap();
-        assert!(dict.verify().is_err(), "{name}");
-        // 最後の群が配列の外まで続く → 解析時にエラー
-        let mut analyzer = Analyzer::from_dict(dict);
-        assert!(analyzer.try_tokenize("𠮷野家").is_err(), "{name}");
-        assert!(
-            analyzer.contextual_reading_spans("𠮷野家").is_err(),
-            "{name}"
-        );
-        assert!(
-            analyzer.contextual_reading_spans("").unwrap().is_empty(),
-            "{name}"
-        );
-
-        // 文脈 ID を行列の外にする → 解析時にエラー
-        let mut bad = bytes.clone();
-        let entries = section_range(&bad, SectionId::Entries);
-        for rec in bad[entries].chunks_mut(6) {
-            rec[2..4].copy_from_slice(&999u16.to_le_bytes());
-        }
-        let mut analyzer = Analyzer::from_dict(load(&bad).unwrap());
-        assert!(
-            matches!(analyzer.try_tokenize("東京"), Err(DictError::Corrupt(_))),
-            "{name}"
-        );
-
-        assert!(
-            matches!(
-                analyzer.contextual_reading_spans("東京"),
-                Err(DictError::Corrupt(_))
-            ),
-            "{name}"
-        );
-
-        // FEATURE_OFFSETS の件数がエントリと合わない → ロード時にエラー
-        let layout = container::parse(&bytes).unwrap();
-        let r = layout.get(SectionId::FeatureOffsets);
-        let entry_at = (0..SectionId::ALL.len())
-            .map(|i| container::HEADER_LEN + i * container::SECTION_ENTRY_LEN)
-            .find(|&at| {
-                u32::from_le_bytes(bytes[at..at + 4].try_into().unwrap())
-                    == SectionId::FeatureOffsets as u32
-            })
-            .unwrap();
-        let mut bad = bytes.clone();
-        bad[entry_at + 16..entry_at + 24].copy_from_slice(&((r.len - 4) as u64).to_le_bytes());
-        assert!(matches!(load(&bad), Err(DictError::Corrupt(_))), "{name}");
     }
 }
 

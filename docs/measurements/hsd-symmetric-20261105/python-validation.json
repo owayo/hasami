@@ -1,0 +1,14 @@
+{
+  "ipadic": {
+    "equal_bytes": 434620,
+    "sha256": "5d9969f7d73f5bddb28b9a3a54e5dca14ddcd603ecf0828de1f4809b896a3d98"
+  },
+  "ipadic-neologd": {
+    "equal_bytes": 418670,
+    "sha256": "14dfa718e661f0674a5000817f0e4620c9d61d6ee62cd69501bc799a82b914af"
+  },
+  "ipadic-neologd-sudachi": {
+    "equal_bytes": 413501,
+    "sha256": "117bf138422bc16ac009959658d12b7e9d41611a0ac33dc8b502549645762589"
+  }
+}
