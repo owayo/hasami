@@ -63,7 +63,8 @@ hasami/
 │   │   ├── builtin_exceptions.txt     # 組み込みの例外表（hasami export-sentence-exceptions が生成）
 │   │   └── builtin_exceptions.NOTICE  # 例外表を含むものを配布するときに添える表示
 │   ├── pos.rs          # 品詞の正規化（CoarsePos、IPAdic 系・UniDic 系）、否定の判定、モーラ数
-│   ├── lattice.rs      # ラティス構築 + Viterbi、Token、トークンの組み立て（既知語キャッシュ、品詞などの Arc は解析器ごと）
+│   ├── lattice.rs      # ラティス構築 + Viterbi、Token と素性の述語（is_uninflected・is_known_base_form）、
+│   │                   # トークンの組み立て（既知語キャッシュ、品詞などの Arc は解析器ごと）
 │   ├── numeric.rs      # 最良パスの数詞・助数詞の読み（音便の表、人・日の和語読み）。`analyzer` feature
 │   │   ├── ascii.rs    # ASCII の数量（小数・桁区切り・単位）の合成と、識別子の保護（AsciiPlan）
 │   │   ├── fullwidth.rs # 純全角整数と一文字助数詞の数量合成
@@ -263,7 +264,8 @@ Release はそのコミットからタグを作る。タグの辞書ビルドで
 で同じ手順を回し、`gh run download <run-id> -n dictionaries` で作った辞書を受け取って確かめる（辞書はコミットしない）。
 
 解析の処理を変えたら、変更前後で全トークンの全フィールドが一致するか（同点の扱いを含む）を大きなコーパスで確かめ、
-速度は変更前後を交互に走らせて比べる（負荷のあるマシンでは E コアに回されて値が倍近く揺れる）。
+速度は変更前後を交互に走らせて比べる（負荷のあるマシンでは E コアに回されて値が倍近く揺れる。Windows の
+開発機では壁時計・CPU 時間とも最小と最大で 1.4〜2.2 倍に揺れ、数 % の差は見分けられない）。
 手順と過去の数値は `docs/performance.md`。
 
 ## 辞書ソースの既知の欠陥
