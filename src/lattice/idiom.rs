@@ -9,8 +9,17 @@
 //! - https://kotobank.jp/word/分-122190
 
 use super::Token;
+use crate::anchors::Anchors;
 use std::ops::Range;
 use std::sync::Arc;
+
+/// 成句の先頭の語の表層。[`correction`] はこの語から始まる並びだけを見る（規則を足すときはここにも足す）
+const HEADS: [&str; 9] = ["真に", "真", "身", "得", "体", "体よく", "間", "分", "分の"];
+
+/// 先頭の語の 1 字目（[`Anchors::IDIOM_HEAD`]）がチャンクに無ければ何もしない
+pub(super) fn may_apply(anchors: Anchors) -> bool {
+    anchors.intersects(Anchors::IDIOM_HEAD)
+}
 
 struct Correction {
     target: usize,
@@ -173,6 +182,10 @@ fn blocked_left(tokens: &[Token], i: usize, bun: bool) -> bool {
 fn correction(tokens: &[Token], i: usize) -> Option<Correction> {
     let rest = &tokens[i..];
     let first = &rest[0];
+    // 参照経路（テストの anchors::ungated）では表を見ずに下の規則をすべて試す
+    if !crate::anchors::ungated_now() && !HEADS.contains(&first.surface.as_ref()) {
+        return None;
+    }
     let (target, len, incorrect, corrected): (_, _, &'static [&'static str], _) = match &*first
         .surface
     {
@@ -280,6 +293,19 @@ pub(super) fn apply(tokens: &mut [Token], protected: &[Range<usize>]) {
             token.reading = Arc::clone(&reading);
             token.pronunciation = reading;
         }
+    }
+}
+
+#[cfg(test)]
+mod anchor_tests {
+    use super::*;
+
+    #[test]
+    fn every_head_carries_the_idiom_anchor() {
+        for head in HEADS {
+            assert!(may_apply(Anchors::scan(head)), "{head}");
+        }
+        assert!(!may_apply(Anchors::scan("受ける粉にする言われぬ断る悪い")));
     }
 }
 

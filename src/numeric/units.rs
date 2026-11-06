@@ -298,8 +298,11 @@ pub(crate) fn coalesce_units(
                     .and_then(|(a, b)| input.get(a..b))
                     == Some(token.surface.as_ref())
             });
+        // まだ何も結合していない間は write == read なので、入れ替えない
         while read < out.len() && out[read].end <= frame.number.end {
-            out.swap(write, read);
+            if write != read {
+                out.swap(write, read);
+            }
             write += 1;
             read += 1;
         }
@@ -395,10 +398,15 @@ pub(crate) fn coalesce_units(
         write += 1;
         read = limit;
     }
-    while read < out.len() {
-        out.swap(write, read);
-        write += 1;
-        read += 1;
+    // 1 つも結合しなければ write == read のままで、残りはもう並んでいる
+    if write == read {
+        write = out.len();
+    } else {
+        while read < out.len() {
+            out.swap(write, read);
+            write += 1;
+            read += 1;
+        }
     }
     out.truncate(write);
 }

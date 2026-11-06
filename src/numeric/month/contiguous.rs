@@ -2,8 +2,14 @@
 //! 裸の数詞の保護範囲だけを認定後に除外し、年・日と旧来の暦月規則は変更しない。
 
 use super::{MONTHS, eleven_prefix_allowed, eleven_right_allowed, standard_readings};
+use crate::anchors::Anchors;
 use crate::{DictError, Dictionary, Token, numeric::AsciiPlan};
 use std::{ops::Range, sync::Arc};
+
+/// [`frames`] が見るのは ASCII の数字に直結した「月」だけ
+pub(crate) fn may_find(anchors: Anchors) -> bool {
+    anchors.contains(Anchors::MONTH.union(Anchors::ASCII_DIGIT))
+}
 
 #[derive(Debug)]
 pub(crate) struct Frame {

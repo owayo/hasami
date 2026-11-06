@@ -9,7 +9,14 @@
 //! Viterbi 候補の値なので維持する。
 
 use super::Token;
+use crate::anchors::Anchors;
 use std::{ops::Range, sync::Arc};
+
+/// 書き換えるのは「等」の語だけなので、チャンクに「等」が無ければ何もしない
+pub(super) fn may_apply(anchors: Anchors) -> bool {
+    anchors.intersects(Anchors::NADO)
+}
+
 fn fixed(t: &Token, surface: &str, pos: &str, reading: &str) -> bool {
     t.is_known
         && &*t.surface == surface

@@ -1,7 +1,13 @@
 //! 標準の整数数量と既知の年/ネン。末尾4をヨネンへそろえ、識別子と別読みを保持する。
 use super::{AsciiPlan, ascii, has_reading, is_numeral, pos_has};
+use crate::anchors::Anchors;
 use crate::lattice::Token;
 use std::ops::Range;
+
+/// [`number_starts`] が見るのは「年」の前の数だけ
+pub(super) fn may_find(anchors: Anchors) -> bool {
+    anchors.intersects(Anchors::YEAR)
+}
 
 fn scalar(raw: &str) -> Option<u64> {
     if raw.is_ascii() {

@@ -4,6 +4,7 @@
 //! 初日は標準の月日が直結する暦日だけを合成し、裸の一日と期間は保持する。
 //! 二十日は単一数詞にまとまったときだけ読む。
 
+use crate::anchors::Anchors;
 use crate::lattice::Token;
 use std::ops::Range;
 use std::sync::Arc;
@@ -23,7 +24,10 @@ pub(crate) use ascii::{AsciiPlan, apply as apply_ascii_quantities};
 pub(crate) use kanji::apply as apply_kanji_quantities;
 pub(crate) use month::apply as apply_spaced_months;
 pub(crate) use month::apply_contiguous as apply_contiguous_months;
-pub(crate) use month::apply_first_day as apply_calendar_first_day;
+pub(crate) use month::{
+    apply_first_day as apply_calendar_first_day,
+    first_day_may_apply as calendar_first_day_may_apply,
+};
 pub(crate) use year::apply as apply_year_readings;
 
 /// ASCII原形を持つ既知のカタカナ別表記だけを、既存の標準位取りと照合する。
@@ -762,6 +766,17 @@ fn ten_minutes(tokens: &mut [Token], i: usize) {
     {
         set_readings(&mut tokens[i], "ジュップン", "ジュップン");
     }
+}
+
+/// 助数詞の読みを直すのは、数字・漢数字・位の字（[`digit`]・[`place`]）だけの数詞に続く語と「十分」だけなので、
+/// チャンクにそのどれも無ければ何もしない
+pub(crate) fn counter_readings_may_apply(anchors: Anchors) -> bool {
+    anchors.intersects(
+        Anchors::ASCII_DIGIT
+            .union(Anchors::WIDE_DIGIT)
+            .union(Anchors::KANJI_DIGIT)
+            .union(Anchors::KANJI_PLACE),
+    )
 }
 
 /// 仮名などの読み補完の後に呼ぶ。数詞列をまとめず、読みと発音だけを変更する。

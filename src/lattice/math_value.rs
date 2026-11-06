@@ -11,7 +11,13 @@
 //! 内部の引用符や空白を取り除いて離れた語を構文へ結び直さない。
 
 use super::Token;
+use crate::anchors::Anchors;
 use std::{ops::Range, sync::Arc};
+
+/// 書き換えるのは単独の「値」の語だけなので、チャンクに「値」が無ければ何もしない
+pub(super) fn may_apply(anchors: Anchors) -> bool {
+    anchors.intersects(Anchors::ATAI)
+}
 
 /// 一度の解析の元入力と、その入力に対応する絶対バイト位置。
 /// 全文解析・文別解析では元全文とorigin=0、独立Workspaceではその一入力とoffset。

@@ -2,9 +2,15 @@
 //! 元の固有名詞の辞書候補は残し、引用・識別子・独自素性・未知の全体語を保持する。
 
 use super::{ContextualReadingContext, Token};
+use crate::anchors::Anchors;
 use crate::char_class::{CharType, type_index};
 use crate::{DictError, Dictionary};
 use std::{ops::Range, sync::Arc};
+
+/// 書き換えるのは「面積」の語から始まる並びだけなので、チャンクに「面」が無ければ何もしない
+pub(super) fn may_apply(anchors: Anchors) -> bool {
+    anchors.intersects(Anchors::MEN)
+}
 
 fn fixed(
     t: &Token,

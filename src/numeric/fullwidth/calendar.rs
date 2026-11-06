@@ -1,6 +1,12 @@
 //! 月日が直結した全角年だけの認可。旧来の年読み・全角数量の条件は変更しない。
 
+use crate::anchors::Anchors;
 use std::ops::Range;
+
+/// [`ranges`] が見るのは全角の数字に続く「年」だけ
+pub(in crate::numeric) fn may_find(anchors: Anchors) -> bool {
+    anchors.contains(Anchors::WIDE_DIGIT.union(Anchors::YEAR))
+}
 
 fn component(input: &str, suffix: char, maximum: u32) -> Option<(&str, usize)> {
     let first = input.chars().next()?;

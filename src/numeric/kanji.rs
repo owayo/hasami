@@ -1,9 +1,16 @@
 //! 位を省いた漢数字列と、日に直結した二十。標準的な数詞だけを後段へ渡す。
 
 use super::{AsciiPlan, ascii, pos_has, standard_kanji_readings};
+use crate::anchors::Anchors;
 use crate::lattice::Token;
 use std::ops::Range;
 use std::sync::Arc;
+
+/// [`number_starts`] が開始位置を見つけるのは、漢数字の数字（「二十日」の「二」も含む）か、全角の数字の
+/// 数量（[`super::fullwidth::number_starts`]）からだけ
+pub(super) fn may_find(anchors: Anchors) -> bool {
+    anchors.intersects(Anchors::KANJI_DIGIT.union(Anchors::WIDE_DIGIT))
+}
 
 fn digit(c: char) -> Option<u64> {
     matches!(
@@ -155,16 +162,23 @@ fn pair2_counter(raw: &str, suffix: &Token) -> bool {
 }
 
 /// 前分割で識別子や小数の前半を失わないよう、入力全体で候補の開始位置を決める。
-pub(super) fn number_starts(input: &str, offset: usize) -> Vec<usize> {
+///
+/// `anchors` は入力の錨。全角の数字が無ければ純全角数量を、漢数字の数字が無ければ漢数字列を探さない
+/// （どちらもその文字からしか始まらない）。
+pub(super) fn number_starts(input: &str, offset: usize, anchors: Anchors) -> Vec<usize> {
     // 純全角数量も同じ全入力planで開始位置を保ち、漢数字の値や適用条件は広げない。
-    let mut starts = super::fullwidth::number_starts(input, offset, |prefix| {
-        if !identifier_prefix(prefix) {
-            return true;
-        }
+    let mut starts = if anchors.intersects(Anchors::WIDE_DIGIT) {
+        super::fullwidth::number_starts(input, offset, |prefix| {
+            if !identifier_prefix(prefix) {
+                return true;
+            }
 
-        super::japanese_boundary::comma_prefix(prefix)
-    });
-    if input.is_ascii() {
+            super::japanese_boundary::comma_prefix(prefix)
+        })
+    } else {
+        Vec::new()
+    };
+    if input.is_ascii() || !anchors.intersects(Anchors::KANJI_DIGIT) {
         return starts;
     }
     let mut chars = input.char_indices().peekable();
@@ -177,7 +191,8 @@ pub(super) fn number_starts(input: &str, offset: usize) -> Vec<usize> {
         }
         // 位付き漢数字全般ではなく、二十日だけを和語の助数詞補正へ渡す。
         // 数字列の途中の二は下の走査が消費するので、三二十日等では開始しない。
-        if input[start..].starts_with("二十日") && !identifier_prefix(&input[..start]) {
+        if c == '二' && input[start..].starts_with("二十日") && !identifier_prefix(&input[..start])
+        {
             starts.push(offset + start);
             continue;
         }
