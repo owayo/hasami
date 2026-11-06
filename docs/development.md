@@ -43,6 +43,18 @@ mise exec -- cargo test --locked --workspace --exclude hasami-python -- --ignore
 mise exec -- python scripts/bench-dictionary-tooling.py   --before <変更前のhasami.exe> --after <変更後のhasami.exe>   --dict dict/ipadic.hsd --dict dict/ipadic-neologd-sudachi.hsd   --rounds 7 --output <出力先>/tooling.jsonl
 ```
 
+解析（`tokenize`・`bench`）の費用は、版どうしの CLI を `scripts/bench-tokenize.py` に渡して交互に測る。入力は
+Issue #119 と同じ 20 種の文を数値を変えて並べた 6,000 行（`--repeat` 回並べる。既定 20）で、`--case` で錨の
+文字を含まない文（`plain`）、錨はあるが補正の当たらない文（`idle`）、単位の多い長い 1 行（`units`）にも替えられる。
+macOS は `/usr/bin/time -l` の命令数、Linux は `perf stat`、Windows は論理 CPU 1 個に固定した `QueryProcessCycleTime`
+のサイクルを記録し、分かち書きの出力が版どうしで一致するかも確かめる。辞書の形式は版で変わるので、版ごとに
+読める辞書と組にして渡す（最初の組が基準）。全フィールドの一致はこのスクリプトでは見ない（上の比較と
+`src/analyzer/gating_tests.rs` で確かめる）。
+
+```bash
+mise exec -- python scripts/bench-tokenize.py --output <出力先>   --variant v26.10.107=<旧版のhasami>=<旧版のipadic.hsd>   --variant after=target/release/hasami=dict/ipadic.hsd
+```
+
 ## CLI の実装
 
 `src/main.rs` がコマンドを振り分け、`build`・`merge` の引数と実行は `src/cli/build.rs`、

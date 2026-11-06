@@ -63,6 +63,7 @@ hasami/
 │   │   ├── builtin_exceptions.txt     # 組み込みの例外表（hasami export-sentence-exceptions が生成）
 │   │   └── builtin_exceptions.NOTICE  # 例外表を含むものを配布するときに添える表示
 │   ├── pos.rs          # 品詞の正規化（CoarsePos、IPAdic 系・UniDic 系）、否定の判定、モーラ数
+│   ├── anchors.rs      # 補正の段と下調べ（AsciiPlan）が発火しうる文字（錨）の有無。各段の may_apply / may_find が使う
 │   ├── lattice.rs      # ラティス構築 + Viterbi、Token と素性の述語（is_uninflected・is_known_base_form）、
 │   │                   # トークンの組み立て（既知語キャッシュ、品詞などの Arc は解析器ごと）
 │   ├── numeric.rs      # 最良パスの数詞・助数詞の読み（音便の表、人・日の和語読み）。`analyzer` feature
@@ -93,7 +94,8 @@ hasami/
 │   ├── convert-unidic-csv.py  # UniDic CSV → IPAdic互換フォーマット変換
 │   ├── find_foreign_names.py  # 外国人名の削除リストを生成（Unihan の字音と照合）
 │   ├── bench-dictionary-download.py # 配布辞書の取得の性能比較（ローカル HTTP、変更前後を交互に）
-│   └── bench-dictionary-tooling.py  # info --verify・export の性能比較（辞書を全件なめる経路）
+│   ├── bench-dictionary-tooling.py  # info --verify・export の性能比較（辞書を全件なめる経路）
+│   └── bench-tokenize.py            # 解析の費用の版どうしの比較（Issue #119 の固定入力。命令数・サイクル・出力の一致）
 ├── hasami-python/      # Python バインディング (PyO3)
 │   ├── src/lib.rs
 │   ├── build.rs        # PyO3 拡張モジュール向けリンク設定
@@ -266,7 +268,16 @@ Release はそのコミットからタグを作る。タグの辞書ビルドで
 解析の処理を変えたら、変更前後で全トークンの全フィールドが一致するか（同点の扱いを含む）を大きなコーパスで確かめ、
 速度は変更前後を交互に走らせて比べる（負荷のあるマシンでは E コアに回されて値が倍近く揺れる。Windows の
 開発機では壁時計・CPU 時間とも最小と最大で 1.4〜2.2 倍に揺れ、数 % の差は見分けられない）。
-手順と過去の数値は `docs/performance.md`。
+手順と過去の数値は `docs/performance.md`。版どうしの費用の比較は `scripts/bench-tokenize.py`（Issue #119 と同じ
+固定入力。macOS は命令数、Linux は perf stat、Windows は論理 CPU 1 個に固定した QueryProcessCycleTime のサイクル。
+Windows のサイクルを命令数として扱わない。6,000 行 1 回ではプロセス起動のばらつきが大きいので既定は 20 回並べる）。
+
+最良パスに掛ける補正の段を足すときは、その段が発火しうる文字（錨、`src/anchors.rs`）が区間に無ければ呼ばないよう、
+段のモジュールに `may_apply`（入力全体の下調べは `may_find`）を置き、解析の流れからはそれを呼ぶ（中央に条件を
+書かない）。条件は「この文字が無ければ何もしない」と言い切れる必要条件にし、錨の文字が足りなければ `anchors::CHARS`
+に足す。新しい段が補正の多い入力だけでなく、無関係な入力の費用も増やした退行が Issue #119（v26.10.107 から
+v26.11.102 で解析の費用が約 30% 増えた）。絞り込まない参照経路（テストの `anchors::ungated`）と同じ結果になることを
+`src/analyzer/gating_tests.rs` が確かめる（配布辞書の版はリポジトリの日本語の文字列リテラルを前後の文脈付きで全部流す）。
 
 ## 辞書ソースの既知の欠陥
 
