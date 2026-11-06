@@ -10,6 +10,8 @@
 #[cfg(feature = "analyzer")]
 pub mod analyzer;
 #[cfg(feature = "analyzer")]
+mod anchors;
+#[cfg(feature = "analyzer")]
 pub mod char_class;
 #[cfg(feature = "analyzer")]
 pub mod dict;

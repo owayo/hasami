@@ -1,6 +1,7 @@
 //! 暦月の読み。水平空白・位を省く漢数字・空白のないASCIIを別の認定規則で扱う。
 
 use super::{AsciiPlan, digit, has_reading, is_numeral, place, pos_has, set_readings};
+use crate::anchors::Anchors;
 use crate::lattice::Token;
 use std::ops::Range;
 use std::sync::Arc;
@@ -8,8 +9,15 @@ use std::sync::Arc;
 mod contiguous;
 mod first_day;
 pub(crate) use contiguous::apply as apply_contiguous;
-pub(super) use contiguous::{Frame as ContiguousMonth, frames as contiguous_frames};
-pub(crate) use first_day::apply as apply_first_day;
+pub(super) use contiguous::{
+    Frame as ContiguousMonth, frames as contiguous_frames, may_find as contiguous_may_find,
+};
+pub(crate) use first_day::{apply as apply_first_day, may_apply as first_day_may_apply};
+
+/// [`number_starts`] が見るのは「月」の直前だけ（「一〇月」「一一月」の別経路も「月」を含む）
+pub(super) fn may_find(anchors: Anchors) -> bool {
+    anchors.intersects(Anchors::MONTH)
+}
 
 const MONTHS: [([&str; 3], &str, &str); 12] = [
     (["1", "１", "一"], "イチ", "イチ"),
@@ -202,9 +210,11 @@ pub(super) fn eleven_right_allowed(rest: &str, includes_day: bool) -> bool {
 }
 
 /// 引用状態は候補間を一度ずつ走査する。チャンクの外側にある ID や引用も失わない。
-fn add_eleven_starts(input: &str, offset: usize, starts: &mut Vec<usize>) {
+///
+/// `elevens` は「一一月」の開始位置（入力の中のバイト位置、昇順）
+fn add_eleven_starts(input: &str, offset: usize, elevens: &[usize], starts: &mut Vec<usize>) {
     let (mut cursor, mut quotes) = (0, Vec::new());
-    for (start, _) in input.match_indices("一一月") {
+    for &start in elevens {
         for c in input[cursor..start].chars() {
             if quotes.last() == Some(&c) {
                 quotes.pop();
@@ -225,7 +235,15 @@ fn add_eleven_starts(input: &str, offset: usize, starts: &mut Vec<usize>) {
 /// 前分割で小数点などの前半を失わないよう、入力全体で月名の数詞の開始位置を確定する。
 pub(super) fn number_starts(input: &str, offset: usize) -> Vec<usize> {
     let mut starts = Vec::new();
+    // 「一〇月」「一零月」「一一月」は「月」で終わるので、全文を検索し直さずに「月」ごとに直前を見る
+    // （「一一月」は自身と重ならないので、出現は直前が「一一」の「月」と 1 対 1 に対応する）
+    let (mut zero_calendar, mut elevens) = (false, Vec::new());
     for (i, _) in input.match_indices('月') {
+        let before = &input[..i];
+        zero_calendar |= before.ends_with("一〇") || before.ends_with("一零");
+        if let Some(eleven) = before.strip_suffix("一一") {
+            elevens.push(eleven.len());
+        }
         let left = input[..i].trim_end_matches(horizontal);
         if left.len() == i {
             continue;
@@ -250,17 +268,17 @@ pub(super) fn number_starts(input: &str, offset: usize) -> Vec<usize> {
         }
         starts.push(offset + prefix.len());
     }
-    add_zero_calendar_starts(input, offset, &mut starts);
-    add_eleven_starts(input, offset, &mut starts);
+    if zero_calendar {
+        add_zero_calendar_starts(input, offset, &mut starts);
+    }
+    add_eleven_starts(input, offset, &elevens, &mut starts);
     starts.sort_unstable();
     starts.dedup();
     starts
 }
 
+/// 「一〇月」「一零月」がある入力だけで呼ぶ
 fn add_zero_calendar_starts(input: &str, offset: usize, starts: &mut Vec<usize>) {
-    if !input.contains("一〇月") && !input.contains("一零月") {
-        return;
-    }
     let mut quotes = Vec::new();
     for (start, c) in input.char_indices() {
         if quotes.last() == Some(&c) {
@@ -513,7 +531,9 @@ pub(crate) fn apply(
             {
                 if read - start == 1 {
                     set_readings(&mut out[start], reading, pronunciation);
-                    out.swap(write, start);
+                    if write != start {
+                        out.swap(write, start);
+                    }
                 } else {
                     let cost: i64 = out[start..read]
                         .iter()
@@ -536,14 +556,19 @@ pub(crate) fn apply(
                 }
                 write += 1;
                 set_readings(&mut out[read], "ガツ", "ガツ");
-                out.swap(write, read);
+                if write != read {
+                    out.swap(write, read);
+                }
                 write += 1;
                 read += 1;
                 continue;
             }
         }
+        // 結合していない間は write == i なので、入れ替えない（トークンは 1 つ 100 バイトを超える）
         for i in start..read {
-            out.swap(write, i);
+            if write != i {
+                out.swap(write, i);
+            }
             write += 1;
         }
     }
@@ -553,6 +578,81 @@ pub(crate) fn apply(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 「一〇月」「一零月」「一一月」を全文から検索し直していた以前の [`number_starts`]
+    fn number_starts_by_search(input: &str, offset: usize) -> Vec<usize> {
+        let mut starts = Vec::new();
+        for (i, _) in input.match_indices('月') {
+            let left = input[..i].trim_end_matches(horizontal);
+            if left.len() == i {
+                continue;
+            }
+            let prefix = left.trim_end_matches(|c| digit(c).is_some() || place(c).is_some());
+            let raw = &left[prefix.len()..];
+            if !MONTHS.iter().any(|(forms, _, _)| forms.contains(&raw)) {
+                continue;
+            }
+            let previous = prefix
+                .trim_end_matches(|c| horizontal(c) || matches!(c, '(' | '[' | '（' | '［'))
+                .chars()
+                .next_back();
+            if previous.is_some_and(|c| {
+                c.is_ascii_alphanumeric()
+                    || matches!(c, 'Ａ'..='Ｚ' | 'ａ'..='ｚ' | '_' | '.' | '．' | '点' | ',' | '，' | ':' | '/' | '／' | '∕' | '÷' | '×' | '+' | '＋' | '-' | '－' | '−' | '‐' | '‑' | '‒' | '–' | '—' | '―' | '=' | '*' | '^' | '%')
+                    || digit(c).is_some()
+                    || place(c).is_some()
+            }) {
+                continue;
+            }
+            starts.push(offset + prefix.len());
+        }
+        if input.contains("一〇月") || input.contains("一零月") {
+            add_zero_calendar_starts(input, offset, &mut starts);
+        }
+        let elevens: Vec<usize> = input.match_indices("一一月").map(|(i, _)| i).collect();
+        add_eleven_starts(input, offset, &elevens, &mut starts);
+        starts.sort_unstable();
+        starts.dedup();
+        starts
+    }
+
+    #[test]
+    fn month_starts_match_the_whole_input_search() {
+        // 「月」ごとに直前の 2 字を見る検出が、全文の検索と同じ開始位置を返すこと（断片の全組み合わせ）
+        const PIECES: [&str; 10] = ["一", "〇", "零", "月", "年", "2024", "十", " ", "「", "」"];
+        let mut inputs = vec![String::new()];
+        for _ in 0..5 {
+            let longer: Vec<String> = inputs
+                .iter()
+                .filter(|s| s.chars().count() < 8)
+                .flat_map(|s| PIECES.iter().map(move |p| format!("{s}{p}")))
+                .collect();
+            inputs.extend(longer);
+        }
+        inputs.sort();
+        inputs.dedup();
+        assert!(inputs.len() > 50_000, "{}", inputs.len());
+        for extra in [
+            "2024年一〇月一日",
+            "2024年一零月",
+            "ID一一月",
+            "「一一月」一一月「一一月」",
+            "第一一月",
+            "一一一月と一一月",
+            "11 月と十一 月",
+        ] {
+            inputs.push(extra.to_string());
+        }
+        for input in &inputs {
+            for offset in [0, 37] {
+                assert_eq!(
+                    number_starts(input, offset),
+                    number_starts_by_search(input, offset),
+                    "{input:?}"
+                );
+            }
+        }
+    }
 
     fn tokens(number: &str, reading: &str, pronunciation: &str) -> Vec<Token> {
         [

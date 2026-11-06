@@ -9,6 +9,8 @@
 //!    ノードを作るときに最良の前ノードをその場で決め、終了位置ごとの列（`Lattice::ends`）に
 //!    累積コストごと入れる。i で終わるノードが無い位置（BOS から辿り着けない位置）は飛ばす
 //! 3. EOS の最良の前ノードから辿って最良パスを求め、トークンを作る
+//! 4. 数量・暦・段位・成句などの補正を掛ける。どの段も特定の文字（錨、[`crate::anchors`]）を含む語に
+//!    しか当たらないので、1 で集めたチャンクの錨が無い段は呼ばない（条件は各段のモジュールの `may_apply`）
 //!
 //! 同点のときは先に追加した前ノードが勝つ（`<` の先勝ち）。ノードは、開始位置の昇順、trie が報告する順
 //! （短い語から）、群の中のエントリの順、未知語は既知語の後（並び全体、続けて短い接頭辞から）に追加する。
@@ -27,6 +29,7 @@
 //!   （`dictionary_word_for_unknown`）。単語コストが高い既知語（IPAdic の「キャンプ」16437）は未知語に
 //!   負けるが、分け方は MeCab と同じまま品詞・読みを辞書から取る
 
+use crate::anchors::Anchors;
 use crate::char_class::{CharType, type_index};
 use crate::hsd::reader::DictView;
 use crate::hsd::trie::Trie;
@@ -285,13 +288,16 @@ fn apply_contextual_readings(tokens: &mut [Token]) {
         tokens,
         &[],
         &mut ContextualReadingContext::default(),
+        Anchors::ALL,
     );
 }
 
+/// `anchors` はトークンの元のチャンクの錨。後半の助数詞・成句・「等」・「値」の段は、その錨が無ければ呼ばない
 fn apply_contextual_readings_with_protection(
     tokens: &mut [Token],
     protected: &[std::ops::Range<usize>],
     contextual_readings: &mut ContextualReadingContext<'_>,
+    anchors: Anchors,
 ) {
     for i in 0..tokens.len() {
         if tokens[i].surface.is_empty() {
@@ -367,14 +373,22 @@ fn apply_contextual_readings_with_protection(
             tokens[i].pronunciation = kana;
         }
     }
-    if protected.is_empty() {
-        crate::numeric::apply_counter_readings(tokens);
-    } else {
-        crate::numeric::apply_counter_readings_with_protection(tokens, protected);
+    if crate::numeric::counter_readings_may_apply(anchors) {
+        if protected.is_empty() {
+            crate::numeric::apply_counter_readings(tokens);
+        } else {
+            crate::numeric::apply_counter_readings_with_protection(tokens, protected);
+        }
     }
-    idiom::apply(tokens, protected);
-    particle::apply(tokens, protected);
-    math_value::apply(tokens, protected, contextual_readings);
+    if idiom::may_apply(anchors) {
+        idiom::apply(tokens, protected);
+    }
+    if particle::may_apply(anchors) {
+        particle::apply(tokens, protected);
+    }
+    if math_value::may_apply(anchors) {
+        math_value::apply(tokens, protected, contextual_readings);
+    }
 }
 
 /// 仮名のみからなる表層形をカタカナの読みに変換する。
@@ -593,10 +607,11 @@ impl RunCover {
         let hits = &mut self.hits;
         hits.clear();
         self.hit_starts.clear();
+        let digits = chars.has_digits();
         for j in s..e {
             self.hit_starts.push(hits.len() as u32);
             trie.common_prefix_search_codes(input, &chars.codes, &chars.offsets, j, |q, g| {
-                if !chars.splits_digit_run(input, j, q) {
+                if !(digits && chars.splits_digit_run(j, q)) {
                     hits.push((q as u32, g));
                 }
             })?;
@@ -667,6 +682,10 @@ struct ChunkChars {
     types: Vec<u8>,
     /// その文字から同じ文字種が続く文字数（1 以上）
     runs: Vec<u32>,
+    /// 各文字が ASCII・全角の数字か（[`Self::splits_digit_run`] が文字を復号し直さずに引く）
+    digits: Vec<bool>,
+    /// チャンクに含まれる錨の文字（補正の段を呼ぶかの判定に使う）
+    anchors: Anchors,
 }
 
 impl ChunkChars {
@@ -677,15 +696,21 @@ impl ChunkChars {
         shrink_retained(&mut self.codes, len);
         shrink_retained(&mut self.types, len);
         shrink_retained(&mut self.runs, len);
+        shrink_retained(&mut self.digits, len);
         self.offsets.clear();
         self.codes.clear();
         self.types.clear();
+        self.digits.clear();
+        let mut anchors = Anchors::default();
         for (pos, c) in input.char_indices() {
             self.offsets.push(pos as u32);
             // 符号は u16 の表から引くので u16 に収まる
             self.codes.push(trie.char_code(c) as u16);
             self.types.push(dict.char_type_index(c));
+            self.digits.push(matches!(c, '0'..='9' | '０'..='９'));
+            anchors.add(c);
         }
+        self.anchors = anchors.gated();
         self.offsets.push(input.len() as u32);
         let n = self.types.len();
         self.runs.clear();
@@ -701,14 +726,20 @@ impl ChunkChars {
         self.codes.len()
     }
 
-    /// 和文で始まる語の末尾の数字が、入力の数字列の途中で終わるか。
+    /// チャンクに ASCII・全角の数字があるか。無ければ [`Self::splits_digit_run`] はいつも偽なので、
+    /// 辞書引きのヒットごとに呼ばずに済む
+    fn has_digits(&self) -> bool {
+        self.anchors
+            .intersects(Anchors::ASCII_DIGIT.union(Anchors::WIDE_DIGIT))
+    }
+
+    /// 和文で始まる語（文字位置 [start, end)）の末尾の数字が、入力の数字列の途中で終わるか。
     ///
     /// 「中2」を「中23」の接頭辞にしない。英字・数字・符号などで始まる既知語は、
     /// 型番・符号・小数の明示された読みを保つ。ASCII と全角の数字は同じ並びとして扱う。
-    fn splits_digit_run(&self, input: &str, start: usize, end: usize) -> bool {
-        let is_digit = |c: char| matches!(c, '0'..='9' | '０'..='９');
-        let end_byte = self.offsets[end] as usize;
-        if !input[end_byte..].chars().next().is_some_and(is_digit) {
+    fn splits_digit_run(&self, start: usize, end: usize) -> bool {
+        // 語の直後の文字（チャンクの末尾なら無い）と、語の最後の文字が数字か
+        if !self.digits.get(end).copied().unwrap_or(false) {
             return false;
         }
         let first_type = self.types[start] as usize;
@@ -718,10 +749,7 @@ impl ChunkChars {
         {
             return false;
         }
-        input[self.offsets[start] as usize..end_byte]
-            .chars()
-            .next_back()
-            .is_some_and(is_digit)
+        self.digits[end - 1]
     }
 
     /// 位置 pos から空白（char.def の SPACE の文字）を読み飛ばした位置
@@ -1071,6 +1099,11 @@ impl LatticeWorkspace {
         let unk_nodes = &mut self.unk_nodes;
         // これまでの位置から始まる既知語の終わりの最大（カタカナの並びをまたぐ語があるかに使う）
         let mut known_reach = 0;
+        // 数字の並びの途中で終わる語と、単位・距離の境界をまたぐ語を除く判定は、チャンクに数字が無い・
+        // チャンクに掛かる境界が無いならいつも偽なので、辞書引きのヒットごとには呼ばない
+        let digits = chars.has_digits();
+        let bounds =
+            crate::anchors::ungated_now() || plan.has_boundaries_in(offset, offset + input.len());
 
         // 各文字位置から辞書引き + 未知語生成。ノードは開始位置の昇順に追加するので、位置 i に来た
         // ときには i で終わるノードがすべて揃っていて、追加するノードの最良の前ノードをその場で決められる
@@ -1118,14 +1151,15 @@ impl LatticeWorkspace {
                         &chars.offsets,
                         p,
                         |end, group| {
-                            if !chars.splits_digit_run(input, p, end)
-                                && !crate::numeric::units::crosses_boundary(
-                                    input,
-                                    offset,
-                                    plan,
-                                    offset + chars.offsets[p] as usize,
-                                    offset + chars.offsets[end] as usize,
-                                )
+                            if !(digits && chars.splits_digit_run(p, end))
+                                && !(bounds
+                                    && crate::numeric::units::crosses_boundary(
+                                        input,
+                                        offset,
+                                        plan,
+                                        offset + chars.offsets[p] as usize,
+                                        offset + chars.offsets[end] as usize,
+                                    ))
                             {
                                 scratch_hits.push((end as u32, group));
                             }
@@ -1297,18 +1331,28 @@ impl LatticeWorkspace {
             &protected,
             |surface| unit_reading(surface).is_some_and(is_katakana_str),
         );
-        katakana_area::apply(out, first, dict, &protected, contextual_readings)?;
-        rank::apply_explicit_names(out, first, dict, &protected, contextual_readings)?;
-        rank::apply(&mut out[first..], dict, &protected, contextual_readings)?;
+        // ここから後の段は、チャンクに錨の文字が無ければ何もしないので呼ばない（条件は各段の may_apply。
+        // 錨はチャンクの入力の文字なので、前の段がトークンを結合・置換しても変わらない）
+        let anchors = chars.anchors;
+        if katakana_area::may_apply(anchors) {
+            katakana_area::apply(out, first, dict, &protected, contextual_readings)?;
+        }
+        if rank::may_apply(anchors) {
+            rank::apply_explicit_names(out, first, dict, &protected, contextual_readings)?;
+            rank::apply(&mut out[first..], dict, &protected, contextual_readings)?;
+        }
         apply_contextual_readings_with_protection(
             &mut out[first..],
             &protected,
             contextual_readings,
+            anchors,
         );
         crate::numeric::apply_year_readings(input, offset, &mut out[first..], plan, &protected);
         crate::numeric::apply_spaced_months(input, offset, out, first, plan, &protected);
         crate::numeric::apply_contiguous_months(input, offset, out, first, dict, plan, &protected)?;
-        crate::numeric::apply_calendar_first_day(out, first, &protected, contextual_readings);
+        if crate::numeric::calendar_first_day_may_apply(anchors) {
+            crate::numeric::apply_calendar_first_day(out, first, &protected, contextual_readings);
+        }
         Ok(())
     }
 }
@@ -1711,6 +1755,62 @@ mod tests {
             assert_eq!(&*tokens[0].surface, first, "{text}");
             assert_eq!((tokens[0].start, tokens[0].end), (0, first.len()), "{text}");
             assert_eq!(tokens.iter().map(|t| &*t.surface).collect::<String>(), text);
+        }
+    }
+
+    #[test]
+    fn digit_flags_match_the_decoding_digit_run_check() {
+        // splits_digit_run は文字ごとの印を引く。語の直後と最後の文字を復号して数字か見ていた以前の判定と、
+        // すべての (開始, 終わり) で同じこと。チャンクに数字が無いときは呼ばずに済む（has_digits）
+        fn decoding(chars: &ChunkChars, input: &str, start: usize, end: usize) -> bool {
+            let is_digit = |c: char| matches!(c, '0'..='9' | '０'..='９');
+            let end_byte = chars.offsets[end] as usize;
+            if !input[end_byte..].chars().next().is_some_and(is_digit) {
+                return false;
+            }
+            let first_type = chars.types[start] as usize;
+            if first_type != type_index(CharType::Kanji)
+                && first_type != type_index(CharType::Hiragana)
+                && first_type != KATAKANA
+            {
+                return false;
+            }
+            input[chars.offsets[start] as usize..end_byte]
+                .chars()
+                .next_back()
+                .is_some_and(is_digit)
+        }
+        let dict = cost_dict(&[("中", 0, NOUN)]);
+        let view = dict.view();
+        let mut chars = ChunkChars::default();
+        for input in [
+            "中23位",
+            "中２３位",
+            "中2３位",
+            "ひら2３かな9",
+            "カナ９9ア0",
+            "1a２b",
+            "第１２章 第3章",
+            "数字なし",
+            "",
+            "𠀋1",
+        ] {
+            chars.fill(input, &dict, &view.trie);
+            let n = chars.len();
+            for start in 0..n {
+                for end in start + 1..=n {
+                    assert_eq!(
+                        chars.splits_digit_run(start, end),
+                        decoding(&chars, input, start, end),
+                        "{input}: {start}..{end}"
+                    );
+                }
+            }
+            assert_eq!(
+                chars.has_digits(),
+                input.chars().any(|c| matches!(c, '0'..='9' | '０'..='９')),
+                "{input}"
+            );
         }
     }
 

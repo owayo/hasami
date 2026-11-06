@@ -6,8 +6,15 @@
 //! 読みや品詞は組み立てず、裸の語、識別子、明示保護には適用しない。
 
 use super::{ContextualReadingContext, Token};
+use crate::anchors::Anchors;
 use crate::{DictEntry, DictError, Dictionary};
 use std::{ops::Range, sync::Arc};
+
+/// どちらの段も「段」で終わる語（段位の表層、または数詞に続く「段」）にしか当たらないので、
+/// チャンクに「段」が無ければ何もしない
+pub(super) fn may_apply(anchors: Anchors) -> bool {
+    anchors.intersects(Anchors::DAN)
+}
 
 fn rank_surface(surface: &str) -> bool {
     let Some(number) = surface.strip_suffix('段') else {

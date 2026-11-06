@@ -2,8 +2,15 @@
 //! 全文の境界・引用と選択済み素性を確認し、月・年や既知の全体語は変えない。
 
 use super::MONTHS;
+use crate::anchors::Anchors;
 use crate::lattice::{ContextualReadingContext, Token};
 use std::{ops::Range, sync::Arc};
+
+/// 書き換えるのは「月」で終わる語に直結した「1」「１」「一」と「日」の組だけなので、チャンクに
+/// 「月」と「日」の両方が無ければ何もしない
+pub(crate) fn may_apply(anchors: Anchors) -> bool {
+    anchors.contains(Anchors::MONTH.union(Anchors::DAY))
+}
 
 fn value(raw: &str) -> Option<usize> {
     if raw.is_empty() || raw.starts_with(['0', '０', '〇', '零']) {

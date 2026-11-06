@@ -8,6 +8,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 mod contextual_readings;
+#[cfg(test)]
+mod gating_tests;
 mod literal_identifier;
 mod quantity_spans;
 

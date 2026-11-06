@@ -6,7 +6,7 @@ use std::ops::Range;
 use std::sync::Arc;
 
 mod calendar;
-pub(super) use calendar::ranges as calendar_years;
+pub(super) use calendar::{may_find as calendar_years_may_find, ranges as calendar_years};
 
 fn digit(c: char) -> Option<u64> {
     matches!(c, '０'..='９').then(|| u64::from(c as u32 - '０' as u32))

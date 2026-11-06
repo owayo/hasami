@@ -1,5 +1,6 @@
 //! ASCII 数量の構文検査と位取り。識別子の候補全体を先に調べ、途中の数字だけを変換しない。
 
+use crate::anchors::Anchors;
 use crate::lattice::Token;
 use std::ops::Range;
 use std::sync::Arc;
@@ -373,6 +374,25 @@ impl AsciiPlan {
         Ok(plan)
     }
 
+    /// 位置 [start, end)（入力全体の位置）に一部でも掛かる距離の境界か単位の枠があるか。無ければ、その
+    /// 範囲の語は [`super::units::crosses_boundary`] がいつも偽になる
+    ///
+    /// どちらの列も、重ならない範囲が位置の順に並ぶ（[`Self::distance_crosses_boundary`] と
+    /// [`Self::unit_frames_in`] と同じ前提）。範囲の手前で終わるものを二分探索で飛ばし、次の 1 つだけを見る
+    pub(crate) fn has_boundaries_in(&self, start: usize, end: usize) -> bool {
+        let boundary = self
+            .distance_boundaries
+            .partition_point(|boundary| boundary.end <= start);
+        let frame = self.unit_frames.partition_point(|frame| frame.end <= start);
+        self.distance_boundaries
+            .get(boundary)
+            .is_some_and(|boundary| boundary.start < end)
+            || self
+                .unit_frames
+                .get(frame)
+                .is_some_and(|frame| frame.number.start < end)
+    }
+
     pub(crate) fn distance_crosses_boundary(&self, start: usize, end: usize) -> bool {
         let index = self
             .distance_boundaries
@@ -487,8 +507,21 @@ impl AsciiPlan {
     }
 
     pub(crate) fn new(input: &str, offset: usize) -> Self {
-        let mut kanji_starts = super::kanji::number_starts(input, offset);
-        let fullwidth_calendar_years = super::fullwidth::calendar_years(input, offset);
+        // 下調べは、どれも特定の文字（錨）が入力に無ければ何も見つけない。錨を 1 回の走査で集め、
+        // 無い下調べは呼ばない（条件は各モジュールの may_find）。`found` は実際の文字のとおりの集合で、
+        // 絞り込む前からある判定（下の ASCII・全角の有無）に使う
+        let found = Anchors::scan(input);
+        let anchors = found.gated();
+        let mut kanji_starts = if super::kanji::may_find(anchors) {
+            super::kanji::number_starts(input, offset, anchors)
+        } else {
+            Vec::new()
+        };
+        let fullwidth_calendar_years = if super::fullwidth::calendar_years_may_find(anchors) {
+            super::fullwidth::calendar_years(input, offset)
+        } else {
+            Vec::new()
+        };
         if !fullwidth_calendar_years.is_empty() {
             kanji_starts.extend(fullwidth_calendar_years.iter().map(|range| range.start));
             kanji_starts.sort_unstable();
@@ -498,16 +531,33 @@ impl AsciiPlan {
         let comma_year_starts = super::kanji::comma_year_starts(input, offset, &kanji_starts);
         let mut plan = Self {
             input_end: offset + input.len(),
-            month_starts: super::month::number_starts(input, offset),
-            contiguous_months: super::month::contiguous_frames(input, offset),
+            month_starts: if super::month::may_find(anchors) {
+                super::month::number_starts(input, offset)
+            } else {
+                Vec::new()
+            },
+            contiguous_months: if super::month::contiguous_may_find(anchors) {
+                super::month::contiguous_frames(input, offset)
+            } else {
+                Vec::new()
+            },
             kanji_starts,
             fullwidth_calendar_years,
-            year_starts: super::year::number_starts(input, offset, |prefix| {
-                !super::kanji::identifier_prefix(prefix)
-            }),
+            year_starts: if super::year::may_find(anchors) {
+                super::year::number_starts(input, offset, |prefix| {
+                    !super::kanji::identifier_prefix(prefix)
+                })
+            } else {
+                Vec::new()
+            },
 
             comma_year_starts,
-            scaled_bad_ends: if input.contains(['万', '億']) && input.contains(['〇', '零']) {
+            // 「万」「億」と「〇」「零」の両方があるときだけ（錨で先に絞ってから文字を確かめる）
+            scaled_bad_ends: if anchors.contains(Anchors::KANJI_ZERO)
+                && anchors.intersects(Anchors::KANJI_PLACE)
+                && input.contains(['万', '億'])
+                && input.contains(['〇', '零'])
+            {
                 input.char_indices().filter_map(|(i,c)| {
                     (c.is_ascii_alphanumeric() || matches!(c, '_' | '^' | '/' | '*' | '+' | '-' | '=' | '²' | '³' | 'Ａ'..='Ｚ' | 'ａ'..='ｚ' | '０'..='９'))
                         .then_some(offset+i)
@@ -517,8 +567,8 @@ impl AsciiPlan {
             },
             ..Self::default()
         };
-        // 全角の英数字・記号は UTF-8 の EF から始まる。漢字だけの入力では走査しない。
-        if !input.bytes().any(|b| b.is_ascii_digit() || b == 0xef) {
+        // 全角の英数字・記号は UTF-8 の EF から始まる（Anchors::FULLWIDTH）。漢字だけの入力では走査しない。
+        if !found.intersects(Anchors::ASCII_DIGIT.union(Anchors::FULLWIDTH)) {
             return plan;
         }
         plan.negative_decimals = negative_decimals(input, offset);
@@ -726,8 +776,11 @@ pub(crate) fn apply(
             break;
         }
         *cursor += 1;
+        // まだ何も結合していない間は write == read なので、入れ替えない（トークンは 1 つ 100 バイトを超える）
         while read < out.len() && out[read].end <= candidate.number.start {
-            out.swap(write, read);
+            if write != read {
+                out.swap(write, read);
+            }
             read += 1;
             write += 1;
         }
@@ -776,7 +829,9 @@ pub(crate) fn apply(
                     token.pronunciation = Arc::from(pronunciation.as_str());
                 }
             }
-            out.swap(write, start);
+            if write != start {
+                out.swap(write, start);
+            }
         } else {
             let (reading, pronunciation) = readings(raw, candidate.parsed.unwrap());
             let cost: i64 = out[start..limit]
@@ -801,10 +856,15 @@ pub(crate) fn apply(
         read = limit;
         write += 1;
     }
-    while read < out.len() {
-        out.swap(write, read);
-        read += 1;
-        write += 1;
+    // 1 つも結合しなければ write == read のままで、残りはもう並んでいる
+    if write == read {
+        write = out.len();
+    } else {
+        while read < out.len() {
+            out.swap(write, read);
+            read += 1;
+            write += 1;
+        }
     }
     out.truncate(write);
     signed_decimal::apply(input, offset, out, first, plan);
@@ -950,6 +1010,65 @@ fn apply_negative_decimals(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ranges_without_boundaries_never_cross_one() {
+        // 範囲に一部でも掛かる単位の枠・距離の境界を二分探索で見つけること（線形に探した結果と同じ）。
+        // 掛かるものが無い範囲では、その中のどの語も crosses_boundary が偽になること（部分重なり・端の一致を含む）
+        for text in [
+            "30kg、5%と1.5m²と70m2",
+            "720kcal/hと50km/hと2.3mph",
+            "長さ720m3分26秒の後に32bit",
+            "mg/dLの値は120mg/dL",
+            "かなだけの文",
+        ] {
+            for offset in [0, 31] {
+                let mut plan = AsciiPlan::new(text, offset);
+                // 距離の境界は辞書の照合で入るので、受け入れたときと同じ形で 1 つ置く
+                if let Some(i) = text.find("長さ") {
+                    plan.distance_boundaries
+                        .push(offset + i..offset + i + "長さ720m".len());
+                }
+                assert!(
+                    !plan.unit_frames.is_empty() || text.starts_with('か'),
+                    "{text}"
+                );
+                let positions: Vec<usize> = (0..=text.len())
+                    .filter(|&i| text.is_char_boundary(i))
+                    .map(|i| offset + i)
+                    .collect();
+                for (k, &start) in positions.iter().enumerate() {
+                    for &end in &positions[k..] {
+                        let linear = plan
+                            .distance_boundaries
+                            .iter()
+                            .any(|b| b.start < end && start < b.end)
+                            || plan
+                                .unit_frames
+                                .iter()
+                                .any(|f| f.number.start < end && start < f.end);
+                        let found = plan.has_boundaries_in(start, end);
+                        assert_eq!(found, linear, "{text}: {start}..{end}");
+                        if found {
+                            continue;
+                        }
+                        for (a, &word_start) in positions.iter().enumerate() {
+                            for &word_end in &positions[a + 1..] {
+                                if start <= word_start && word_end <= end {
+                                    assert!(
+                                        !super::super::units::crosses_boundary(
+                                            text, offset, &plan, word_start, word_end
+                                        ),
+                                        "{text}: {word_start}..{word_end} in {start}..{end}"
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn quantity_grammar_limits_and_number_notation() {
