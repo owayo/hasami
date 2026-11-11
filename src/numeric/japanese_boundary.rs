@@ -45,7 +45,7 @@ pub(super) fn single_year_tail(rest: &str) -> bool {
     year_suffix_boundary(after)
 }
 
-fn year_suffix_boundary(after: &str) -> bool {
+pub(super) fn year_suffix_boundary(after: &str) -> bool {
     !["度","次","間","生"].iter().any(|suffix|after.starts_with(suffix))
         && !after.chars().next().is_some_and(|c|c.is_ascii_alphanumeric()
             ||matches!(c,'Ａ'..='Ｚ'|'ａ'..='ｚ'|'０'..='９'|'_'|'^'|'/'|'*'|'+'|'-'|'='|'²'|'³'|'.'|'．'|'，'|':'|'：'|'／'|'∕'|'÷'|'×'|'＋'|'－'|'−'|'‐'|'‑'|'‒'|'–'|'—'|'―'))
