@@ -5,6 +5,52 @@ use hasami::Analyzer;
 
 #[test]
 #[ignore = "配布辞書が必要"]
+fn distributed_small_vowel_pronunciations_keep_readings() {
+    let dir = std::env::var("HASAMI_TEST_DICT_DIR")
+        .unwrap_or_else(|_| format!("{}/dict", env!("CARGO_MANIFEST_DIR")));
+    for name in ["ipadic-neologd", "ipadic-neologd-sudachi"] {
+        let mut analyzer = Analyzer::load(format!("{dir}/{name}.hsd")).unwrap();
+        for (text, reading, pronunciation) in [
+            (
+                "基本ソフトウェア",
+                "キホンソフトウェア",
+                "キホンソフトウェア",
+            ),
+            (
+                "数学ソフトウェア",
+                "スウガクソフトウェア",
+                "スーガクソフトウェア",
+            ),
+            (
+                "プレゼンテーションソフトウェア",
+                "プレゼンテーションソフトウェア",
+                "プレゼンテーションソフトウェア",
+            ),
+            (
+                "富士スピードウェイ",
+                "フジスピードウェイ",
+                "フジスピードウェイ",
+            ),
+            ("スウェーデン人", "スウェーデンジン", "スウェーデンジン"),
+            (
+                "ライトウェルター級",
+                "ライトウェルターキュウ",
+                "ライトウェルターキュー",
+            ),
+        ] {
+            let tokens = analyzer.try_tokenize(text).unwrap();
+            assert_eq!(tokens.len(), 1, "{name}: {text}: {tokens:?}");
+            assert!(tokens[0].is_known, "{name}: {text}");
+            assert_eq!(&*tokens[0].reading, reading, "{name}: {text}");
+            assert_eq!(&*tokens[0].pronunciation, pronunciation, "{name}: {text}");
+            assert_eq!(tokens[0].start, 0, "{name}: {text}");
+            assert_eq!(tokens[0].end, text.len(), "{name}: {text}");
+        }
+    }
+}
+
+#[test]
+#[ignore = "配布辞書が必要"]
 fn distributed_direct_clause_enumeration_keeps_person_names() {
     let dir = std::env::var("HASAMI_TEST_DICT_DIR")
         .unwrap_or_else(|_| format!("{}/dict", env!("CARGO_MANIFEST_DIR")));

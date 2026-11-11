@@ -53,6 +53,36 @@ fn is_katakana_str(s: &str) -> bool {
     !s.is_empty() && s.chars().all(|c| ('\u{30A0}'..='\u{30FF}').contains(&c))
 }
 
+/// 読みの「ウ＋小書き母音」が発音だけ「ー＋小書き母音」になった箇所を戻す。
+///
+/// 字数が同じカタカナ列の対応する位置だけを扱い、ほかの長音・音便は保持する。
+/// NEologd の一部の外来語は「ウェ」を「ーェ」としており、カタカナだけの発音を
+/// 信頼する通常の修復では直せない。小書きの「ァィェォ」の前のウは長音ではない。
+fn restore_small_vowel_digraph(reading: &str, pronunciation: &str) -> Option<String> {
+    // この範囲のカタカナはすべて UTF-8 で3バイトなので、長さが等しければ字数も等しい。
+    if reading.len() != pronunciation.len()
+        || !is_katakana_str(reading)
+        || !is_katakana_str(pronunciation)
+    {
+        return None;
+    }
+    let mut pairs = reading.chars().zip(pronunciation.chars()).peekable();
+    let mut restored: Option<Vec<char>> = None;
+    let mut i = 0;
+    while let Some((r, p)) = pairs.next() {
+        if r == 'ウ'
+            && p == 'ー'
+            && pairs
+                .peek()
+                .is_some_and(|&(r, p)| matches!(r, 'ァ' | 'ィ' | 'ェ' | 'ォ') && r == p)
+        {
+            restored.get_or_insert_with(|| pronunciation.chars().collect())[i] = 'ウ';
+        }
+        i += 1;
+    }
+    restored.map(|chars| chars.into_iter().collect())
+}
+
 /// 発音の合成に使う部品の最大文字数
 ///
 /// 熟語の構成要素はほぼ 1〜2 字で、4 字あれば「アメリカ国防総省」のような
@@ -821,26 +851,34 @@ impl DictBuilder {
         let empty: Arc<str> = Arc::from("");
         let mut fixed = 0;
         for (entry, borrowed) in self.entries.iter_mut().zip(borrowed) {
-            if is_katakana_str(&entry.pronunciation) && borrowed.is_none() {
-                continue;
-            }
+            let mut changed = false;
             if let Some(pron) = borrowed {
                 entry.pronunciation = pron;
-            } else if is_katakana_str(&entry.reading) {
-                entry.pronunciation = Arc::clone(&entry.reading);
-            } else if entry.pronunciation.is_empty() && entry.reading.is_empty() {
-                continue;
-            } else if entry.pos.starts_with("記号") {
-                // 記号（「、」「。」「「」等）は読み・発音に記号そのものを持つ（MeCab・OpenJTalk と同じ）。
-                // 空にすると、句読点を発音の並びで見分ける読み上げの前処理が句読点を見失う
-                continue;
-            } else {
-                // 読みも発音もカタカナでない（ラテン文字の辞書エントリ等）。
-                // 空にして解析時の読み補完に委ねる。
-                entry.pronunciation = Arc::clone(&empty);
-                entry.reading = Arc::clone(&empty);
+                changed = true;
+            } else if !is_katakana_str(&entry.pronunciation) {
+                if is_katakana_str(&entry.reading) {
+                    entry.pronunciation = Arc::clone(&entry.reading);
+                } else if entry.pronunciation.is_empty() && entry.reading.is_empty() {
+                    continue;
+                } else if entry.pos.starts_with("記号") {
+                    // 記号は読み・発音に記号自体を持つ。消すと読み上げの句読点が失われる。
+                    continue;
+                } else {
+                    // 読みも発音も壊れている語は空にし、解析時の読み補完へ委ねる。
+                    entry.pronunciation = Arc::clone(&empty);
+                    entry.reading = Arc::clone(&empty);
+                }
+                changed = true;
             }
-            fixed += 1;
+            // 人名の品詞が付いたエントリは、この一般修復の対象にしない。
+            if !pos_has_prefix(&entry.pos, &["名詞", "固有名詞", "人名"])
+                && let Some(pron) =
+                    restore_small_vowel_digraph(&entry.reading, &entry.pronunciation)
+            {
+                entry.pronunciation = Arc::from(pron);
+                changed = true;
+            }
+            fixed += usize::from(changed);
         }
         fixed
     }
