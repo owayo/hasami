@@ -1,6 +1,7 @@
 //! 有限節の列挙に限り、「等」を副助詞へ補正する。
 //!
-//! 疑問・並立の助詞を挟む形と、基本形に直結して格助詞「を」で受ける形を扱う。
+//! 疑問・並立の助詞を挟む形と、基本形に直結して格助詞「を」または限定した連語で
+//! 受ける形を扱う。
 //!
 //! 小学館デジタル大辞泉は「等（など）」を副助詞とし、引用句・文や一部の助詞を
 //! 受ける用法を挙げる。名乗りの「ひとし」、接尾語の「とう・ら」は別の用法。
@@ -20,13 +21,34 @@ pub(super) fn may_apply(anchors: Anchors) -> bool {
 }
 
 fn fixed(t: &Token, surface: &str, pos: &str, reading: &str) -> bool {
+    fixed_with_pronunciation(t, surface, pos, reading, reading)
+}
+fn fixed_with_pronunciation(
+    t: &Token,
+    surface: &str,
+    pos: &str,
+    reading: &str,
+    pronunciation: &str,
+) -> bool {
     t.is_known
         && &*t.surface == surface
         && &*t.base_form == surface
         && &*t.pos == pos
         && &*t.reading == reading
-        && &*t.pronunciation == reading
+        && &*t.pronunciation == pronunciation
         && t.is_uninflected()
+}
+fn object_case(t: &Token) -> bool {
+    fixed(t, "を", "助詞,格助詞,一般,*", "ヲ")
+        || [
+            ("を通じて", "ヲツウジテ", "ヲツージテ"),
+            ("を通して", "ヲトオシテ", "ヲトーシテ"),
+            ("を通じ", "ヲツウジ", "ヲツージ"),
+        ]
+        .iter()
+        .any(|&(surface, reading, pronunciation)| {
+            fixed_with_pronunciation(t, surface, "助詞,格助詞,連語,*", reading, pronunciation)
+        })
 }
 fn finite(t: &Token) -> bool {
     t.is_known
@@ -61,9 +83,9 @@ pub(super) fn apply(tokens: &mut [Token], protected: &[Range<usize>]) {
         }
         let mut j = i - 1;
         let direct_object = finite(&tokens[j])
-            && tokens.get(i + 1).is_some_and(|right| {
-                tokens[i].end == right.start && fixed(right, "を", "助詞,格助詞,一般,*", "ヲ")
-            });
+            && tokens
+                .get(i + 1)
+                .is_some_and(|right| tokens[i].end == right.start && object_case(right));
         if !direct_object {
             if !allowed_right(tokens.get(i + 1)) {
                 continue;
@@ -289,6 +311,57 @@ mod tests {
                 let original = tokens.clone();
                 apply(&mut tokens, &[]);
                 unchanged(&original, &tokens);
+            }
+        }
+    }
+
+    #[test]
+    fn compound_case_particles_require_exact_known_features_and_contiguity() {
+        for (surface, reading, pronunciation) in [
+            ("を通じて", "ヲツウジテ", "ヲツージテ"),
+            ("を通して", "ヲトオシテ", "ヲトーシテ"),
+            ("を通じ", "ヲツウジ", "ヲツージ"),
+        ] {
+            let mut base = clause(false, false, false);
+            base.push(token(
+                surface,
+                "助詞,格助詞,連語,*",
+                surface,
+                "",
+                "",
+                reading,
+            ));
+            base[2].pronunciation = Arc::from(pronunciation);
+            place(&mut base);
+            let mut tokens = base.clone();
+            apply(&mut tokens, &[]);
+            assert_eq!(&*tokens[1].pos, "助詞,副助詞,*,*");
+            assert_eq!(&*tokens[1].reading, "ナド");
+            assert_eq!(&*tokens[1].pronunciation, "ナド");
+            only_grammatical_fields_changed(&base, &tokens);
+            for variant in 0..10 {
+                let mut tokens = base.clone();
+                match variant {
+                    0 => tokens[2].is_known = false,
+                    1 => tokens[2].base_form = Arc::from("通じる"),
+                    2 => tokens[2].pos = Arc::from("助詞,格助詞,一般,*"),
+                    3 => tokens[2].reading = Arc::from(pronunciation),
+                    4 => tokens[2].pronunciation = Arc::from(reading),
+                    5 => tokens[2].conj_form = Arc::from("基本形"),
+                    6 => tokens[2].start += 1,
+                    7 => tokens[1].start += 1,
+                    8 => tokens[0].conj_form = Arc::from("連用形"),
+                    _ => tokens[1].reading = Arc::from("トモ"),
+                }
+                let before = tokens.clone();
+                apply(&mut tokens, &[]);
+                unchanged(&before, &tokens);
+            }
+            for t in &base {
+                let mut tokens = base.clone();
+                let range = t.start..t.end;
+                apply(&mut tokens, std::slice::from_ref(&range));
+                unchanged(&base, &tokens);
             }
         }
     }
