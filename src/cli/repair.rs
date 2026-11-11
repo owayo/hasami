@@ -129,7 +129,7 @@ impl RepairArgs {
 
         let fixed = if !self.no_pronunciation_repair {
             let n = builder.repair_pronunciation();
-            eprintln!("Fixed {} entries with non-katakana pronunciation", n);
+            eprintln!("Repaired pronunciation in {} entries", n);
             ops.push("pronunciation".into());
             n
         } else {
