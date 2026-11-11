@@ -5,6 +5,31 @@ use hasami::Analyzer;
 
 #[test]
 #[ignore = "配布辞書が必要"]
+fn distributed_direct_clause_enumeration_keeps_person_names() {
+    let dir = std::env::var("HASAMI_TEST_DICT_DIR")
+        .unwrap_or_else(|_| format!("{}/dict", env!("CARGO_MANIFEST_DIR")));
+    for name in ["ipadic-neologd", "ipadic-neologd-sudachi"] {
+        let mut analyzer = Analyzer::load(format!("{dir}/{name}.hsd")).unwrap();
+        for (text, pos, reading) in [
+            ("作図する等を試す。", "助詞,副助詞,*,*", "ナド"),
+            ("描いた等を報告する。", "助詞,副助詞,*,*", "ナド"),
+            ("山田等さんに聞く。", "名詞,固有名詞,人名,名", "ヒトシ"),
+            ("等が来る。", "名詞,固有名詞,人名,名", "ヒトシ"),
+        ] {
+            let tokens = analyzer.try_tokenize(text).unwrap();
+            let target = tokens.iter().find(|t| t.surface.as_ref() == "等").unwrap();
+            assert_eq!(&*target.pos, pos, "{name}: {text}");
+            assert_eq!(&*target.reading, reading, "{name}: {text}");
+            assert_eq!(&*target.pronunciation, reading, "{name}: {text}");
+            for token in &tokens {
+                assert_eq!(&text[token.start..token.end], token.surface.as_ref());
+            }
+        }
+    }
+}
+
+#[test]
+#[ignore = "配布辞書が必要"]
 fn distributed_common_and_technical_readings_keep_valid_alternatives() {
     let dir = std::env::var("HASAMI_TEST_DICT_DIR")
         .unwrap_or_else(|_| format!("{}/dict", env!("CARGO_MANIFEST_DIR")));
