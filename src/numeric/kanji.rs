@@ -105,7 +105,16 @@ fn pair2_comma_prefix(prefix: &str) -> bool {
 
 fn comma_existing_year(prefix: &str, suffix: &str) -> bool {
     super::japanese_boundary::comma_prefix(prefix)
-        && super::japanese_boundary::single_year_tail(suffix)
+        && if let Some(after) = suffix.strip_prefix("年代") {
+            !prefix
+                .trim_end()
+                .strip_suffix(',')
+                .and_then(|before| before.split_whitespace().next_back())
+                .is_some_and(|field| field.contains(['/', '\\']))
+                && (super::japanese_boundary::year_suffix_boundary(after) || after == ".")
+        } else {
+            super::japanese_boundary::single_year_tail(suffix)
+        }
 }
 
 pub(super) fn comma_year_starts(input: &str, offset: usize, starts: &[usize]) -> Vec<usize> {
@@ -313,12 +322,17 @@ fn candidate<'a>(
         return None;
     }
     if comma_year
-        && !(suffix.is_known
-            && suffix.surface.as_ref() == "年"
-            && suffix.base_form.as_ref() == "年"
+        && !(suffix.is_known_base_form()
             && pos_has(&suffix.pos, "名詞,接尾,助数詞")
-            && super::has_reading(suffix, &["ネン"])
-            && suffix.is_uninflected())
+            && match suffix.surface.as_ref() {
+                "年" => super::has_reading(suffix, &["ネン"]),
+                "年代" => {
+                    raw.chars().count() == 2
+                        && raw.ends_with(['〇', '零'])
+                        && super::has_reading(suffix, &["ネンダイ"])
+                }
+                _ => false,
+            })
     {
         return None;
     }
@@ -646,6 +660,404 @@ mod tests {
             apply(local, start, &mut out, 0, &plan, &[], |_| false);
             assert_eq!(format!("{out:?}"), before, "{full}/{local}");
         }
+    }
+
+    fn decade_tokens(raw: &str, offset: usize) -> Vec<Token> {
+        let mut out = pair_tokens(raw, offset);
+        let index = out.iter().position(|t| t.surface.as_ref() == "年").unwrap();
+        let end = out[index + 1].end;
+        out[index].surface = "年代".into();
+        out[index].base_form = "年代".into();
+        out[index].reading = "ネンダイ".into();
+        out[index].pronunciation = "ネンダイ".into();
+        out[index].end = end;
+        out[index].word_cost = -7123;
+        out.remove(index + 1);
+        out
+    }
+
+    #[test]
+    fn ascii_comma_decades_match_japanese_comma_all_fields() {
+        for (raw, reading, pronunciation) in [
+            ("六〇年代", "ロクジュウ", "ロクジュー"),
+            ("七〇年代", "ナナジュウ", "ナナジュー"),
+            ("一〇年代", "ジュウ", "ジュー"),
+            ("九〇年代", "キュウジュウ", "キュージュー"),
+            ("六零年代", "ロクジュウ", "ロクジュー"),
+            ("七零年代", "ナナジュウ", "ナナジュー"),
+            ("一零年代", "ジュウ", "ジュー"),
+            ("九零年代", "キュウジュウ", "キュージュー"),
+        ] {
+            for (a, b) in [(321, -97), (i16::MAX, i16::MAX), (i16::MIN, i16::MIN)] {
+                let mut results = Vec::new();
+                for prefix in ["前、", "前,"] {
+                    let full = format!("{prefix}{raw}");
+                    let offset = 77;
+                    let plan = AsciiPlan::new(&full, offset - prefix.len());
+                    let mut out = decade_tokens(raw, offset);
+                    out[0].word_cost = a;
+                    out[1].word_cost = b;
+                    let suffix = out[2].clone();
+                    let prior = pair_tokens("前", 20).pop().unwrap();
+                    out.insert(0, prior.clone());
+                    let expected = vec![
+                        prior,
+                        Token {
+                            surface: raw[..6].into(),
+                            base_form: raw[..6].into(),
+                            start: offset,
+                            end: offset + 6,
+                            pos: "名詞,数,*,*".into(),
+                            conj_type: "".into(),
+                            conj_form: "".into(),
+                            reading: reading.into(),
+                            pronunciation: pronunciation.into(),
+                            word_cost: (i64::from(a) + i64::from(b))
+                                .clamp(i64::from(i16::MIN), i64::from(i16::MAX))
+                                as i16,
+                            is_known: false,
+                        },
+                        suffix,
+                    ];
+                    apply(raw, offset, &mut out, 1, &plan, &[], |_| false);
+                    assert_eq!(format!("{out:?}"), format!("{expected:?}"), "{full}");
+                    results.push(format!("{out:?}"));
+                }
+                assert_eq!(results[0], results[1], "{raw}");
+            }
+        }
+    }
+
+    #[test]
+    fn ascii_comma_decades_require_a_complete_standard_frame() {
+        let raw = "六〇年代";
+        let full = format!("日本語,{raw}");
+        let offset = 10;
+        let plan = AsciiPlan::new(&full, 0);
+        for mutation in 0..21 {
+            let mut out = decade_tokens(raw, offset);
+            let mut protected = Vec::new();
+            let mut apply_offset = offset;
+            match mutation {
+                0 => {}
+                1 => out[2].is_known = false,
+                2 => out[2].reading = "トシダイ".into(),
+                3 => out[2].pronunciation = "トシダイ".into(),
+                4 => out[2].base_form = "ordinary".into(),
+                5 => out[2].pos = "名詞,一般,*,*".into(),
+                6 => out[2].conj_type = "fixture".into(),
+                7 => out[2].conj_form = "fixture".into(),
+                8 => out[0].base_form = "ordinary".into(),
+                9 => out[0].base_form = "三".into(),
+                10 => out[0].conj_type = "fixture".into(),
+                11 => out[0].conj_form = "fixture".into(),
+                12 => out[0].reading = "ナマエ".into(),
+                13 => out[0].pronunciation = "ナマエ".into(),
+                14 => out[0].pos = "名詞,固有名詞,人名,姓".into(),
+                15 => out[1].start += 1,
+                16 => out[2].start += 1,
+                17 => out[2].end -= 1,
+                18 => protected.push(offset..offset + 1),
+                19 => protected.push(offset + 6..offset + 7),
+                20 => apply_offset += 1,
+                _ => unreachable!(),
+            }
+            let before = format!("{out:?}");
+            apply(raw, apply_offset, &mut out, 0, &plan, &protected, |_| false);
+            if mutation == 0 {
+                assert_eq!(out.len(), 2);
+                assert_eq!(out[0].reading.as_ref(), "ロクジュウ");
+            } else {
+                assert_eq!(format!("{out:?}"), before, "mutation {mutation}");
+            }
+        }
+        let mut out = decade_tokens(raw, offset);
+        let end = out[1].end;
+        out[0].surface = "六〇".into();
+        out[0].base_form = "六〇".into();
+        out[0].reading = "ロクジュウ".into();
+        out[0].pronunciation = "ロクジュー".into();
+        out[0].end = end;
+        out.remove(1);
+        let before = format!("{out:?}");
+        apply(raw, offset, &mut out, 0, &plan, &[], |_| false);
+        assert_eq!(format!("{out:?}"), before, "known whole number");
+    }
+
+    #[test]
+    fn ascii_comma_terminal_decade_uses_only_the_original_input_end() {
+        let raw = "六〇年代";
+        for full in ["例,六〇年代.", "例,七〇年代,六〇年代."] {
+            let start = full.rfind(raw).unwrap() + 31;
+            let mut out = decade_tokens(raw, start);
+            out[0].word_cost = 321;
+            out[1].word_cost = -97;
+            let suffix = out[2].clone();
+            let plan = AsciiPlan::new(full, 31);
+            // The sentence punctuation can be outside the local tokenization chunk.
+            apply(raw, start, &mut out, 0, &plan, &[], |_| false);
+            let expected = vec![
+                Token {
+                    surface: "六〇".into(),
+                    base_form: "六〇".into(),
+                    start,
+                    end: start + 6,
+                    pos: "名詞,数,*,*".into(),
+                    conj_type: "".into(),
+                    conj_form: "".into(),
+                    reading: "ロクジュウ".into(),
+                    pronunciation: "ロクジュー".into(),
+                    word_cost: 224,
+                    is_known: false,
+                },
+                suffix,
+            ];
+            assert_eq!(format!("{out:?}"), format!("{expected:?}"), "{full}");
+        }
+        for full in [
+            "例,六〇年代.2",
+            "例,六〇年代.A",
+            "例,六〇年代.txt",
+            "例,六〇年代.csv",
+            "例,六〇年代./",
+            "例,六〇年代..",
+            "例,六〇年代.続く",
+            "例,六〇年代.七〇年代",
+            "例,六〇年代. ",
+            "例,六〇年代.\n",
+            "例,六〇年代.)",
+            "例,六〇年代.]",
+            "例,六〇年代.}",
+            "例,六〇年代.」",
+            "例.六〇年代.",
+            "例,六〇年代/",
+            "A,六〇年代.",
+            "1,六〇年代.",
+            "https://example.invalid/六〇年代.",
+            "archive.六〇年代.txt",
+            "資料.六〇年代.txt",
+            "https://example.invalid/例,六〇年代.txt",
+        ] {
+            let start = full.find(raw).unwrap() + 31;
+            let mut out = decade_tokens(raw, start);
+            let before = format!("{out:?}");
+            apply(
+                raw,
+                start,
+                &mut out,
+                0,
+                &AsciiPlan::new(full, 31),
+                &[],
+                |_| false,
+            );
+            assert_eq!(format!("{out:?}"), before, "{full}");
+        }
+        let local = "二〇二四年";
+        let mut out = pair_tokens(local, 4);
+        let before = format!("{out:?}");
+        apply(
+            local,
+            4,
+            &mut out,
+            0,
+            &AsciiPlan::new("例,二〇二四年.", 0),
+            &[],
+            |_| false,
+        );
+        assert_eq!(
+            format!("{out:?}"),
+            before,
+            "the existing 年 guard is unchanged"
+        );
+        for mutation in 0..5 {
+            let full = "例,六〇年代.";
+            let mut out = decade_tokens(raw, 4);
+            let mut protected = Vec::new();
+            match mutation {
+                0 => out[2].is_known = false,
+                1 => out[2].base_form = "別語".into(),
+                2 => out[2].conj_form = "fixture".into(),
+                3 => out[2].reading = "トシダイ".into(),
+                4 => protected.push(10..11),
+                _ => unreachable!(),
+            }
+            let before = format!("{out:?}");
+            apply(
+                raw,
+                4,
+                &mut out,
+                0,
+                &AsciiPlan::new(full, 0),
+                &protected,
+                |_| false,
+            );
+            assert_eq!(format!("{out:?}"), before, "mutation {mutation}");
+        }
+    }
+
+    #[test]
+    fn ascii_comma_decades_reject_slashes_in_the_immediately_preceding_field() {
+        let raw = "六〇年代";
+        for field in [
+            "https://example.invalid/例",
+            "C:/資料/例",
+            r"C:\資料\例",
+            "/tmp/例",
+            r"\\server\共有\例",
+            "比較/例",
+            r"比較\例",
+        ] {
+            for before_comma in ["", " ", "\t", "\u{3000}"] {
+                for after_comma in ["", " ", "\t"] {
+                    for ending in ["", "."] {
+                        let full = format!("{field}{before_comma},{after_comma}{raw}{ending}");
+                        let start = full.find(raw).unwrap() + 43;
+                        let mut out = decade_tokens(raw, start);
+                        let before = format!("{out:?}");
+                        apply(
+                            raw,
+                            start,
+                            &mut out,
+                            0,
+                            &AsciiPlan::new(&full, 43),
+                            &[],
+                            |_| false,
+                        );
+                        assert_eq!(format!("{out:?}"), before, "{full}");
+                    }
+                }
+            }
+        }
+        for prefix in [
+            "例,",
+            "例 , ",
+            "例,\u{3000}",
+            "参照 https://example.invalid/例 比較,",
+            "参照 C:/資料/例 比較,",
+        ] {
+            let full = format!("{prefix}{raw}.");
+            let start = full.find(raw).unwrap() + 43;
+            let mut out = decade_tokens(raw, start);
+            let suffix = out[2].clone();
+            apply(
+                raw,
+                start,
+                &mut out,
+                0,
+                &AsciiPlan::new(&full, 43),
+                &[],
+                |_| false,
+            );
+            assert_eq!(out.len(), 2, "{full}");
+            assert_eq!(out[0].reading.as_ref(), "ロクジュウ", "{full}");
+            assert_eq!(out[0].word_cost, 200, "{full}");
+            assert_eq!(format!("{:?}", out[1]), format!("{suffix:?}"), "{full}");
+        }
+    }
+
+    #[test]
+    fn ascii_comma_decades_keep_identifiers_and_incomplete_chunks() {
+        for full in [
+            "ISO ,六〇年代",
+            "A,六〇年代",
+            "1,六〇年代",
+            "１,六〇年代",
+            "一,六〇年代",
+            ",,六〇年代",
+            "型番,六〇年代",
+            "番号,六〇年代",
+            "電話,六〇年代",
+            "郵便番号,六〇年代",
+            "コード,六〇年代",
+            "日本語,六〇年代A",
+            "日本語,六〇年代9",
+            "日本語,六〇年代/",
+            "日本語,六〇年代.2",
+            "日本語,六〇年代:2",
+            "日本語,六〇年代_",
+            "日本語,六〇年代／",
+            "日本語,六〇年代Ａ",
+            "日本語,六〇年代，2",
+            "日本語,六〇年代間",
+            "日本語,六〇年代生",
+            "日本語,六〇年代次",
+        ] {
+            let raw = "六〇年代";
+            let start = full.find(raw).unwrap();
+            // Suffix outside the local chunk must still be guarded by the original-input plan.
+            let mut out = decade_tokens(raw, start);
+            let before = format!("{out:?}");
+            apply(
+                raw,
+                start,
+                &mut out,
+                0,
+                &AsciiPlan::new(full, 0),
+                &[],
+                |_| false,
+            );
+            assert_eq!(format!("{out:?}"), before, "{full}");
+        }
+        for raw in [
+            "六一年代",
+            "一六年代",
+            "〇〇年代",
+            "零〇年代",
+            "一九六〇年代",
+        ] {
+            let full = format!("日本語,{raw}");
+            let mut out = decade_tokens(raw, 10);
+            let before = format!("{out:?}");
+            apply(raw, 10, &mut out, 0, &AsciiPlan::new(&full, 0), &[], |_| {
+                false
+            });
+            assert_eq!(format!("{out:?}"), before, "{full}");
+        }
+        for (full, local, start) in [
+            ("日本語,六〇年代", "〇年代", 13),
+            ("日本語,六〇年代", "六〇", 10),
+        ] {
+            let mut out = if local.contains("年代") {
+                decade_tokens(local, start)
+            } else {
+                pair_tokens(local, start)
+            };
+            let before = format!("{out:?}");
+            apply(
+                local,
+                start,
+                &mut out,
+                0,
+                &AsciiPlan::new(full, 0),
+                &[],
+                |_| false,
+            );
+            assert_eq!(format!("{out:?}"), before, "{full}/{local}");
+        }
+        let raw = "六〇年度";
+        let mut out = pair_tokens(raw, 10);
+        out[2].surface = "年度".into();
+        out[2].base_form = "年度".into();
+        out[2].pos = "名詞,一般,*,*".into();
+        out[2].reading = "ネンド".into();
+        out[2].pronunciation = "ネンド".into();
+        out[2].end = out[3].end;
+        out.pop();
+        let before = format!("{out:?}");
+        apply(
+            raw,
+            10,
+            &mut out,
+            0,
+            &AsciiPlan::new("日本語,六〇年度", 0),
+            &[],
+            |_| false,
+        );
+        assert_eq!(
+            format!("{out:?}"),
+            before,
+            "年度 is outside the new decade case"
+        );
     }
 
     #[test]
@@ -1389,6 +1801,113 @@ mod tests {
 mod analyzer_tests {
     use crate::dict::{DictBuilder, DictEntry};
     use crate::{Analyzer, Dictionary};
+
+    #[test]
+    fn analyzer_composes_both_comma_decades_before_the_final_ascii_period() {
+        let mut builder = DictBuilder::new();
+        for (surface, pos, reading, cost) in [
+            ("例", "名詞,一般,*,*", "レイ", 200),
+            ("六", "名詞,数,*,*", "ロク", 321),
+            ("七", "名詞,数,*,*", "ナナ", 321),
+            ("〇", "名詞,数,*,*", "レイ", -97),
+            ("年代", "名詞,接尾,助数詞,*", "ネンダイ", -7123),
+            (",", "記号,読点,*,*", "", 42),
+            ("、", "記号,読点,*,*", "", 42),
+            (".", "記号,句点,*,*", "", 42),
+            ("。", "記号,句点,*,*", "", 42),
+        ] {
+            builder.add_entry(DictEntry {
+                surface: surface.into(),
+                pos: pos.into(),
+                base_form: surface.into(),
+                reading: reading.into(),
+                pronunciation: reading.into(),
+                cost,
+                ..Default::default()
+            });
+        }
+        let mut analyzer = Analyzer::from_dict(builder.build().unwrap());
+        for (text, comma, period) in [
+            ("例,六〇年代,七〇年代.", ",", "."),
+            ("例、六〇年代、七〇年代。", "、", "。"),
+        ] {
+            let mut start = 0;
+            let expected: Vec<_> = [
+                ("例", "名詞,一般,*,*", "レイ", "レイ", 200, true),
+                (comma, "記号,読点,*,*", "", "", 42, true),
+                (
+                    "六〇",
+                    "名詞,数,*,*",
+                    "ロクジュウ",
+                    "ロクジュー",
+                    224,
+                    false,
+                ),
+                (
+                    "年代",
+                    "名詞,接尾,助数詞,*",
+                    "ネンダイ",
+                    "ネンダイ",
+                    -7123,
+                    true,
+                ),
+                (comma, "記号,読点,*,*", "", "", 42, true),
+                (
+                    "七〇",
+                    "名詞,数,*,*",
+                    "ナナジュウ",
+                    "ナナジュー",
+                    224,
+                    false,
+                ),
+                (
+                    "年代",
+                    "名詞,接尾,助数詞,*",
+                    "ネンダイ",
+                    "ネンダイ",
+                    -7123,
+                    true,
+                ),
+                (period, "記号,句点,*,*", "", "", 42, true),
+            ]
+            .into_iter()
+            .map(
+                |(surface, pos, reading, pronunciation, word_cost, is_known)| {
+                    let end = start + surface.len();
+                    let token = crate::Token {
+                        surface: surface.into(),
+                        base_form: surface.into(),
+                        start,
+                        end,
+                        pos: pos.into(),
+                        conj_type: "".into(),
+                        conj_form: "".into(),
+                        reading: reading.into(),
+                        pronunciation: pronunciation.into(),
+                        word_cost,
+                        is_known,
+                    };
+                    start = end;
+                    token
+                },
+            )
+            .collect();
+            let out = analyzer.try_tokenize(text).unwrap();
+            assert_eq!(format!("{out:?}"), format!("{expected:?}"), "{text}");
+            let split = analyzer
+                .try_tokenize_sentences(text, &crate::sentence::SplitOptions::default())
+                .unwrap();
+            let flat: Vec<_> = split
+                .iter()
+                .flat_map(|(_, tokens)| tokens.iter().cloned())
+                .collect();
+            assert_eq!(
+                format!("{flat:?}"),
+                format!("{expected:?}"),
+                "sentences: {text}"
+            );
+        }
+    }
 
     fn day_dictionary(extra: Option<(&str, &str, &str, &str)>) -> Dictionary {
         let mut builder = DictBuilder::new();
