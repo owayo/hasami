@@ -1,4 +1,6 @@
-//! 有限節の列挙に限り、疑問・並立の助詞に続く「等」を副助詞へ補正する。
+//! 有限節の列挙に限り、「等」を副助詞へ補正する。
+//!
+//! 疑問・並立の助詞を挟む形と、基本形に直結して格助詞「を」で受ける形を扱う。
 //!
 //! 小学館デジタル大辞泉は「等（など）」を副助詞とし、引用句・文や一部の助詞を
 //! 受ける用法を挙げる。名乗りの「ひとし」、接尾語の「とう・ら」は別の用法。
@@ -54,37 +56,43 @@ fn allowed_right(t: Option<&Token>) -> bool {
 }
 pub(super) fn apply(tokens: &mut [Token], protected: &[Range<usize>]) {
     for i in 0..tokens.len() {
-        if i == 0
-            || !fixed(&tokens[i], "等", "名詞,固有名詞,人名,名", "ヒトシ")
-            || !allowed_right(tokens.get(i + 1))
-        {
+        if i == 0 || !fixed(&tokens[i], "等", "名詞,固有名詞,人名,名", "ヒトシ") {
             continue;
         }
         let mut j = i - 1;
-        if toka(&tokens[j]) {
-            let Some(previous) = j.checked_sub(1) else {
+        let direct_object = finite(&tokens[j])
+            && tokens.get(i + 1).is_some_and(|right| {
+                tokens[i].end == right.start && fixed(right, "を", "助詞,格助詞,一般,*", "ヲ")
+            });
+        if !direct_object {
+            if !allowed_right(tokens.get(i + 1)) {
                 continue;
-            };
-            j = previous;
-            if ka(&tokens[j]) {
+            }
+            if toka(&tokens[j]) {
+                let Some(previous) = j.checked_sub(1) else {
+                    continue;
+                };
+                j = previous;
+                if ka(&tokens[j]) {
+                    let Some(previous) = j.checked_sub(1) else {
+                        continue;
+                    };
+                    j = previous;
+                }
+            } else if ka(&tokens[j]) {
+                let Some(previous) = j.checked_sub(1) else {
+                    continue;
+                };
+                j = previous;
+            } else {
+                continue;
+            }
+            if fixed(&tokens[j], "の", "名詞,非自立,一般,*", "ノ") {
                 let Some(previous) = j.checked_sub(1) else {
                     continue;
                 };
                 j = previous;
             }
-        } else if ka(&tokens[j]) {
-            let Some(previous) = j.checked_sub(1) else {
-                continue;
-            };
-            j = previous;
-        } else {
-            continue;
-        }
-        if fixed(&tokens[j], "の", "名詞,非自立,一般,*", "ノ") {
-            let Some(previous) = j.checked_sub(1) else {
-                continue;
-            };
-            j = previous;
         }
         if !finite(&tokens[j]) || !tokens[j..=i].windows(2).all(|w| w[0].end == w[1].start) {
             continue;
@@ -98,7 +106,7 @@ pub(super) fn apply(tokens: &mut [Token], protected: &[Range<usize>]) {
         {
             continue;
         }
-        let frame = tokens[j].start..tokens[i].end;
+        let frame = tokens[j].start..tokens[i + usize::from(direct_object)].end;
         if protected
             .iter()
             .any(|r| r.start < frame.end && frame.start < r.end)
@@ -220,6 +228,72 @@ mod tests {
     }
 
     #[test]
+    fn direct_finite_clause_requires_a_contiguous_object_particle() {
+        for (surface, pos, kind, reading) in [
+            ("行く", "動詞,自立,*,*", "五段・カ行促音便", "イク"),
+            ("高い", "形容詞,自立,*,*", "形容詞・アウオ段", "タカイ"),
+            ("た", "助動詞,*,*,*", "特殊・タ", "タ"),
+        ] {
+            let mut tokens = vec![
+                token(surface, pos, surface, kind, "基本形", reading),
+                token("等", "名詞,固有名詞,人名,名", "等", "", "", "ヒトシ"),
+                token("を", "助詞,格助詞,一般,*", "を", "", "", "ヲ"),
+            ];
+            place(&mut tokens);
+            let before = tokens.clone();
+            apply(&mut tokens, &[]);
+            assert_eq!(&*tokens[1].pos, "助詞,副助詞,*,*");
+            assert_eq!(&*tokens[1].reading, "ナド");
+            assert_eq!(&*tokens[1].pronunciation, "ナド");
+            only_grammatical_fields_changed(&before, &tokens);
+            for i in 0..before.len() {
+                let mut tokens = before.clone();
+                tokens[i].is_known = false;
+                let original = tokens.clone();
+                apply(&mut tokens, &[]);
+                unchanged(&original, &tokens);
+
+                let mut tokens = before.clone();
+                let range = tokens[i].start..tokens[i].end;
+                apply(&mut tokens, &[range]);
+                unchanged(&before, &tokens);
+                if i > 0 {
+                    let mut tokens = before.clone();
+                    tokens[i].start += 1;
+                    let original = tokens.clone();
+                    apply(&mut tokens, &[]);
+                    unchanged(&original, &tokens);
+                }
+            }
+            for variant in 0..8 {
+                let mut tokens = before.clone();
+                match variant {
+                    0 => tokens[0].conj_form = Arc::from("連用形"),
+                    1 => tokens[0].conj_type = Arc::from(""),
+                    2 => tokens[0].pos = Arc::from("名詞,固有名詞,人名,名"),
+                    3 => tokens[1].reading = Arc::from("トモ"),
+                    4 => tokens[1].pronunciation = Arc::from("トクシュ"),
+                    5 => tokens[2].pos = Arc::from("名詞,一般,*,*"),
+                    6 => tokens[2].reading = Arc::from("オ"),
+                    _ => tokens.truncate(2),
+                }
+                let original = tokens.clone();
+                apply(&mut tokens, &[]);
+                unchanged(&original, &tokens);
+            }
+            for (reading, pronunciation) in [("トウ", "トー"), ("ラ", "ラ"), ("ナド", "ナド")]
+            {
+                let mut tokens = before.clone();
+                tokens[1].reading = Arc::from(reading);
+                tokens[1].pronunciation = Arc::from(pronunciation);
+                let original = tokens.clone();
+                apply(&mut tokens, &[]);
+                unchanged(&original, &tokens);
+            }
+        }
+    }
+
+    #[test]
     fn names_other_readings_and_nonfinite_or_inconsistent_features_are_preserved() {
         for (nominalizer, question, parallel) in [
             (false, true, false),
@@ -333,6 +407,7 @@ mod tests {
             ("山田", "名詞,固有名詞,人名,姓", "", "", "ヤマダ"),
             ("さん", "名詞,接尾,人名,*", "", "", "サン"),
             ("が", "助詞,格助詞,一般,*", "", "", "ガ"),
+            ("を", "助詞,格助詞,一般,*", "", "", "ヲ"),
             ("「", "記号,括弧開,*,*", "", "", "「"),
             ("」", "記号,括弧閉,*,*", "", "", "」"),
             ("、", "記号,読点,*,*", "", "", "、"),
@@ -362,6 +437,7 @@ mod tests {
             "行くとか等",
             "行くのかとか等も",
             "「行くか等」",
+            "行く等を",
         ] {
             let tokens = analyzer.try_tokenize(text).unwrap();
             let target = tokens.iter().find(|t| t.surface.as_ref() == "等").unwrap();
@@ -381,6 +457,9 @@ mod tests {
             "山田か等さん",
             "行くか、等さん",
             "「等」",
+            "行く等も",
+            "行く 等を",
+            "行く等 を",
         ] {
             let tokens = analyzer.try_tokenize(text).unwrap();
             let target = tokens.iter().find(|t| t.surface.as_ref() == "等").unwrap();
