@@ -53,6 +53,16 @@ fn is_katakana_str(s: &str) -> bool {
     !s.is_empty() && s.chars().all(|c| ('\u{30A0}'..='\u{30FF}').contains(&c))
 }
 
+/// 選択した発音を持つ健全な借用元が助詞・助動詞かを調べる。
+fn is_function_word_pronunciation_donor(pos: &str) -> bool {
+    pos.starts_with('助') && matches!(pos.split(',').next(), Some("助詞" | "助動詞"))
+}
+
+/// 動詞・固有名詞への直接借用だけは、選択した発音が機能語にもあれば控える。
+fn vetoes_function_word_pronunciation(pos: &str) -> bool {
+    pos_has_prefix(pos, &["動詞"]) || pos_has_prefix(pos, &["名詞", "固有名詞"])
+}
+
 /// 読みの「ウ＋小書き母音」が発音だけ「ー＋小書き母音」になった箇所を戻す。
 ///
 /// 字数が同じカタカナ列の対応する位置だけを扱い、ほかの長音・音便は保持する。
@@ -774,6 +784,7 @@ impl DictBuilder {
     ///
     /// 修復は以下の優先順で行う:
     /// 1. 同じ (表層形, 読み) を持つ健全なエントリの発音形を借用する。
+    ///    動詞・固有名詞は、その発音が助詞・助動詞にもある場合は借用しない。
     ///    IPAdic 由来のエントリは人手で作られた発音形（ホウホウ→ホーホー）を持つため、
     ///    マージ辞書の中で最も信頼できる長音表記の供給源になる。
     /// 2. 借用元が無い語は、辞書内の短い既知語に分けて部品の発音を連結する。
@@ -787,23 +798,28 @@ impl DictBuilder {
     pub fn repair_pronunciation(&mut self) -> usize {
         // 健全なエントリから (表層形, 読み) → 発音 の対応表を作る。
         // 読みと違う発音（「リョウ」に対する「リョー」のように長音表記を持つ形）を優先する。
-        let mut trusted: HashMap<(&str, &str), &Arc<str>> = HashMap::new();
+        // 選択した発音を持つ健全な助詞・助動詞の借用元があるかを併記する。
+        let mut trusted: HashMap<(&str, &str), (&Arc<str>, bool)> = HashMap::new();
         for entry in &self.entries {
             if !is_katakana_str(&entry.pronunciation) || !is_katakana_str(&entry.reading) {
                 continue;
             }
             let best = trusted
                 .entry((&entry.surface, &entry.reading))
-                .or_insert(&entry.pronunciation);
-            if ***best == *entry.reading && entry.pronunciation != entry.reading {
-                *best = &entry.pronunciation;
+                .or_insert((&entry.pronunciation, false));
+            if best.0.as_ref() == entry.reading.as_ref() && entry.pronunciation != entry.reading {
+                *best = (&entry.pronunciation, false);
+            }
+            // 交替前や不採用の別発音の裏付けは持ち越さず、同じ値の発音だけを使う。
+            if !best.1 && best.0.as_ref() == entry.pronunciation.as_ref() {
+                best.1 = is_function_word_pronunciation_donor(&entry.pos);
             }
         }
         // 合成に使う部品の索引。健全な発音を持つ短い語だけを集める。
         // ひらがなを含む語を部品にすると、助詞や活用語尾の短い読みが噛み合って
         // 「雲の上(クモノウエ)」が「雲」+「の上(ノーエ)」に分かれるような誤分割を招く
         let mut parts: HashMap<&str, Vec<(&str, Arc<str>)>> = HashMap::new();
-        for ((surface, reading), pron) in &trusted {
+        for ((surface, reading), (pron, _)) in &trusted {
             if surface.chars().count() <= MAX_PART_CHARS
                 && surface.chars().all(|c| is_kanji(c) || is_katakana(c))
             {
@@ -828,7 +844,11 @@ impl DictBuilder {
                 } else {
                     trusted
                         .get(&(&*entry.surface, &*entry.reading))
-                        .map(|p| Arc::clone(p))
+                        .and_then(|(pron, has_function_word_donor)| {
+                            (!*has_function_word_donor
+                                || !vetoes_function_word_pronunciation(&entry.pos))
+                            .then(|| Arc::clone(pron))
+                        })
                         .filter(|p| *p != entry.pronunciation)
                 };
                 // 借りた発音（借りられなければ今の発音）にまだ長音化されていない
