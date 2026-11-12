@@ -37,6 +37,7 @@ use crate::hsd::{DictError, Dictionary};
 use crate::kana::{to_katakana, unvoice, voice};
 use std::sync::Arc;
 
+mod hoka;
 mod idiom;
 mod katakana_area;
 mod math_value;
@@ -372,6 +373,10 @@ fn apply_contextual_readings_with_protection(
             tokens[i].reading = Arc::clone(&kana);
             tokens[i].pronunciation = kana;
         }
+    }
+    // 「二人」などの和語化に先立ち、元の標準数詞と助数詞で人の列挙を確認する。
+    if hoka::may_apply(anchors) {
+        hoka::apply(tokens, protected, contextual_readings);
     }
     if crate::numeric::counter_readings_may_apply(anchors) {
         if protected.is_empty() {
