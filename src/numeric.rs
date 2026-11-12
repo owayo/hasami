@@ -584,6 +584,35 @@ fn standard_number_readings(token: &Token, tails: &[&str]) -> bool {
     standard_kanji_readings(&token.surface, &token.reading, &token.pronunciation)
 }
 
+/// 文脈規則が人数の根拠に使える、辞書由来の標準整数。和語化などの補正前に使う。
+pub(crate) fn standard_integer_token(token: &Token) -> bool {
+    if !token.is_known_base_form()
+        || token.pos.as_ref() != "名詞,数,*,*"
+        || token.surface.is_empty()
+    {
+        return false;
+    }
+    if token
+        .surface
+        .chars()
+        .all(|c| matches!(c, '0'..='9' | '０'..='９'))
+    {
+        let raw: String = token
+            .surface
+            .chars()
+            .map(|c| {
+                if c.is_ascii() {
+                    c
+                } else {
+                    char::from_u32(c as u32 - 0xfee0).unwrap()
+                }
+            })
+            .collect();
+        return ascii::standard_readings(&raw, &token.reading, &token.pronunciation);
+    }
+    standard_kanji_readings(&token.surface, &token.reading, &token.pronunciation)
+}
+
 fn standard_kanji_readings(surface: &str, mut reading: &str, mut pronunciation: &str) -> bool {
     let mut chars = surface.chars().peekable();
     let mut previous = None;

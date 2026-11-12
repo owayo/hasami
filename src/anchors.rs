@@ -44,6 +44,8 @@ impl Anchors {
     pub(crate) const IDIOM_HEAD: Self = Self(1 << 12);
     /// 全角の数字 `０`〜`９`（[`Self::FULLWIDTH`] にも含む）
     pub(crate) const WIDE_DIGIT: Self = Self(1 << 13);
+    /// `外`（人の列挙）
+    pub(crate) const HOKA: Self = Self(1 << 14);
     /// 全ビット（絞り込まない。テストの参照経路）
     #[cfg(test)]
     pub(crate) const ALL: Self = Self(u32::MAX);
@@ -151,6 +153,7 @@ const CHARS: &[(char, Anchors)] = &[
     ('面', Anchors::MEN),
     ('等', Anchors::NADO),
     ('値', Anchors::ATAI),
+    ('外', Anchors::HOKA),
     ('真', Anchors::IDIOM_HEAD),
     ('身', Anchors::IDIOM_HEAD),
     ('得', Anchors::IDIOM_HEAD),
