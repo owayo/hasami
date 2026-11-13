@@ -153,14 +153,29 @@ fn kana_vowel(c: char) -> Option<char> {
 /// 「ホウホウ」「ジュウヨウ」のようにここに当たる語だけが、発音の長音表記
 /// （ホーホー / ジューヨー）を持つべき語になる。
 fn has_unmarked_long_vowel(reading: &str) -> bool {
+    unmarked_long_vowels(reading) > 0
+}
+
+/// 長音表記になっていない「オ段・ウ段 + ウ」の数
+///
+/// 部品から組み立てた発音を採るかどうかを、この数が減るかどうかで決める。
+/// 語の境界をまたぐ「オ段 + ウ」も数に入るため、組み立てた側が同じか多いときは
+/// すでにある発音の長音表記を失わないよう、そのまま残す。
+fn unmarked_long_vowels(reading: &str) -> usize {
     let mut prev: Option<char> = None;
-    for c in reading.chars() {
-        if c == 'ウ' && matches!(prev, Some('オ') | Some('ウ')) {
-            return true;
+    let mut count = 0;
+    let mut chars = reading.chars().peekable();
+    while let Some(c) = chars.next() {
+        // 小書きの母音が続く「ウ」は「ウェ」のような二重字の一部で、長音ではない。
+        let digraph = chars
+            .peek()
+            .is_some_and(|&next| matches!(next, 'ァ' | 'ィ' | 'ゥ' | 'ェ' | 'ォ'));
+        if c == 'ウ' && !digraph && matches!(prev, Some('オ') | Some('ウ')) {
+            count += 1;
         }
         prev = kana_vowel(c);
     }
-    false
+    count
 }
 
 /// 表層形を辞書内の短い既知語に分けて、部品の発音を連結した発音を組み立てる。
@@ -248,21 +263,14 @@ fn compose_at(
 /// 発音の合成を試すエントリかどうか
 ///
 /// 分割で組み立てた発音が元より確かなのは、漢字表記の名詞に限られる。活用語は語尾が
-/// 辞書の部品と合わない。人名・地名は特殊な読みを部品から組み立てられないので避けるが、
-/// NEologd は「高品質」のような普通名詞も「固有名詞,一般」で登録しているので、
-/// そちらは対象に含める。
+/// 辞書の部品と合わない。人名・地名も、部品の読みが語全体の読みにそのまま並ぶときだけ
+/// 組み立てるので対象に含める（採るかどうかは未長音化の数で決める）。
 fn is_composable(entry: &DictEntry) -> bool {
     entry.pos.starts_with("名詞")
-        && !is_name_like_proper_noun(&entry.pos)
         && !entry.pos.starts_with("名詞,数")
         && is_katakana_str(&entry.reading)
         && has_unmarked_long_vowel(&entry.reading)
         && entry.surface.chars().any(is_kanji)
-}
-
-/// 人名・組織・地域の固有名詞かどうか（「固有名詞,一般」は普通名詞が多いので含めない）
-fn is_name_like_proper_noun(pos: &str) -> bool {
-    pos.starts_with("名詞,固有名詞") && !pos.starts_with("名詞,固有名詞,一般")
 }
 
 /// 漢字（CJK統合漢字と拡張A、繰り返し記号）かどうか判定する
@@ -904,6 +912,9 @@ impl DictBuilder {
                     && is_composable(entry)
                     && let Some(composed) =
                         compose_pronunciation(&entry.surface, &entry.reading, &parts)
+                    // 部品の発音が未長音化のままのこともあるので、今の発音より
+                    // 長音表記が進むときだけ採る（すでに直っている語を戻さない）。
+                    && unmarked_long_vowels(&composed) < unmarked_long_vowels(current)
                 {
                     result = Some(Arc::from(composed));
                 }

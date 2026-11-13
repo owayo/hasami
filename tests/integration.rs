@@ -1498,9 +1498,9 @@ fn test_repair_pronunciation_recomposes_partially_repaired() {
 }
 
 #[test]
-fn test_repair_pronunciation_skips_composition_for_proper_nouns() {
+fn test_repair_pronunciation_composes_proper_nouns_when_it_marks_long_vowels() {
     let mut builder = DictBuilder::new();
-    // 人名・地名の読みは部品から組み立てられないので合成しない
+    // 人名・地名でも、部品の読みが語全体の読みにそのまま並ぶなら長音表記を組み立てる
     builder.add_entry(entry("幸", "名詞,一般,*,*", "幸", "コウ", "コー"));
     builder.add_entry(entry("太", "名詞,一般,*,*", "太", "タ", "タ"));
     builder.add_entry(entry(
@@ -1518,7 +1518,37 @@ fn test_repair_pronunciation_skips_composition_for_proper_nouns() {
         .iter()
         .find(|e| &*e.surface == "幸太")
         .expect("幸太 entry");
-    assert_eq!(&*kept.pronunciation, "コウタ");
+    assert_eq!(&*kept.pronunciation, "コータ");
+}
+
+#[test]
+fn test_repair_pronunciation_keeps_marked_long_vowels_over_raw_parts() {
+    let mut builder = DictBuilder::new();
+    // 部品の発音が未長音化のままなら、すでに長音表記のある発音を組み立てで戻さない
+    builder.add_entry(entry("京", "名詞,一般,*,*", "京", "キョウ", "キョー"));
+    builder.add_entry(entry(
+        "裏町",
+        "名詞,一般,*,*",
+        "裏町",
+        "ウラチョウ",
+        "ウラチョウ",
+    ));
+    builder.add_entry(entry(
+        "京裏町",
+        "名詞,固有名詞,地域,一般",
+        "京裏町",
+        "キョウウラチョウ",
+        "キョーウラチョー",
+    ));
+
+    builder.repair_pronunciation();
+
+    let kept = builder
+        .entries()
+        .iter()
+        .find(|e| &*e.surface == "京裏町")
+        .expect("京裏町 entry");
+    assert_eq!(&*kept.pronunciation, "キョーウラチョー");
 }
 
 #[test]
