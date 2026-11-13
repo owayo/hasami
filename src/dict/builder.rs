@@ -306,6 +306,22 @@ fn is_kansuji(c: char) -> bool {
     )
 }
 
+/// 語末を引き伸ばした表記で足される字
+///
+/// 「ー」「〜」「～」は長音、「っ」「ッ」は語末の促音、「い」「ぃ」「イ」「ィ」は
+/// イ段・エ段を引き伸ばすときに足される。
+const ELONGATION_CHARS: [char; 9] = ['ー', '〜', '～', 'っ', 'ッ', 'い', 'ぃ', 'イ', 'ィ'];
+
+/// 表層形 `surface` が原形 `base_form` に引き伸ばしの字だけを足した形かどうか判定する
+fn is_elongated_form(surface: &str, base_form: &str) -> bool {
+    !base_form.is_empty()
+        && surface.len() > base_form.len()
+        && surface.starts_with(base_form)
+        && surface[base_form.len()..]
+            .chars()
+            .all(|c| ELONGATION_CHARS.contains(&c))
+}
+
 /// 異表記エントリ削除時にログへ出すサンプル件数
 const ORTHO_VARIANT_SAMPLE: usize = 20;
 
@@ -1074,6 +1090,63 @@ impl DictBuilder {
                 eprintln!(
                     "  drop: {} ({}) [{}]",
                     entry.surface, entry.reading, entry.pos
+                );
+            }
+            let mut doomed = doomed.into_iter();
+            self.entries.retain(|_| !doomed.next().unwrap_or(false));
+        }
+        removed
+    }
+
+    /// 語末を引き伸ばした形容詞エントリを取り除く
+    ///
+    /// SudachiDict には、形容詞の原形に「ー」「〜」「っ」「い」などを足しただけのエントリが
+    /// 機械的に作られている（「あかるい」に対する「あかるいー」「あかるいっ」「あかるいい」等、
+    /// 1 語につき 17〜29 件）。足された字は次の語の先頭にも現れるため、これらは文中の
+    /// 隣の語を取り込んで勝つ。実際の文では「〜ないって」が「ないっ/て」、「もういい」が
+    /// 「も/ういい(ウイー)」、「上手くいった」が「上手/くいっ/た」、「黒いいろ」が
+    /// 「黒いい/ろ」のように分かれる。読みも「アイイレナイ」が「アイーレナイー」になるなど
+    /// 引き伸ばしの変換で壊れている。
+    ///
+    /// そこで、原形がそのまま表層形になっているエントリが辞書にあり、表層形がその原形に
+    /// 引き伸ばしの字だけを足した形の形容詞エントリを落とす。原形は残るので、引き伸ばした表記は
+    /// 「あかるい」＋「ー」のように分かれて解析される。原形のエントリは品詞を問わない
+    /// （「らしい」は助動詞としてあり、それに「〜」を足した形容詞エントリが作られている）。
+    ///
+    /// 対象を形容詞に限るのは、「3Dプリンタ」→「3Dプリンター」のような名詞の長音表記と、
+    /// 「ううーーー」「いいいいい」のように引き伸ばすこと自体が語である副詞・感動詞を残すため。
+    ///
+    /// Returns: 削除されたエントリ数
+    pub fn drop_elongated_adjectives(&mut self) -> usize {
+        let canonical: std::collections::HashSet<&str> = self
+            .entries
+            .iter()
+            .filter(|e| e.surface == e.base_form)
+            .map(|e| &*e.surface)
+            .collect();
+        let doomed: Vec<bool> = self
+            .entries
+            .iter()
+            .map(|e| {
+                e.pos.starts_with("形容詞")
+                    && canonical.contains(&*e.base_form)
+                    && is_elongated_form(&e.surface, &e.base_form)
+            })
+            .collect();
+        drop(canonical);
+
+        let removed = doomed.iter().filter(|d| **d).count();
+        if removed > 0 {
+            for (entry, _) in self
+                .entries
+                .iter()
+                .zip(&doomed)
+                .filter(|(_, d)| **d)
+                .take(ORTHO_VARIANT_SAMPLE)
+            {
+                eprintln!(
+                    "  drop: {} ({}) -> {} [{}]",
+                    entry.surface, entry.pronunciation, entry.base_form, entry.pos
                 );
             }
             let mut doomed = doomed.into_iter();

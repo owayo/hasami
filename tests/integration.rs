@@ -1687,6 +1687,99 @@ fn test_drop_numeral_misreadings() {
     assert!(readings.contains(&"ジュウゴヤ"));
 }
 
+/// 原形と活用形を付けた形容詞エントリ
+fn adjective(surface: &str, base_form: &str, conj_form: &str, pronunciation: &str) -> DictEntry {
+    DictEntry {
+        conj_type: "形容詞・アウオ段".into(),
+        conj_form: conj_form.into(),
+        ..entry(
+            surface,
+            "形容詞,自立,*,*",
+            base_form,
+            pronunciation,
+            pronunciation,
+        )
+    }
+}
+
+#[test]
+fn test_drop_elongated_adjectives() {
+    let mut builder = DictBuilder::new();
+    // 引き伸ばしの字だけを足した形は、次の語の先頭を取り込む（「ないって」→ ないっ/て）ので落とす
+    builder.add_entry(adjective("ない", "ない", "基本形", "ナイ"));
+    for surface in ["ないー", "ない〜", "ない～", "ないっ", "ないッ", "ないい"] {
+        builder.add_entry(adjective(surface, "ない", "基本形", "ナイー"));
+    }
+    // 引き伸ばした形のガル接続も同じ理由で落とす
+    builder.add_entry(adjective("ないーっ", "ない", "ガル接続", "ナイーッ"));
+
+    assert_eq!(builder.drop_elongated_adjectives(), 7);
+
+    let surfaces: Vec<&str> = builder.entries().iter().map(|e| &*e.surface).collect();
+    assert_eq!(surfaces, ["ない"]);
+}
+
+#[test]
+fn test_keep_elongated_forms_that_are_not_adjectives() {
+    let mut builder = DictBuilder::new();
+    // 名詞の長音表記（「3Dプリンタ」→「3Dプリンター」）は実際の表記ゆれなので残す
+    builder.add_entry(entry(
+        "3Dプリンタ",
+        "名詞,固有名詞,一般,*",
+        "3Dプリンタ",
+        "スリーディープリンタ",
+        "スリーディープリンタ",
+    ));
+    builder.add_entry(entry(
+        "3Dプリンター",
+        "名詞,固有名詞,一般,*",
+        "3Dプリンタ",
+        "スリーディープリンター",
+        "スリーディープリンター",
+    ));
+    // 引き伸ばすこと自体が語である感動詞・副詞も残す
+    builder.add_entry(entry("いいい", "感動詞,*,*,*", "いいい", "イイイ", "イー"));
+    builder.add_entry(entry(
+        "いいいい",
+        "感動詞,*,*,*",
+        "いいい",
+        "イイイイ",
+        "イー",
+    ));
+    builder.add_entry(entry(
+        "ううー",
+        "副詞,一般,*,*",
+        "ううー",
+        "ウウー",
+        "ウウー",
+    ));
+    builder.add_entry(entry(
+        "ううーー",
+        "副詞,一般,*,*",
+        "ううー",
+        "ウウーー",
+        "ウウー",
+    ));
+
+    assert_eq!(builder.drop_elongated_adjectives(), 0);
+    assert_eq!(builder.entries().len(), 6);
+}
+
+#[test]
+fn test_keep_elongated_adjectives_without_the_plain_form() {
+    let mut builder = DictBuilder::new();
+    // 原形のエントリが無ければ、落とすとその語が辞書から消えるので残す
+    builder.add_entry(adjective("しげないい", "しげない", "基本形", "シゲナイー"));
+    // 活用した表層形は引き伸ばしではないので対象外（「ない」→「なかっ」）
+    builder.add_entry(adjective("ない", "ない", "基本形", "ナイ"));
+    builder.add_entry(adjective("なかっ", "ない", "連用タ接続", "ナカッ"));
+    // 引き伸ばしの字以外が混じる形も対象外（「ないさ」）
+    builder.add_entry(adjective("ないさ", "ない", "基本形", "ナイサ"));
+
+    assert_eq!(builder.drop_elongated_adjectives(), 0);
+    assert_eq!(builder.entries().len(), 4);
+}
+
 #[test]
 fn test_keep_numeral_words_that_are_not_proper_nouns() {
     let mut builder = DictBuilder::new();

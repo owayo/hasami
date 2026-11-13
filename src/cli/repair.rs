@@ -40,6 +40,13 @@ pub(crate) struct RepairArgs {
     #[arg(long)]
     drop_numeral_misreadings: bool,
 
+    /// 語末を引き伸ばした形容詞エントリを削除する
+    /// (「あかるい」に対する「あかるいー」「あかるいっ」「あかるいい」等、原形に「ー」「〜」「っ」「い」
+    /// だけを足したエントリ)。足された字は次の語の先頭にも現れるため、「〜ないって」が「ないっ/て」、
+    /// 「もういい」が「も/ういい」のように隣の語を取り込む。原形は残す
+    #[arg(long)]
+    drop_elongated_adjectives: bool,
+
     /// 削除するエントリを列挙した CSV (`表層形,読み[,品詞]`)。複数指定可。
     /// 3 列目の品詞 (例 "名詞,固有名詞,人名") を書くと、その品詞で始まるエントリだけを削除する
     #[arg(long, value_name = "CSV")]
@@ -98,7 +105,8 @@ impl RepairArgs {
     /// 1. 範囲外の文脈 ID を持つエントリの除去（`--drop-invalid-context-ids`）。発音の修復が
     ///    これらを借用元に使わないよう、最初に落とす
     /// 2. 壊れた発音の修復（`--no-pronunciation-repair` を付けなければ常に行う）
-    /// 3. 汎用フィルタによる除去（`--drop-ortho-variants` / `--drop-numeral-misreadings`）
+    /// 3. 汎用フィルタによる除去（`--drop-ortho-variants` / `--drop-numeral-misreadings` /
+    ///    `--drop-elongated-adjectives`）
     /// 4. 削除リスト CSV の適用（`--remove`）。削除リストは上流の辞書の品詞で書くので、降格より先に適用する
     /// 5. 文や句を 1 語にした名詞の除去（`--drop-sentence-like-nouns`）と、数と単位の組の固有名詞の除去
     ///    （`--drop-quantity-nouns`）
@@ -147,6 +155,12 @@ impl RepairArgs {
             eprintln!("Dropped {} numeral misreading entries", n);
             dropped += n;
             ops.push("drop-numeral-misreadings".into());
+        }
+        if self.drop_elongated_adjectives {
+            let n = builder.drop_elongated_adjectives();
+            eprintln!("Dropped {} elongated adjective entries", n);
+            dropped += n;
+            ops.push("drop-elongated-adjectives".into());
         }
         for path in &self.remove {
             let stats = builder.drop_entries_from_csv(path)?;
