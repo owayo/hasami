@@ -40,6 +40,13 @@ pub(crate) struct RepairArgs {
     #[arg(long)]
     drop_numeral_misreadings: bool,
 
+    /// かな表層形に別の語の読みがくっついた固有名詞エントリを削除する
+    /// (「まるお」の読みが「マルオライフライン」、「ふじわら」の読みが「フジワラムービック」等、
+    /// 元の行で欄が連結されたエントリ)。ひらがなの表層形は文の一部にも現れるため、
+    /// 「高まるおそれ」が「高/まるお/それ」のように分かれる
+    #[arg(long)]
+    drop_glued_readings: bool,
+
     /// 語末を引き伸ばした形容詞エントリを削除する
     /// (「あかるい」に対する「あかるいー」「あかるいっ」「あかるいい」等、原形に「ー」「〜」「っ」「い」
     /// だけを足したエントリ)。足された字は次の語の先頭にも現れるため、「〜ないって」が「ないっ/て」、
@@ -106,7 +113,7 @@ impl RepairArgs {
     ///    これらを借用元に使わないよう、最初に落とす
     /// 2. 壊れた発音の修復（`--no-pronunciation-repair` を付けなければ常に行う）
     /// 3. 汎用フィルタによる除去（`--drop-ortho-variants` / `--drop-numeral-misreadings` /
-    ///    `--drop-elongated-adjectives`）
+    ///    `--drop-elongated-adjectives` / `--drop-glued-readings`）
     /// 4. 削除リスト CSV の適用（`--remove`）。削除リストは上流の辞書の品詞で書くので、降格より先に適用する
     /// 5. 文や句を 1 語にした名詞の除去（`--drop-sentence-like-nouns`）と、数と単位の組の固有名詞の除去
     ///    （`--drop-quantity-nouns`）
@@ -155,6 +162,15 @@ impl RepairArgs {
             eprintln!("Dropped {} numeral misreading entries", n);
             dropped += n;
             ops.push("drop-numeral-misreadings".into());
+        }
+        if self.drop_glued_readings {
+            let n = builder.drop_glued_readings();
+            eprintln!(
+                "Dropped {} entries whose reading has another name glued on",
+                n
+            );
+            dropped += n;
+            ops.push("drop-glued-readings".into());
         }
         if self.drop_elongated_adjectives {
             let n = builder.drop_elongated_adjectives();

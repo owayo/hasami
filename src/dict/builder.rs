@@ -306,6 +306,32 @@ fn is_kansuji(c: char) -> bool {
     )
 }
 
+/// 文字列が全てかな（ひらがな・カタカナ・長音・踊り字）かどうか判定する
+fn is_kana_str(s: &str) -> bool {
+    !s.is_empty()
+        && s.chars().all(|c| {
+            ('\u{3041}'..='\u{3096}').contains(&c)
+                || ('\u{30A0}'..='\u{30FF}').contains(&c)
+                || matches!(
+                    c,
+                    '\u{FF70}' | '\u{301C}' | '\u{FF5E}' | '\u{309D}' | '\u{30FD}'
+                )
+        })
+}
+
+/// ひらがなをカタカナに写す（他の文字はそのまま）
+fn to_katakana(s: &str) -> String {
+    s.chars()
+        .map(|c| {
+            if ('\u{3041}'..='\u{3096}').contains(&c) {
+                char::from_u32(c as u32 + 0x60).unwrap_or(c)
+            } else {
+                c
+            }
+        })
+        .collect()
+}
+
 /// 語末を引き伸ばした表記で足される字
 ///
 /// 「ー」「〜」「～」は長音、「っ」「ッ」は語末の促音、「い」「ぃ」「イ」「ィ」は
@@ -1075,6 +1101,65 @@ impl DictBuilder {
                 entry.surface.chars().count() >= 2
                     && entry.surface.chars().all(is_kansuji)
                     && entry.pos.starts_with("名詞,固有名詞")
+            })
+            .collect();
+
+        let removed = doomed.iter().filter(|d| **d).count();
+        if removed > 0 {
+            for (entry, _) in self
+                .entries
+                .iter()
+                .zip(&doomed)
+                .filter(|(_, d)| **d)
+                .take(ORTHO_VARIANT_SAMPLE)
+            {
+                eprintln!(
+                    "  drop: {} ({}) [{}]",
+                    entry.surface, entry.reading, entry.pos
+                );
+            }
+            let mut doomed = doomed.into_iter();
+            self.entries.retain(|_| !doomed.next().unwrap_or(false));
+        }
+        removed
+    }
+
+    /// かな表層形に別の語の読みがくっついた固有名詞エントリを取り除く
+    ///
+    /// NEologd / SudachiDict には、かなで綴った名称の読みに、別名・所属・作品名の読みが
+    /// 続いたエントリがある。元の行で欄が連結されたもので、読みが名称 1 つを表していない。
+    ///
+    /// - 「まるお」の読みが「マルオライフライン」
+    /// - 「ふじわら」の読みが「フジワラムービック」
+    /// - 「みお」の読みが「ミオシュゴウガール」
+    /// - 「クラウスシュルツ」の読みが「クラウスシュルツクラウスシュルツ」
+    ///
+    /// ひらがなの表層形は普通の文の一部にも現れるので、読み上げでは「高まるおそれ」が
+    /// 「高/まるお(マルオライフライン)/それ」のようになる。読みの欄が壊れている行から
+    /// 作られたエントリは表層形と品詞も当てにできないため、読みを直すのではなく落とす。
+    /// 表層形がカタカナなら未知語の読みが表層形そのものになり、ひらがななら本来の語に
+    /// 分かれるので、落としても読み上げの語彙は減らない。
+    ///
+    /// 判定はかなだけの表層形に限る。表層形のカタカナ化が読みと一致するはずの語なので、
+    /// 読みがそれで始まり、続きに引き伸ばしの字以外を含むものを対象にする。
+    /// 続きが引き伸ばしの字だけのもの（「オッケ」→ オッケー、「そだね」→ ソダネー）は、
+    /// 語末の長音を省いた表記ゆれなので残す。漢字を含む表層形は読みを表層形から
+    /// 導けないため対象にしない。
+    ///
+    /// Returns: 削除されたエントリ数
+    pub fn drop_glued_readings(&mut self) -> usize {
+        let doomed: Vec<bool> = self
+            .entries
+            .iter()
+            .map(|e| {
+                if !pos_has_prefix(&e.pos, &["名詞", "固有名詞"]) || !is_kana_str(&e.surface)
+                {
+                    return false;
+                }
+                let expected = to_katakana(&e.surface);
+                e.reading
+                    .strip_prefix(&expected)
+                    .is_some_and(|rest| rest.chars().any(|c| !ELONGATION_CHARS.contains(&c)))
             })
             .collect();
 

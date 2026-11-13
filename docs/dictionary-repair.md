@@ -11,6 +11,7 @@ hasami repair --dict dict/ipadic-neologd-sudachi.hsd \
     --drop-ortho-variants \
     --drop-numeral-misreadings \
     --drop-elongated-adjectives \
+    --drop-glued-readings \
     --remove dict/user-remove/misreading-entries.csv \
     --remove dict/user-remove/foreign-names.csv \
     --drop-sentence-like-nouns dict/ipadic.hsd \
@@ -26,6 +27,7 @@ hasami repair --dict dict/ipadic-neologd-sudachi.hsd \
 | `--drop-ortho-variants` | 活用語・機能語と衝突する名詞エントリを削除する。「高い」→「高位(コウイ)」、「学ぶ」→「学部(ガクブ)」等が形容詞・動詞に勝って誤読になるのを防ぐ。代名詞と衝突する 1 文字の人名（「何」→姓の「ガ」）も落とす |
 | `--drop-numeral-misreadings` | 漢数字だけで綴られた固有名詞を削除する。「十五(トウゴ)」「二十八(ツチヤ)」等が数詞に勝つのを防ぐ。「万一」「八百万」のような一般語・副詞は残す |
 | `--drop-elongated-adjectives` | 語末を引き伸ばした形容詞エントリを削除する。SudachiDict は形容詞の原形に「ー」「〜」「～」「っ」「ッ」「い」「ぃ」「イ」「ィ」を足しただけのエントリを 1 語につき 17〜29 件作っており、足した字が次の語の先頭を取り込む。「〜ないって」→「ないっ/て」、「もういい」→「も/ういい(ウイー)」、「上手くいった」→「上手/くいっ/た」、「見てくださいー」→「く/ださいー」。原形のエントリ（表層形 = 原形）がある語だけを落とすので、引き伸ばした表記は「ない」＋「って」のように分かれる。名詞の長音表記（「3Dプリンタ」→「3Dプリンター」）と、引き伸ばすこと自体が語である副詞・感動詞（「ううーーー」「いいいいい」）は残す |
+| `--drop-glued-readings` | かな表層形に別の語の読みがくっついた固有名詞エントリを削除する。NEologd / SudachiDict には、元の行で欄が連結され、読みが名称 1 つを表していないエントリがある（「まるお」→ マルオライフライン、「ふじわら」→ フジワラムービック、「みお」→ ミオシュゴウガール、「クラウスシュルツ」→ クラウスシュルツクラウスシュルツ）。ひらがなの表層形は普通の文の一部にも現れるので、「高まるおそれ」が「高(コー)/まるお(マルオライフライン)/それ」になる。かなだけの表層形について、読みが表層形のカタカナ化で始まり、続きに引き伸ばしの字以外を含むものを落とす。語末の長音を省いた表記ゆれ（「オッケ」→ オッケー、「そだね」→ ソダネー）は残し、読みを表層形から導けない漢字入りの表層形は対象にしない |
 | `--remove <CSV>` | CSV に列挙したエントリを削除する。列は `表層形,読み,品詞,削除理由`。3 列目の品詞 (例 `"名詞,固有名詞,人名"`) を書くと、その品詞で始まるエントリだけを消す。品詞は `,` で区切った要素ごとに前から比べる。品詞が空なら品詞を問わず消す。4 列目は行ごとの説明で、削除判定には使わない。既存の 2・3 列形式も読める。どのエントリにも当たらなかった行は件数と例を表示する |
 | `--drop-sentence-like-nouns <IPAdic の .hsd>` | 文や句を 1 語の名詞にしたエントリ（NEologd の「どうでしょう」「作りました」「好きだ。」「一緒に」「…。」や、機能語・活用形と同じ形の表記ゆれ「ありません」= 有馬線、「および」= お呼び）を削除する。判定は下の「文や句の名詞の削除」。参照する IPAdic 単体の辞書自身の語は削除しない（接続行列は問わない） |
 | `--drop-quantity-nouns <IPAdic の .hsd>` | 表層形が数と単位の記号だけの「名詞,固有名詞,一般」（NEologd の「50%」「0.1℃」「30℃」）を削除し、数（名詞,数）と単位（名詞,接尾,助数詞）に分かれるようにする。判定は下の「数と単位の組の削除」。人名・組織（「100%ORANGE」「4℃」）は残す |
@@ -33,7 +35,7 @@ hasami repair --dict dict/ipadic-neologd-sudachi.hsd \
 | `--merge <PATH>` | 修復後に MeCab 形式 CSV を追加マージする。trie の再構築が 1 回で済むので、`repair` と `merge` を続けて実行するより速い |
 
 処理は「範囲外 ID の削除 → 壊れた発音の修復 → `--drop-ortho-variants`・`--drop-numeral-misreadings`・
-`--drop-elongated-adjectives` → `--remove` →
+`--drop-elongated-adjectives`・`--drop-glued-readings` → `--remove` →
 `--drop-sentence-like-nouns` → `--drop-quantity-nouns` → `--demote-common-proper-nouns` → `--merge`」の順に行う。
 範囲外 ID のエントリを発音の借用元に使わないよう、最初に落とす。削除リストは上流の辞書の品詞で書くので降格より先に、
 `--merge` で足す語は削除・降格の対象にしないので最後に適用する。

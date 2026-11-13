@@ -1687,6 +1687,72 @@ fn test_drop_numeral_misreadings() {
     assert!(readings.contains(&"ジュウゴヤ"));
 }
 
+#[test]
+fn test_drop_glued_readings() {
+    let mut builder = DictBuilder::new();
+    // 読みに別名・所属・作品名がくっついた固有名詞は落とす
+    for (surface, reading) in [
+        ("まるお", "マルオライフライン"),
+        ("ふじわら", "フジワラムービック"),
+        ("クラウスシュルツ", "クラウスシュルツクラウスシュルツ"),
+    ] {
+        builder.add_entry(entry(
+            surface,
+            "名詞,固有名詞,人名,一般",
+            surface,
+            reading,
+            reading,
+        ));
+    }
+    // 語末の長音を省いた表記ゆれは残す
+    builder.add_entry(entry(
+        "オッケ",
+        "名詞,固有名詞,一般,*",
+        "オッケ",
+        "オッケー",
+        "オッケー",
+    ));
+    builder.add_entry(entry(
+        "そだね",
+        "名詞,固有名詞,一般,*",
+        "そだね",
+        "ソダネー",
+        "ソダネー",
+    ));
+    // 読みが表層形どおりの語は残す
+    builder.add_entry(entry(
+        "まるお",
+        "名詞,固有名詞,人名,姓",
+        "まるお",
+        "マルオ",
+        "マルオ",
+    ));
+    // 漢字を含む表層形は読みを表層形から導けないので対象にしない
+    builder.add_entry(entry(
+        "丸尾",
+        "名詞,固有名詞,人名,姓",
+        "丸尾",
+        "マルオライフライン",
+        "マルオライフライン",
+    ));
+    // 固有名詞でない語は対象にしない
+    builder.add_entry(entry("ぴち", "副詞,一般,*,*", "ぴち", "ピチッ", "ピチッ"));
+
+    assert_eq!(builder.drop_glued_readings(), 3);
+
+    let kept: Vec<&str> = builder.entries().iter().map(|e| &*e.reading).collect();
+    assert_eq!(
+        kept,
+        [
+            "オッケー",
+            "ソダネー",
+            "マルオ",
+            "マルオライフライン",
+            "ピチッ"
+        ]
+    );
+}
+
 /// 原形と活用形を付けた形容詞エントリ
 fn adjective(surface: &str, base_form: &str, conj_form: &str, pronunciation: &str) -> DictEntry {
     DictEntry {

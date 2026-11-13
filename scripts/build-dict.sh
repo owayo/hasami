@@ -142,6 +142,7 @@ FULL_REPAIR=(
   --drop-ortho-variants
   --drop-numeral-misreadings
   --drop-elongated-adjectives
+  --drop-glued-readings
   "${REMOVE_ARGS[@]}"
   --drop-sentence-like-nouns "$WORK/ipadic.base.hsd"
   --drop-quantity-nouns "$WORK/ipadic.base.hsd"

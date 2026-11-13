@@ -1,4 +1,4 @@
-//! 語末を引き伸ばした形容詞のエントリが、次の語の先頭を取り込まないこと。
+//! 汎用の修復で落としたエントリが、文中の隣の語や普通の文を取り込まないこと。
 #![cfg(feature = "analyzer")]
 
 use hasami::Analyzer;
@@ -90,6 +90,29 @@ fn distributed_attested_variants_remain() {
         ] {
             let got = spell(&mut analyzer, text);
             assert!(got.contains(expected), "{name}: {text}: {got}");
+        }
+    }
+}
+
+/// かな表層形に別の語の読みがくっついた固有名詞が、普通の文を取り込まない。
+#[test]
+#[ignore = "配布辞書が必要"]
+fn distributed_glued_name_readings_do_not_steal_plain_text() {
+    for name in ["ipadic-neologd", "ipadic-neologd-sudachi"] {
+        let mut analyzer = analyzer(name);
+        let text = "洪水の危険性が高まるおそれがある。";
+        let got = spell(&mut analyzer, text);
+        assert!(
+            got.contains("高まる(タカマル) お(オ) それ(ソレ)"),
+            "{name}: {text}: {got}"
+        );
+        // かなの名前の切れ目は文脈によるが、別名の読みが混ざらないことは常に成り立つ。
+        for (text, gone) in [
+            ("ふじわらのみちながの日記。", "フジワラムービック"),
+            ("洪水の危険性が高まるおそれがある。", "マルオライフライン"),
+        ] {
+            let got = spell(&mut analyzer, text);
+            assert!(!got.contains(gone), "{name}: {text}: {got}");
         }
     }
 }

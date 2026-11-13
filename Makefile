@@ -155,6 +155,7 @@ dict-repair: release ## 辞書をその場で修復する (DICT=path/to/dict.hsd
 		--drop-ortho-variants \
 		--drop-numeral-misreadings \
 		--drop-elongated-adjectives \
+		--drop-glued-readings \
 		$(foreach f,$(wildcard $(DICT_OUT)/user-remove/*.csv),--remove $(f)) \
 		--drop-sentence-like-nouns $(DICT_OUT)/ipadic.hsd \
 		--drop-quantity-nouns $(DICT_OUT)/ipadic.hsd \

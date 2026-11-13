@@ -290,6 +290,7 @@ v26.11.102 で解析の費用が約 30% 増えた）。絞り込まない参照�
 | NEologd | 表記ゆれ正規化エントリが活用語の語形を名詞として登録している | 「質の高い」→「シツノコウイ」、「概念を学ぶ」→「ガイネンヲガクブ」 | `repair --drop-ortho-variants` |
 | NEologd / SudachiDict | 漢数字だけで綴られた人名・地名 | 「十五」→「トウゴ」、「二十八」→「ツチヤ」 | `repair --drop-numeral-misreadings` |
 | SudachiDict | 形容詞の原形に「ー」「っ」「い」等を足しただけのエントリが 1 語につき 17〜29 件ある | 足した字が次の語の先頭を取り込み「〜ないって」→「ないっ/て」、「もういい」→「も/ういい」 | `repair --drop-elongated-adjectives` |
+| NEologd / SudachiDict | かなで綴った名称の読みに別名・所属・作品名の読みがくっついている | 「高まるおそれ」→「高/まるお(マルオライフライン)/それ」、「ふじわら」→ フジワラムービック | `repair --drop-glued-readings` |
 | SudachiDict | 代名詞と同じ表層の 1 文字の人名 | 「何なのか」→「ガナノカ」 | `repair --drop-ortho-variants` |
 | NEologd `mecab-user-dict-seed` | 読みが別語のものに差し替わっているエントリが散在する | 「最終面接」→「イチジメンセツ」、「目標数値」→「スウチモクヒョウ」、「情報収集」→「ジョホウシュウシュウ」 | `dict/user-remove/misreading-entries.csv` に列挙して `repair --remove` |
 | SudachiDict（旧版の変換） | IPAdic の文脈 ID に写し漏れ、SudachiDict の文脈 ID（接続行列の範囲外）のまま入った重複が 137 万件あった | 範囲外の ID は接続コスト 0 として扱われ、UniDic 体系の品詞の語が不当に勝つ | `scripts/convert_sudachi_raw.py` は ID を引けない語を取り込まない。古い辞書は `repair --drop-invalid-context-ids`（build / merge / repair は範囲外 ID をエラーにする） |
