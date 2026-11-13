@@ -63,6 +63,38 @@ fn vetoes_function_word_pronunciation(pos: &str) -> bool {
     pos_has_prefix(pos, &["動詞"]) || pos_has_prefix(pos, &["名詞", "固有名詞"])
 }
 
+/// 同じ表層形・読みの発音候補の優先度。大きいほど信頼する。
+///
+/// 長音・四つ仮名・助詞のワ/エのような表記の違いは字数を変えないので、読みと字数が
+/// 同じ別発音を最も信頼する。字数が変わる別発音は、読みの仮名を別の音に置き換えた
+/// 古い写し（ナトリウム→ナトリューム）なので、読みと同じ発音より下に置く。
+/// 候補が 1 つだけのときは順位に関わらずその発音を使う。
+fn pronunciation_rank(reading: &str, pronunciation: &str) -> u8 {
+    if pronunciation == reading {
+        1
+    } else if pronunciation.chars().count() == reading.chars().count() {
+        2
+    } else {
+        0
+    }
+}
+
+/// 読みの「ウム」を発音だけ「ューム」とした古い写しを、読みどおりに戻す。
+///
+/// IPAdic は元素名や施設名を「ナトリューム」「プラネタリューム」と写しているが、
+/// 現代の表記と読み上げは「ナトリウム」「プラネタリウム」。読みと発音の違いが
+/// この対応だけのときに限って読みを採り、ほかの長音・音便は触らない。
+fn restore_ium_pronunciation(reading: &str, pronunciation: &str) -> Option<String> {
+    if pronunciation == reading
+        || !reading.contains("ウム")
+        || !is_katakana_str(reading)
+        || !is_katakana_str(pronunciation)
+    {
+        return None;
+    }
+    (reading.replace("ウム", "ューム") == pronunciation).then(|| reading.to_owned())
+}
+
 /// 読みの「ウ＋小書き母音」が発音だけ「ー＋小書き母音」になった箇所を戻す。
 ///
 /// 字数が同じカタカナ列の対応する位置だけを扱い、ほかの長音・音便は保持する。
@@ -787,12 +819,15 @@ impl DictBuilder {
     ///    動詞・固有名詞は、その発音が助詞・助動詞にもある場合は借用しない。
     ///    IPAdic 由来のエントリは人手で作られた発音形（ホウホウ→ホーホー）を持つため、
     ///    マージ辞書の中で最も信頼できる長音表記の供給源になる。
+    ///    候補が複数あるときは `pronunciation_rank` の順で選び、字数の変わる古い写し
+    ///    （ナトリウム→ナトリューム）は読みどおりの発音より下に置く。
     /// 2. 借用元が無い語は、辞書内の短い既知語に分けて部品の発音を連結する。
     ///    「商材(ショウザイ)」は借用元が無いが「商(ショー)」+「材(ザイ)」に分かれる。
     ///    部品の境界をまたぐ「オ段 + ウ」は長音にならないので、「小売」は「コウリ」のまま残る。
     /// 3. どちらもできない場合は読みをそのまま発音とする（長音化はされないが読みは保たれる）。
     /// 4. 読みも壊れている（ラテン文字のまま等）場合は発音・読みを空にする。
     ///    空にしておくと解析時の読み補完（スペルアウト等）が働く。
+    /// 5. 最後に、読みとの違いが「ウ＋小書き母音」「ウム」の古い写しだけなら読みへ戻す。
     ///
     /// Returns: 修復されたエントリ数
     pub fn repair_pronunciation(&mut self) -> usize {
@@ -807,7 +842,9 @@ impl DictBuilder {
             let best = trusted
                 .entry((&entry.surface, &entry.reading))
                 .or_insert((&entry.pronunciation, false));
-            if best.0.as_ref() == entry.reading.as_ref() && entry.pronunciation != entry.reading {
+            if pronunciation_rank(&entry.reading, &entry.pronunciation)
+                > pronunciation_rank(&entry.reading, best.0)
+            {
                 *best = (&entry.pronunciation, false);
             }
             // 交替前や不採用の別発音の裏付けは持ち越さず、同じ値の発音だけを使う。
@@ -837,13 +874,21 @@ impl DictBuilder {
             .map(|entry| {
                 // 発音がカタカナで、かつ読みと違う形なら辞書の値をそのまま信じる。
                 // 発音が読みと同じ場合は、長音表記を持つ形が他にあるかもしれないので探す。
-                let dict_pron_is_sound =
-                    is_katakana_str(&entry.pronunciation) && entry.pronunciation != entry.reading;
+                // 読みどおりの発音が選ばれていて、自分の発音が字数の変わる古い写しのときだけ、
+                // カタカナの発音でもそちらへそろえる（ナトリューム→ナトリウム）。
+                // 長音表記を選んだ場合は、これまでどおり各エントリの発音を保つ。
+                let chosen = trusted.get(&(&*entry.surface, &*entry.reading));
+                let supplanted = chosen.is_some_and(|(pron, _)| {
+                    pron.as_ref() == entry.reading.as_ref()
+                        && pronunciation_rank(&entry.reading, &entry.pronunciation) == 0
+                });
+                let dict_pron_is_sound = is_katakana_str(&entry.pronunciation)
+                    && entry.pronunciation != entry.reading
+                    && !supplanted;
                 let mut result = if dict_pron_is_sound {
                     None
                 } else {
-                    trusted
-                        .get(&(&*entry.surface, &*entry.reading))
+                    chosen
                         .and_then(|(pron, has_function_word_donor)| {
                             (!*has_function_word_donor
                                 || !vetoes_function_word_pronunciation(&entry.pos))
@@ -895,6 +940,10 @@ impl DictBuilder {
                 && let Some(pron) =
                     restore_small_vowel_digraph(&entry.reading, &entry.pronunciation)
             {
+                entry.pronunciation = Arc::from(pron);
+                changed = true;
+            }
+            if let Some(pron) = restore_ium_pronunciation(&entry.reading, &entry.pronunciation) {
                 entry.pronunciation = Arc::from(pron);
                 changed = true;
             }

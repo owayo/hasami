@@ -1235,6 +1235,128 @@ fn test_repair_pronunciation_borrows_long_vowel_form() {
 }
 
 #[test]
+fn test_repair_pronunciation_keeps_reading_over_shorter_or_longer_form() {
+    let mut builder = DictBuilder::new();
+    // 同じ表層形・読みに、読みどおりの発音と字数の違う古い写しが共存する状況
+    builder.add_entry(entry(
+        "ナトリウム",
+        "名詞,一般,*,*",
+        "ナトリウム",
+        "ナトリウム",
+        "ナトリューム",
+    ));
+    builder.add_entry(entry(
+        "ナトリウム",
+        "名詞,一般,*,*",
+        "ナトリウム",
+        "ナトリウム",
+        "ナトリウム",
+    ));
+    builder.add_entry(entry(
+        "ナトリウム",
+        "名詞,一般,*,*",
+        "ナトリウム",
+        "ナトリウム",
+        "ナトリウム",
+    ));
+
+    assert_eq!(builder.repair_pronunciation(), 1);
+
+    let entries = builder.entries();
+    // 字数の変わる別発音は選ばず、読みどおりの発音へそろえる
+    assert_eq!(&*entries[0].pronunciation, "ナトリウム");
+    // 同じ値になった発音は素性レコードで共有される
+    assert_eq!(&*entries[1].pronunciation, "ナトリウム");
+    assert_eq!(&*entries[2].pronunciation, "ナトリウム");
+}
+
+#[test]
+fn test_repair_pronunciation_restores_ium_without_a_sibling_entry() {
+    let mut builder = DictBuilder::new();
+    // 同じ読みの健全なエントリが無くても、ウムの古い写しは読みどおりに戻す
+    builder.add_entry(entry(
+        "パラジウム",
+        "名詞,一般,*,*",
+        "パラジウム",
+        "パラジウム",
+        "パラジューム",
+    ));
+    builder.add_entry(entry(
+        "シアン化カリウム",
+        "名詞,一般,*,*",
+        "シアン化カリウム",
+        "シアンカカリウム",
+        "シアンカカリューム",
+    ));
+    // 発音にュームがあっても、読みがそのとおりの語は触らない
+    builder.add_entry(entry(
+        "コスチューム",
+        "名詞,一般,*,*",
+        "コスチューム",
+        "コスチューム",
+        "コスチューム",
+    ));
+    builder.add_entry(entry(
+        "ボリューム",
+        "名詞,一般,*,*",
+        "ボリューム",
+        "ボリューム",
+        "ボリューム",
+    ));
+
+    assert_eq!(builder.repair_pronunciation(), 2);
+
+    let entries = builder.entries();
+    assert_eq!(&*entries[0].pronunciation, "パラジウム");
+    assert_eq!(&*entries[1].pronunciation, "シアンカカリウム");
+    assert_eq!(&*entries[2].pronunciation, "コスチューム");
+    assert_eq!(&*entries[3].pronunciation, "ボリューム");
+}
+
+#[test]
+fn test_repair_pronunciation_keeps_same_length_notation_variant() {
+    let mut builder = DictBuilder::new();
+    // 四つ仮名・助詞のような字数が同じ表記の違いは、これまでどおり優先する
+    builder.add_entry(entry(
+        "色づく",
+        "動詞,自立,*,*",
+        "色づく",
+        "イロヅク",
+        "イロヅク",
+    ));
+    builder.add_entry(entry(
+        "色づく",
+        "動詞,自立,*,*",
+        "色づく",
+        "イロヅク",
+        "イロズク",
+    ));
+
+    assert_eq!(builder.repair_pronunciation(), 1);
+
+    let entries = builder.entries();
+    // 字数が同じ表記の違いは、これまでどおりそちらへそろえる
+    assert_eq!(&*entries[0].pronunciation, "イロズク");
+    assert_eq!(&*entries[1].pronunciation, "イロズク");
+}
+
+#[test]
+fn test_repair_pronunciation_uses_the_only_candidate_as_is() {
+    let mut builder = DictBuilder::new();
+    // 候補が 1 つだけなら、字数が変わる発音でもそのまま使う
+    builder.add_entry(entry(
+        "ヴァイオリン",
+        "名詞,一般,*,*",
+        "ヴァイオリン",
+        "ヴァイオリン",
+        "バイオリン",
+    ));
+
+    assert_eq!(builder.repair_pronunciation(), 0);
+    assert_eq!(&*builder.entries()[0].pronunciation, "バイオリン");
+}
+
+#[test]
 fn test_repair_pronunciation_falls_back_to_reading() {
     let mut builder = DictBuilder::new();
     // 借用元がない場合は読みをそのまま発音にする
