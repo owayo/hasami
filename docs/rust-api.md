@@ -389,6 +389,37 @@ for (sentence, tokens) in analyzer.tokenize_sentences(text, &SplitOptions::defau
 }
 ```
 
+## IME 向けの語形判定と読みの比較
+
+`analyzer` feature では、`hasami::ime` と `hasami::kana` も使える。
+`Analyzer::try_classify_term` は、既知の単語・名詞の複合語・数量・句・未知語を含む語を
+`TermShape` で区別し、解析結果と全文を覆ったかを `TermReport` で返す。品詞の判定は IPAdic 形式が前提。
+
+```rust
+use hasami::{Analyzer, ime::TermShape};
+
+let mut analyzer = Analyzer::load("dict/ipadic.hsd")?;
+let report = analyzer.try_classify_term("猫")?;
+assert!(report.covers_input);
+assert_eq!(report.shape, TermShape::KnownWord);
+```
+
+空の入力や、解析結果が空白などを取りこぼした入力は `Other` になる。数量・依存語の判定は
+未知語の判定より先に行う。`Token::is_dependent` は助詞・助動詞・非自立語・活用語の接尾辞、
+`Token::is_content_word` は依存語を除いた名詞・動詞・形容詞・副詞を調べる。
+後者だけでは辞書由来か分からないため、必要なら `is_known` も確認する。
+この分類は自動登録の許可判定ではない。登録するかは呼び出し側で決める。
+
+`kana::reading_key` は、ひらがな・半角カナを全角カタカナへそろえ、結合濁点と半濁点を合成し、
+全角 ASCII と全角空白の字幅をそろえる。長音・小書き仮名・英字の大小・数字の読みは区別する。
+`kana::to_katakana` と `kana::to_hiragana` は 1 文字ずつ変換する。
+
+```rust
+use hasami::kana::reading_key;
+assert_eq!(reading_key("がっこう"), reading_key("ｶﾞｯｺｳ"));
+assert_ne!(reading_key("コー"), reading_key("コウ"));
+```
+
 ## 品詞の正規化・否定・モーラ数
 
 `Token::coarse_pos` は、辞書の品詞体系（IPAdic 系・UniDic 系）の違いを吸収した粗い品詞 `CoarsePos` を返す。

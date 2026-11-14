@@ -22,7 +22,9 @@ pub mod ffi;
 #[cfg(feature = "analyzer")]
 pub mod hsd;
 #[cfg(feature = "analyzer")]
-mod kana;
+pub mod ime;
+#[cfg(feature = "analyzer")]
+pub mod kana;
 #[cfg(feature = "analyzer")]
 pub mod lattice;
 #[cfg(feature = "analyzer")]
