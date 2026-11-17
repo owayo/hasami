@@ -859,6 +859,54 @@ impl DictBuilder {
         &self.entries
     }
 
+    /// 表層・文法・発音を確認した一般語の読みの誤記だけを直す。
+    ///
+    /// 「図形」「預け」と、一段動詞「預ける」の既知の活用形を対象にする。
+    /// 発音が正しい現代仮名遣いと一致する候補の読みだけを変更し、ヂ・ヅを一律に置換しない。
+    /// 人名・独自の読み・異なる原形や活用情報は保持する。
+    ///
+    /// Returns: 読みを修復したエントリ数
+    pub fn repair_lexical_readings(&mut self) -> usize {
+        let mut fixed = 0;
+        for entry in &mut self.entries {
+            let spelling = if entry.pos.as_ref() == "名詞,一般,*,*"
+                && entry.surface == entry.base_form
+                && matches!(entry.conj_type.as_ref(), "" | "*")
+                && matches!(entry.conj_form.as_ref(), "" | "*")
+            {
+                match entry.surface.as_ref() {
+                    "図形" => Some(("ヅケイ", "ズケイ")),
+                    "預け" => Some(("アヅケ", "アズケ")),
+                    _ => None,
+                }
+            } else if entry.pos.as_ref() == "動詞,自立,*,*"
+                && entry.base_form.as_ref() == "預ける"
+                && entry.conj_type.as_ref() == "一段"
+            {
+                match (entry.surface.as_ref(), entry.conj_form.as_ref()) {
+                    ("預け", "未然形" | "連用形") => Some(("アヅケ", "アズケ")),
+                    ("預ける", "基本形") => Some(("アヅケル", "アズケル")),
+                    ("預けれ", "仮定形") => Some(("アヅケレ", "アズケレ")),
+                    ("預けよ", "未然ウ接続" | "命令ｙｏ") => {
+                        Some(("アヅケヨ", "アズケヨ"))
+                    }
+                    ("預けろ", "命令ｒｏ") => Some(("アヅケロ", "アズケロ")),
+                    _ => None,
+                }
+            } else {
+                None
+            };
+            if let Some((old, modern)) = spelling
+                && entry.reading.as_ref() == old
+                && entry.pronunciation.as_ref() == modern
+            {
+                entry.reading = Arc::from(modern);
+                fixed += 1;
+            }
+        }
+        fixed
+    }
+
     /// pronunciation が壊れている（カタカナでない）エントリを修復する
     ///
     /// SudachiDict 由来のエントリは pronunciation に表層形（漢字・ひらがな・ラテン文字）が
