@@ -4,6 +4,7 @@ import copy
 import hashlib
 import io
 import json
+import re
 import shutil
 import subprocess
 import tempfile
@@ -38,6 +39,29 @@ def raw_zip(name, text="語彙,読み\n"):
 
 
 class DictionarySourcesTests(unittest.TestCase):
+    def test_sudachi_attribution_matches_recorded_source_version(self):
+        """辞書更新時に帰属表示や組み込み例外表の更新漏れを検出する。"""
+        root = Path(__file__).resolve().parent.parent
+        version = sources.load_sources(sources.SOURCES_PATH)["sudachi"]["version"]
+        for relative, pattern in (
+            (
+                "src/sentence/builtin_exceptions.NOTICE",
+                r"SudachiDict（raw 辞書 (\d+(?:\.\d+)?) の small_lex・core_lex）",
+            ),
+            (
+                "THIRD_PARTY_LICENSES.md",
+                r"https://github\.com/WorksApplications/SudachiDict/blob/v(\d+(?:\.\d+)?)/LEGAL",
+            ),
+            (
+                "src/sentence/builtin_exceptions.txt",
+                r"sudachi-raw@(\d+(?:\.\d+)?)/content-symbol",
+            ),
+        ):
+            with self.subTest(path=relative):
+                text = (root / relative).read_text(encoding="utf-8")
+                matches = re.findall(pattern, text)
+                self.assertEqual(matches, [version], relative)
+
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
