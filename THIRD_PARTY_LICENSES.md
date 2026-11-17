@@ -20,12 +20,12 @@ for the full license text.
 - Repository: https://github.com/WorksApplications/SudachiDict
 
 hasami の統合辞書 (`ipadic-neologd-sudachi.hsd`) では、SudachiDict の raw 辞書ソース
-(small + core、版は `scripts/build-dict.sh` で固定) の語彙データを MeCab IPAdic 互換形式に変換し、
+(small + core、版は `scripts/dictionary-sources.json` で固定) の語彙データを MeCab IPAdic 互換形式に変換し、
 品詞体系を IPAdic に、文脈 ID を IPAdic の left_id/right_id に写している。
 変換スクリプト: `scripts/convert_sudachi_raw.py`
 
 SudachiDict には `NOTICE` という名前のファイルは無い。帰属表示はリポジトリの
-[`LEGAL`](https://github.com/WorksApplications/SudachiDict/blob/v20260723/LEGAL) (見出しは
+[`LEGAL`](https://github.com/WorksApplications/SudachiDict/blob/v20261015/LEGAL) (見出しは
 LEGAL NOTICE INFORMATION。SudachiDict の配布物にも `LICENSE-2.0.txt` と一緒に入る) にあり、
 small_lex が UniDic の一部を、core_lex と notcore_lex が NEologd の一部を含むと書いている。
 下の UniDic と NEologd の表示は `LEGAL` から写したもの。raw 辞書の zip は CSV だけで、ライセンスのファイルを含まない。

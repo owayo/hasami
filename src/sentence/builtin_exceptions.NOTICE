@@ -24,7 +24,7 @@ dict/ipadic-neologd-sudachi.hsd の全表層形から文末記号を含む語を
 
   1. mecab-ipadic 2.7.0-20070801                                  NAIST-2003
   2. mecab-ipadic-NEologd（seed）                                 Apache-2.0
-  3. SudachiDict（raw 辞書 20260723 の small_lex・core_lex）      Apache-2.0
+  3. SudachiDict（raw 辞書 20261015 の small_lex・core_lex）      Apache-2.0
      SudachiDict は UniDic（BSD-3-Clause）と NEologd（mecab-unidic-neologd、Apache-2.0）の
      一部を含む
 
