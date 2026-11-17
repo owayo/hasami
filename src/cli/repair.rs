@@ -25,7 +25,7 @@ pub(crate) struct RepairArgs {
     #[arg(long)]
     drop_invalid_context_ids: bool,
 
-    /// 壊れた発音の修復 (常時) を行わない。削除リストだけを適用したいときに使う
+    /// 壊れた発音の修復を行わない。確認済みの読みの誤記の修復は適用する
     /// (発音の修復は、読みも発音もカタカナでない語 (ラテン文字の読み等) の読みを空にする。記号は変えない)
     #[arg(long)]
     no_pronunciation_repair: bool,
@@ -141,6 +141,10 @@ impl RepairArgs {
         }
         // 範囲外の ID が残っていると書き出しで失敗するので、時間のかかる処理の前に止める
         builder.check_context_ids()?;
+
+        let lexical_fixed = builder.repair_lexical_readings();
+        eprintln!("Repaired lexical readings in {} entries", lexical_fixed);
+        ops.push("lexical-readings".into());
 
         let fixed = if !self.no_pronunciation_repair {
             let n = builder.repair_pronunciation();
@@ -270,7 +274,8 @@ impl RepairArgs {
         }
 
         let output_path = ensure_hsd_extension(output.unwrap_or(dict_path));
-        let unchanged = fixed == 0 && dropped == 0 && demoted == 0 && added == 0;
+        let unchanged =
+            lexical_fixed == 0 && fixed == 0 && dropped == 0 && demoted == 0 && added == 0;
         if unchanged && output_path == dict_path && !write.prune_dominated && write.meta.is_empty()
         {
             eprintln!("No entries to fix. Skipping rebuild.");
