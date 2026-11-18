@@ -46,6 +46,8 @@ impl Anchors {
     pub(crate) const WIDE_DIGIT: Self = Self(1 << 13);
     /// `外`（人の列挙）
     pub(crate) const HOKA: Self = Self(1 << 14);
+    /// `合` `重` `石` `星` `江` `長`（同形語を選び直す規則の対象）
+    pub(crate) const HOMOGRAPH: Self = Self(1 << 15);
     /// 全ビット（絞り込まない。テストの参照経路）
     #[cfg(test)]
     pub(crate) const ALL: Self = Self(u32::MAX);
@@ -154,6 +156,12 @@ const CHARS: &[(char, Anchors)] = &[
     ('等', Anchors::NADO),
     ('値', Anchors::ATAI),
     ('外', Anchors::HOKA),
+    ('合', Anchors::HOMOGRAPH),
+    ('重', Anchors::HOMOGRAPH),
+    ('石', Anchors::HOMOGRAPH),
+    ('星', Anchors::HOMOGRAPH),
+    ('江', Anchors::HOMOGRAPH),
+    ('長', Anchors::HOMOGRAPH),
     ('真', Anchors::IDIOM_HEAD),
     ('身', Anchors::IDIOM_HEAD),
     ('得', Anchors::IDIOM_HEAD),
