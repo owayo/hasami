@@ -46,7 +46,7 @@ impl Anchors {
     pub(crate) const WIDE_DIGIT: Self = Self(1 << 13);
     /// `外`（人の列挙）
     pub(crate) const HOKA: Self = Self(1 << 14);
-    /// `合` `重` `石` `星` `江` `長`（同形語を選び直す規則の対象）
+    /// 同形語を選び直す規則の対象に含まれる文字
     pub(crate) const HOMOGRAPH: Self = Self(1 << 15);
     /// 全ビット（絞り込まない。テストの参照経路）
     #[cfg(test)]
@@ -162,12 +162,16 @@ const CHARS: &[(char, Anchors)] = &[
     ('星', Anchors::HOMOGRAPH),
     ('江', Anchors::HOMOGRAPH),
     ('長', Anchors::HOMOGRAPH),
+    ('方', Anchors::HOMOGRAPH),
+    ('米', Anchors::HOMOGRAPH),
+    ('後', Anchors::HOMOGRAPH),
+    ('縁', Anchors::HOMOGRAPH),
     ('真', Anchors::IDIOM_HEAD),
     ('身', Anchors::IDIOM_HEAD),
     ('得', Anchors::IDIOM_HEAD),
     ('体', Anchors::IDIOM_HEAD),
     ('間', Anchors::IDIOM_HEAD),
-    ('分', Anchors::IDIOM_HEAD),
+    ('分', Anchors::IDIOM_HEAD.union(Anchors::HOMOGRAPH)),
 ];
 
 /// 錨の文字があるページの数（0 番は錨の無いページ）

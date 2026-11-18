@@ -16,6 +16,9 @@ const NOUN: &str = "名詞,一般,*,*";
 const SAHEN: &str = "名詞,サ変接続,*,*";
 const VERB: &str = "動詞,自立,*,*";
 const CASE_PARTICLE: &str = "助詞,格助詞,一般,*";
+const GENITIVE: &str = "助詞,連体化,*,*";
+const COUNTRY: &str = "名詞,固有名詞,地域,国";
+const DEPENDENT_NOUN: &str = "名詞,非自立,一般,*";
 
 type Candidate = (&'static str, &'static str, &'static str, &'static str);
 
@@ -29,6 +32,14 @@ const STONE_QUESTION: &[Candidate] = &[
 const VENUS: &[Candidate] = &[("金星", "金星", "名詞,固有名詞,一般,*", "キンセイ")];
 const YANGTZE: &[Candidate] = &[("長江", "長江", "名詞,固有名詞,地域,一般", "チョウコウ")];
 const LONG: &[Candidate] = &[("長けれ", "長い", "形容詞,自立,*,*", "ナガケレ")];
+const PERSON: &[Candidate] = &[("方", "方", DEPENDENT_NOUN, "カタ")];
+const TEN_MINUTES: &[Candidate] = &[
+    ("十", "十", NUMBER, "ジュウ"),
+    ("分", "分", COUNTER, "フン"),
+];
+const RICE: &[Candidate] = &[("米", "米", NOUN, "コメ")];
+const LATER: &[Candidate] = &[("後", "後", "名詞,副詞可能,*,*", "アト")];
+const RIM: &[Candidate] = &[("縁", "縁", NOUN, "フチ")];
 
 fn fixed(token: &Token, surfaces: &[&str], pos: &str) -> bool {
     token.is_known_base_form()
@@ -51,7 +62,17 @@ fn correction(tokens: &[Token], i: usize) -> Option<(Range<usize>, &'static [Can
     if !token.is_known
         || !matches!(
             token.surface.as_ref(),
-            "数合" | "二重" | "石か" | "金星" | "長江" | "長けれ"
+            "数合"
+                | "二重"
+                | "石か"
+                | "金星"
+                | "長江"
+                | "長けれ"
+                | "方"
+                | "十分"
+                | "米"
+                | "後"
+                | "縁"
         )
     {
         return None;
@@ -65,8 +86,7 @@ fn correction(tokens: &[Token], i: usize) -> Option<(Range<usize>, &'static [Can
     );
     match (signature, following) {
         (("数合", "数合", SURNAME, "スゴウ", "スゴー"), [no, rice, ..])
-            if fixed(no, &["の"], "助詞,連体化,*,*")
-                && fixed(rice, &["米", "白米", "玄米"], NOUN) =>
+            if fixed(no, &["の"], GENITIVE) && fixed(rice, &["米", "白米", "玄米"], NOUN) =>
         {
             Some((i..i + 3, RICE_VOLUME))
         }
@@ -96,7 +116,7 @@ fn correction(tokens: &[Token], i: usize) -> Option<(Range<usize>, &'static [Can
         }
         (("長江", "長江", SURNAME, "ナガエ", "ナガエ"), [subject, china, wo, flow, ..])
             if subject_marker(subject)
-                && fixed(china, &["中国"], "名詞,固有名詞,地域,国")
+                && fixed(china, &["中国"], COUNTRY)
                 && fixed(wo, &["を"], CASE_PARTICLE)
                 && verb(flow, &["流れる"]) =>
         {
@@ -114,6 +134,61 @@ fn correction(tokens: &[Token], i: usize) -> Option<(Range<usize>, &'static [Can
             (fixed(duration, &["待ち時間", "時間", "期間", "距離"], NOUN)
                 && subject_marker(subject))
             .then_some((start..i + 2, LONG))
+        }
+        (("方", "方", DEPENDENT_NOUN, "ホウ", "ホー"), [copula, ..])
+            if copula.is_known
+                && copula.surface.as_ref() == "です"
+                && copula.conj_type.as_ref() == "特殊・デス" =>
+        {
+            let [.., action, past] = &tokens[..i] else {
+                return None;
+            };
+            (verb(action, &["治める", "率いる"])
+                && past.is_known
+                && past.surface.as_ref() == "た"
+                && past.conj_type.as_ref() == "特殊・タ")
+                .then_some((i - 2..i + 2, PERSON))
+        }
+        (
+            ("十分", "十分", "名詞,形容動詞語幹,*,*", "ジュウブン", "ジューブン"),
+            [approximation, ..],
+        ) if fixed(approximation, &["程度"], "名詞,接尾,一般,*") => {
+            let [.., event, subject] = &tokens[..i] else {
+                return None;
+            };
+            ((fixed(event, &["移動", "休憩"], SAHEN)
+                || fixed(event, &["所要時間", "待ち時間"], NOUN))
+                && subject_marker(subject))
+            .then_some((i - 2..i + 2, TEN_MINUTES))
+        }
+        (("米", "米", COUNTRY, "ベイ", "ベイ"), [no, price, ..])
+            if fixed(no, &["の"], GENITIVE) && fixed(price, &["値上がり", "値下がり"], SAHEN) =>
+        {
+            let adjacent_country = tokens[..i].last().is_some_and(|previous| {
+                previous.end == token.start && previous.pos.as_ref() == COUNTRY
+            });
+            (!adjacent_country).then_some((i..i + 3, RICE))
+        }
+        (("後", "後", "名詞,接尾,副詞可能,*", "ゴ", "ゴ"), [ni, postpone, te, ..])
+            if fixed(ni, &["に"], CASE_PARTICLE)
+                && verb(postpone, &["する"])
+                && fixed(te, &["て"], "助詞,接続助詞,*,*") =>
+        {
+            let [.., event, topic] = &tokens[..i] else {
+                return None;
+            };
+            (fixed(event, &["電話", "連絡", "相談"], SAHEN)
+                && fixed(topic, &["は"], "助詞,係助詞,*,*"))
+            .then_some((i - 2..i + 4, LATER))
+        }
+        (("縁", "縁", NOUN, "エン", "エン"), [ga, chip, ..])
+            if fixed(ga, &["が"], CASE_PARTICLE) && verb(chip, &["欠ける"]) =>
+        {
+            let [.., vessel, no] = &tokens[..i] else {
+                return None;
+            };
+            (fixed(vessel, &["カップ", "皿", "器", "茶碗"], NOUN) && fixed(no, &["の"], GENITIVE))
+                .then_some((i - 2..i + 3, RIM))
         }
         _ => None,
     }
@@ -207,9 +282,12 @@ pub(super) fn apply(
         {
             continue;
         }
-        let Some(replacements) = replacements(dict, specs, &out[index])? else {
+        let Some(mut replacements) = replacements(dict, specs, &out[index])? else {
             continue;
         };
+        if out[index].surface.as_ref() == "十分" {
+            crate::numeric::apply_counter_readings(&mut replacements);
+        }
         for replacement in &replacements {
             context.record(replacement);
         }
