@@ -40,6 +40,7 @@ const TEN_MINUTES: &[Candidate] = &[
 const RICE: &[Candidate] = &[("米", "米", NOUN, "コメ")];
 const LATER: &[Candidate] = &[("後", "後", "名詞,副詞可能,*,*", "アト")];
 const RIM: &[Candidate] = &[("縁", "縁", NOUN, "フチ")];
+const DEEP_SEA: &[Candidate] = &[("深海", "深海", NOUN, "シンカイ")];
 
 fn fixed(token: &Token, surfaces: &[&str], pos: &str) -> bool {
     token.is_known_base_form()
@@ -73,6 +74,7 @@ fn correction(tokens: &[Token], i: usize) -> Option<(Range<usize>, &'static [Can
                 | "米"
                 | "後"
                 | "縁"
+                | "深海"
         )
     {
         return None;
@@ -189,6 +191,16 @@ fn correction(tokens: &[Token], i: usize) -> Option<(Range<usize>, &'static [Can
             };
             (fixed(vessel, &["カップ", "皿", "器", "茶碗"], NOUN) && fixed(no, &["の"], GENITIVE))
                 .then_some((i - 2..i + 3, RIM))
+        }
+        (("深海", "深海", SURNAME, "フカウミ", "フカウミ"), [net, ..])
+            if net.is_known
+                && net.is_uninflected()
+                && matches!(net.surface.as_ref(), "底引き網" | "底びき網")
+                && net.base_form.as_ref() == "底引き網"
+                && net.pos.as_ref() == NOUN
+                && net.reading.as_ref() == "ソコビキアミ" =>
+        {
+            Some((i..i + 2, DEEP_SEA))
         }
         _ => None,
     }
