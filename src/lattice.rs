@@ -38,6 +38,7 @@ use crate::kana::{to_katakana, unvoice, voice};
 use std::sync::Arc;
 
 mod hoka;
+mod homographs;
 mod idiom;
 mod katakana_area;
 mod math_value;
@@ -1357,6 +1358,9 @@ impl LatticeWorkspace {
         crate::numeric::apply_contiguous_months(input, offset, out, first, dict, plan, &protected)?;
         if crate::numeric::calendar_first_day_may_apply(anchors) {
             crate::numeric::apply_calendar_first_day(out, first, &protected, contextual_readings);
+        }
+        if homographs::may_apply(anchors) {
+            homographs::apply(out, first, dict, &protected, contextual_readings)?;
         }
         Ok(())
     }
