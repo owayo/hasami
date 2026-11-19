@@ -37,6 +37,69 @@ fn assert_reading(text: &str, tokens: &[Token], surface: &str, reading: &str, sp
 
 #[test]
 #[ignore = "配布辞書3種が必要"]
+fn distributed_match_and_station_counts_use_place_values() {
+    let dir = std::env::var("HASAMI_TEST_DICT_DIR")
+        .unwrap_or_else(|_| format!("{}/dict", env!("CARGO_MANIFEST_DIR")));
+    for name in ["ipadic", "ipadic-neologd", "ipadic-neologd-sudachi"] {
+        let mut analyzer = Analyzer::load(format!("{dir}/{name}.hsd")).unwrap();
+        for (text, quantity, reading, speech, number, suffix) in [
+            (
+                "300試合に出場した。",
+                "300試合",
+                "サンビャクシアイ",
+                "サンビャクシアイ",
+                "300",
+                "試合",
+            ),
+            (
+                "全10駅の路線だ。",
+                "全10駅",
+                "ゼンジュウエキ",
+                "ゼンジューエキ",
+                "10",
+                "駅",
+            ),
+            (
+                "2,000試合を観戦した。",
+                "2,000試合",
+                "ニセンシアイ",
+                "ニセンシアイ",
+                "2,000",
+                "試合",
+            ),
+        ] {
+            let tokens = analyzer.try_tokenize(text).unwrap();
+            assert_reading(text, &tokens, quantity, reading, speech);
+            let pair = tokens
+                .windows(2)
+                .find(|pair| pair[0].surface.as_ref() == number)
+                .unwrap();
+            assert_eq!(pair[0].pos.as_ref(), "名詞,数,*,*", "{name}: {text}");
+            assert_eq!(pair[1].surface.as_ref(), suffix, "{name}: {text}");
+            assert!(pair[1].is_known);
+        }
+        for (text, number) in [
+            ("ID300試合", "300"),
+            ("型番300試合", "300"),
+            ("名称,300試合", "300"),
+            ("ID全10駅", "10"),
+            ("作品名は「300試合」", "300"),
+            ("型番300試合X", "300"),
+            ("300試合.資料", "300"),
+            ("030試合", "030"),
+            ("10駅から出発した。", "10"),
+        ] {
+            let tokens = analyzer.try_tokenize(text).unwrap();
+            assert!(
+                tokens.iter().all(|t| t.surface.as_ref() != number),
+                "{name}: {text}: {tokens:?}"
+            );
+        }
+    }
+}
+
+#[test]
+#[ignore = "配布辞書3種が必要"]
 fn distributed_annual_frequencies_keep_noun_grammar_and_modifier_readings() {
     let dir = std::env::var("HASAMI_TEST_DICT_DIR")
         .unwrap_or_else(|_| format!("{}/dict", env!("CARGO_MANIFEST_DIR")));

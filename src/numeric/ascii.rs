@@ -155,6 +155,7 @@ struct Candidate {
     envelope: Range<usize>,
     parsed: Option<Number>,
     strict_number: bool,
+    count_suffix: bool,
 }
 
 #[derive(Default, Debug)]
@@ -353,12 +354,14 @@ impl AsciiPlan {
                     envelope: frame.number.start..frame.unit_end,
                     parsed: parse(&input[frame.number.start - offset..frame.number.end - offset]),
                     strict_number: true,
+                    count_suffix: false,
                 });
                 plan.candidates.push(Candidate {
                     number: frame.minutes.clone(),
                     envelope: frame.minutes.clone(),
                     parsed: parse(&input[frame.minutes.start - offset..frame.minutes.end - offset]),
                     strict_number: true,
+                    count_suffix: false,
                 });
                 plan.unit_frames.push(super::units::Frame {
                     number: frame.number,
@@ -576,6 +579,7 @@ impl AsciiPlan {
             signed_decimal::ranges(input, offset, &plan.negative_decimals);
         let bytes = input.as_bytes();
         let (mut pos, mut prefix) = (0, false);
+        let mut count_quotes = None;
         while pos < bytes.len() {
             if envelope_byte(bytes[pos]) {
                 let start = pos;
@@ -616,11 +620,15 @@ impl AsciiPlan {
                     } else {
                         None
                     };
+                    let count_suffix = parsed.is_some_and(|number| number.dot.is_none())
+                        && suffix.is_empty()
+                        && count_bounds(input, start + first, start + end, &mut count_quotes);
                     plan.candidates.push(Candidate {
                         number: offset + start + first..offset + start + end,
                         envelope: offset + start + usize::from(comma_delimiter)..offset + pos,
                         parsed,
                         strict_number: false,
+                        count_suffix,
                     });
                 }
                 prefix = block.bytes().any(|b| b.is_ascii_alphanumeric());
@@ -659,6 +667,7 @@ impl AsciiPlan {
                             envelope: range,
                             parsed: None,
                             strict_number: false,
+                            count_suffix: false,
                         });
                     }
                     prefix = true;
@@ -749,6 +758,67 @@ fn unit_boundary_after(rest: &str) -> bool {
     })
 }
 
+/// 「試合」と「全＋数字＋駅」は整数の個数。元入力で名称・識別子と境界を確かめる。
+fn count_bounds(
+    input: &str,
+    number_start: usize,
+    number_end: usize,
+    quotes: &mut Option<Vec<Range<usize>>>,
+) -> bool {
+    let before = &input[..number_start];
+    let after = &input[number_end..];
+    let (prefix, tail) = if let Some(tail) = after.strip_prefix("試合") {
+        (before, tail)
+    } else if let (Some(prefix), Some(tail)) = (before.strip_suffix('全'), after.strip_prefix('駅'))
+    {
+        (prefix, tail)
+    } else {
+        return false;
+    };
+    if !(super::month::eleven_prefix_allowed(prefix)
+        || super::japanese_boundary::comma_prefix(prefix)
+            && prefix
+                .trim_end()
+                .strip_suffix(',')
+                .is_some_and(super::month::eleven_prefix_allowed))
+        || !unit_boundary_after(tail)
+        || tail.starts_with([
+            '.', '．', ',', '，', ':', '：', '\\', '／', '∕', '÷', '×', '＋', '－', '−', '‐', '‑',
+            '‒', '–', '—', '―', '＿', '＾', '＊', '＝',
+        ])
+    {
+        return false;
+    }
+    let ranges = quotes.get_or_insert_with(|| crate::lattice::quotation_ranges(input));
+    let quote = ranges.partition_point(|range| range.end <= prefix.len());
+    ranges
+        .get(quote)
+        .is_none_or(|range| range.start >= input.len() - tail.len())
+}
+
+fn count_noun(suffix: &Token, previous: Option<&Token>, number_start: usize) -> bool {
+    if !suffix.is_known_base_form() {
+        return false;
+    }
+    match (suffix.surface.as_ref(), suffix.pos.as_ref()) {
+        ("試合", "名詞,サ変接続,*,*") => super::has_reading(suffix, &["シアイ"]),
+        ("駅", "名詞,接尾,地域,*" | "名詞,一般,*,*") => {
+            super::has_reading(suffix, &["エキ"])
+                && previous.is_some_and(|prefix| {
+                    prefix.end == number_start
+                        && prefix.is_known_base_form()
+                        && prefix.surface.as_ref() == "全"
+                        && matches!(
+                            prefix.pos.as_ref(),
+                            "接頭詞,名詞接続,*,*" | "接頭詞,数接続,*,*"
+                        )
+                        && super::has_reading(prefix, &["ゼン"])
+                })
+        }
+        _ => false,
+    }
+}
+
 /// 範囲 first.. だけを線形に圧縮する。保護した範囲は後段の数詞補正にも渡す。
 pub(crate) fn apply(
     input: &str,
@@ -805,7 +875,14 @@ pub(crate) fn apply(
                 && candidate.parsed.is_some_and(|number| number.dot.is_some()))
                 || out.get(limit).is_some_and(|t| {
                     t.start == candidate.number.end
-                        && quantity(t, &unit)
+                        && (quantity(t, &unit)
+                            || (candidate.count_suffix
+                                && count_noun(
+                                    t,
+                                    (write > first).then(|| &out[write - 1]),
+                                    candidate.number.start,
+                                )
+                                && out[start..limit].iter().all(super::units::number_piece)))
                         && (candidate.envelope.end == candidate.number.end
                             || t.end == candidate.envelope.end)
                         && (!unit(&t.surface)
@@ -1193,6 +1270,48 @@ mod tests {
             super::super::set_readings(t, &r, &p);
         }
         out
+    }
+
+    #[test]
+    fn station_counts_check_the_selected_prefix_and_preserve_the_station() {
+        let text = "100円、全10駅";
+        let offset = 23;
+        for standard_prefix in [true, false] {
+            let mut out = signed_input_tokens(text, offset);
+            out[5].pos = "接頭詞,名詞接続,*,*".into();
+            let prefix = if standard_prefix {
+                "ゼン"
+            } else {
+                "アキラ"
+            };
+            super::super::set_readings(&mut out[5], prefix, prefix);
+            out[8].pos = "名詞,接尾,地域,*".into();
+            super::super::set_readings(&mut out[8], "エキ", "エキ");
+            let station = format!("{:?}", out[8]);
+            apply(
+                text,
+                offset,
+                &mut out,
+                0,
+                &AsciiPlan::new(text, offset),
+                &mut 0,
+                |_| false,
+            );
+            assert_eq!(out[0].surface.as_ref(), "100");
+            assert_eq!(format!("{:?}", out.last().unwrap()), station);
+            if standard_prefix {
+                let number = &out[4];
+                assert_eq!(number.surface.as_ref(), "10");
+                assert_eq!(number.reading.as_ref(), "ジュウ");
+                assert_eq!(number.pronunciation.as_ref(), "ジュー");
+                assert_eq!(number.word_cost, 200);
+                assert_eq!(number.start, offset + "100円、全".len());
+                assert!(!number.is_known);
+            } else {
+                assert_eq!(out[4].surface.as_ref(), "1");
+                assert_eq!(out[5].surface.as_ref(), "0");
+            }
+        }
     }
 
     #[test]
