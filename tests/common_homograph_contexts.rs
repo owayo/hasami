@@ -112,3 +112,54 @@ fn distributed_common_homographs_preserve_other_readings() {
         assert_eq!(span.pronunciation, token.pronunciation.as_ref());
     }
 }
+
+#[test]
+#[ignore = "全部入りの配布辞書が必要"]
+fn distributed_directional_he_to_preserves_nominal_pairs() {
+    let dir = std::env::var("HASAMI_TEST_DICT_DIR")
+        .unwrap_or_else(|_| format!("{}/dict", env!("CARGO_MANIFEST_DIR")));
+    let mut analyzer = Analyzer::load(format!("{dir}/ipadic-neologd-sudachi.hsd")).unwrap();
+
+    for text in [
+        "船は「函館」,へと津軽海峡を渡った。",
+        "一行は「函館」、へと北海道を南下した。",
+        "一行は「大津」,へと琵琶湖を渡った。",
+    ] {
+        let tokens = analyzer.try_tokenize(text).unwrap();
+        let start = text.find("へと").unwrap();
+        let index = tokens.iter().position(|t| t.start == start).unwrap();
+        let [he, to] = &tokens[index..index + 2] else {
+            unreachable!()
+        };
+        for (token, surface, pos, reading, pronunciation) in [
+            (he, "へ", "助詞,格助詞,一般,*", "ヘ", "エ"),
+            (to, "と", "助詞,格助詞,引用,*", "ト", "ト"),
+        ] {
+            assert_eq!(token.surface.as_ref(), surface, "{text}");
+            assert_eq!(token.base_form.as_ref(), surface, "{text}");
+            assert_eq!(token.pos.as_ref(), pos, "{text}");
+            assert_eq!(token.reading.as_ref(), reading, "{text}");
+            assert_eq!(token.pronunciation.as_ref(), pronunciation, "{text}");
+            assert_eq!(&text[token.start..token.end], surface, "{text}");
+            assert!(token.is_known);
+        }
+        assert_eq!(he.end, to.start, "{text}");
+    }
+
+    for text in [
+        "識別札の「に」,へと東京を並べた。",
+        "船は「函館」,へと東京を並べた。",
+        "船は「函館」,へと 北海道を進んだ。",
+        "一行は「『函館』,へと北海道を進んだ」と書いた。",
+    ] {
+        let tokens = analyzer.try_tokenize(text).unwrap();
+        let start = text.find("へと").unwrap();
+        let index = tokens.iter().position(|t| t.start == start).unwrap();
+        assert_eq!(tokens[index].pos.as_ref(), "名詞,一般,*,*", "{text}");
+        assert_eq!(
+            tokens[index + 1].pos.as_ref(),
+            "助詞,並立助詞,*,*",
+            "{text}"
+        );
+    }
+}

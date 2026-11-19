@@ -167,6 +167,7 @@ const CHARS: &[(char, Anchors)] = &[
     ('後', Anchors::HOMOGRAPH),
     ('縁', Anchors::HOMOGRAPH),
     ('深', Anchors::HOMOGRAPH),
+    ('へ', Anchors::HOMOGRAPH),
     ('真', Anchors::IDIOM_HEAD),
     ('身', Anchors::IDIOM_HEAD),
     ('得', Anchors::IDIOM_HEAD),
