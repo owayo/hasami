@@ -1,4 +1,49 @@
-use hasami::Analyzer;
+use hasami::{Analyzer, DictEntry, dict::DictBuilder};
+
+#[test]
+fn oei_era_reading_preserves_the_surname_outside_calendar_context() {
+    let mut builder = DictBuilder::new();
+    for (surface, pos, reading) in [
+        ("応永", "名詞,固有名詞,人名,姓", "オオエ"),
+        ("年間", "名詞,一般,*,*", "ネンカン"),
+        ("元年", "名詞,一般,*,*", "ガンネン"),
+        ("さん", "名詞,接尾,人名,*", "サン"),
+        ("ランキング", "名詞,一般,*,*", "ランキング"),
+    ] {
+        builder.add_entry(DictEntry {
+            surface: surface.into(),
+            base_form: surface.into(),
+            pos: pos.into(),
+            reading: reading.into(),
+            pronunciation: reading.into(),
+            ..Default::default()
+        });
+    }
+    let mut analyzer = Analyzer::from_dict(builder.build().unwrap());
+    for (text, expected_reading, expected_pronunciation, expected_pos) in [
+        ("応永年間", "オウエイ", "オーエイ", "名詞,固有名詞,一般,*"),
+        ("応永元年", "オウエイ", "オーエイ", "名詞,固有名詞,一般,*"),
+        ("応永さん", "オオエ", "オオエ", "名詞,固有名詞,人名,姓"),
+        ("応永 年間", "オオエ", "オオエ", "名詞,固有名詞,人名,姓"),
+        (
+            "応永年間ランキング",
+            "オオエ",
+            "オオエ",
+            "名詞,固有名詞,人名,姓",
+        ),
+    ] {
+        let tokens = analyzer.try_tokenize(text).unwrap();
+        assert_eq!(tokens[0].surface.as_ref(), "応永", "{text}");
+        assert_eq!(tokens[0].reading.as_ref(), expected_reading, "{text}");
+        assert_eq!(
+            tokens[0].pronunciation.as_ref(),
+            expected_pronunciation,
+            "{text}"
+        );
+        assert_eq!(tokens[0].pos.as_ref(), expected_pos, "{text}");
+        assert_eq!(&text[tokens[0].start..tokens[0].end], "応永", "{text}");
+    }
+}
 
 #[test]
 #[ignore = "全部入りの配布辞書が必要"]

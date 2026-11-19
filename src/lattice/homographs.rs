@@ -1,4 +1,4 @@
-//! 近接する既知語の品詞と原形で意味が絞れる構文で、実辞書の候補を選び直す。
+//! 近接する既知語の品詞と原形で意味が絞れる構文で、同形語の素性を選び直す。
 
 use super::{ContextualReadingContext, Token};
 use crate::anchors::Anchors;
@@ -41,6 +41,7 @@ const RICE: &[Candidate] = &[("米", "米", NOUN, "コメ")];
 const LATER: &[Candidate] = &[("後", "後", "名詞,副詞可能,*,*", "アト")];
 const RIM: &[Candidate] = &[("縁", "縁", NOUN, "フチ")];
 const DEEP_SEA: &[Candidate] = &[("深海", "深海", NOUN, "シンカイ")];
+const OEI_ERA: Candidate = ("応永", "応永", "名詞,固有名詞,一般,*", "オウエイ");
 const DIRECTIONAL_HE_TO: &[Candidate] = &[
     ("へ", "へ", CASE_PARTICLE, "ヘ"),
     ("と", "と", "助詞,格助詞,引用,*", "ト"),
@@ -119,6 +120,7 @@ fn correction(tokens: &[Token], i: usize) -> Option<Correction> {
                 | "縁"
                 | "深海"
                 | "へ"
+                | "応永"
         )
     {
         return None;
@@ -249,6 +251,21 @@ fn correction(tokens: &[Token], i: usize) -> Option<Correction> {
         (("へ", "へ", NOUN, "ヘ", "ヘ" | "エ"), _) if token.is_uninflected() => {
             directional_frame(tokens, i).map(|frame| (frame, DIRECTIONAL_HE_TO, 2))
         }
+        (("応永", "応永", SURNAME, "オオエ", "オオエ"), [period, rest @ ..])
+            if token.is_uninflected()
+                && period.is_known_base_form()
+                && matches!(period.pos.as_ref(), NOUN | COUNTER | "名詞,副詞可能,*,*")
+                && matches!(
+                    (period.surface.as_ref(), period.reading.as_ref()),
+                    ("年間", "ネンカン") | ("元年", "ガンネン")
+                )
+                && !rest.first().is_some_and(|next| {
+                    period.end == next.start
+                        && (next.pos.starts_with("名詞,") || next.pos.starts_with("接頭詞,"))
+                }) =>
+        {
+            Some((i..i + 2, &[OEI_ERA], 1))
+        }
         _ => None,
     }
 }
@@ -308,7 +325,18 @@ fn replacements(
     let mut result = Vec::with_capacity(specs.len());
     let mut start = token.start;
     for &spec in specs {
-        let Some(candidate) = candidate_token(dict, spec, start)? else {
+        let candidate = candidate_token(dict, spec, start)?;
+        let Some(candidate) = candidate.or_else(|| {
+            // 姓だけが登録されている辞書でも、暦の文脈が成立したときは元号の素性を使う。
+            // 読みは裾野市史の年号一覧による。表層、位置、Viterbi の単語コストは元の語の値。
+            // https://www.city.susono.shizuoka.jp/static/shishi/shishi0801-owari.pdf
+            (spec == OEI_ERA).then(|| Token {
+                pos: Arc::from(spec.2),
+                reading: Arc::from(spec.3),
+                pronunciation: Arc::from("オーエイ"),
+                ..token.clone()
+            })
+        }) else {
             return Ok(None);
         };
         start = candidate.end;
