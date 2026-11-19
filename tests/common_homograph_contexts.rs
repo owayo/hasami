@@ -1,6 +1,90 @@
 use hasami::{Analyzer, DictEntry, dict::DictBuilder};
 
 #[test]
+fn common_noun_readings_use_the_grammatical_context() {
+    let mut builder = DictBuilder::new();
+    for (surface, pos, reading, cost) in [
+        ("本種", "名詞,固有名詞,人名,姓", "モトダネ", 0),
+        ("は", "助詞,係助詞,*,*", "ハ", 0),
+        ("冬", "名詞,一般,*,*", "フユ", 0),
+        ("に", "助詞,格助詞,一般,*", "ニ", 0),
+        ("繁殖", "名詞,サ変接続,*,*", "ハンショク", 0),
+        ("する", "動詞,自立,*,*", "スル", 0),
+        ("さん", "名詞,接尾,人名,*", "サン", 0),
+        ("パラディオ", "名詞,固有名詞,人名,一般", "パラディオ", 0),
+        ("様", "名詞,接尾,人名,*", "サマ", 0),
+        ("式", "名詞,接尾,一般,*", "シキ", 0),
+        ("様式", "名詞,一般,*,*", "ヨウシキ", 5000),
+        ("の", "助詞,連体化,*,*", "ノ", 0),
+        ("建物", "名詞,一般,*,*", "タテモノ", 0),
+        ("戦う", "動詞,自立,*,*", "タタカウ", 0),
+        ("間", "名詞,一般,*,*", "マ", 0),
+        ("間", "名詞,副詞可能,*,*", "アイダ", 5000),
+        ("、", "記号,読点,*,*", "、", 0),
+        ("が", "助詞,格助詞,一般,*", "ガ", 0),
+    ] {
+        builder.add_entry(DictEntry {
+            surface: surface.into(),
+            base_form: surface.into(),
+            pos: pos.into(),
+            reading: reading.into(),
+            pronunciation: if surface == "様式" {
+                "ヨーシキ"
+            } else {
+                reading
+            }
+            .into(),
+            conj_type: if surface == "戦う" {
+                "五段・ワ行促音便"
+            } else {
+                ""
+            }
+            .into(),
+            conj_form: if surface == "戦う" { "基本形" } else { "" }.into(),
+            cost,
+            ..Default::default()
+        });
+    }
+    let mut analyzer = Analyzer::from_dict(builder.build().unwrap());
+    for (text, surface, reading, pronunciation, pos) in [
+        (
+            "本種は冬に繁殖する",
+            "本種",
+            "ホンシュ",
+            "ホンシュ",
+            "名詞,一般,*,*",
+        ),
+        (
+            "本種さん",
+            "本種",
+            "モトダネ",
+            "モトダネ",
+            "名詞,固有名詞,人名,姓",
+        ),
+        (
+            "パラディオ様式の建物",
+            "様式",
+            "ヨウシキ",
+            "ヨーシキ",
+            "名詞,一般,*,*",
+        ),
+        ("パラディオ様、式", "様", "サマ", "サマ", "名詞,接尾,人名,*"),
+        ("戦う間、", "間", "アイダ", "アイダ", "名詞,副詞可能,*,*"),
+        ("間が", "間", "マ", "マ", "名詞,一般,*,*"),
+    ] {
+        let tokens = analyzer.try_tokenize(text).unwrap();
+        let token = tokens
+            .iter()
+            .find(|token| token.surface.as_ref() == surface)
+            .unwrap_or_else(|| panic!("{text}: {tokens:?}"));
+        assert_eq!(token.reading.as_ref(), reading, "{text}");
+        assert_eq!(token.pronunciation.as_ref(), pronunciation, "{text}");
+        assert_eq!(token.pos.as_ref(), pos, "{text}");
+        assert_eq!(&text[token.start..token.end], surface, "{text}");
+    }
+}
+
+#[test]
 fn oei_era_reading_preserves_the_surname_outside_calendar_context() {
     let mut builder = DictBuilder::new();
     for (surface, pos, reading) in [
