@@ -169,11 +169,13 @@ const CHARS: &[(char, Anchors)] = &[
     ('深', Anchors::HOMOGRAPH),
     ('へ', Anchors::HOMOGRAPH),
     ('応', Anchors::HOMOGRAPH),
+    ('種', Anchors::HOMOGRAPH),
+    ('様', Anchors::HOMOGRAPH),
     ('真', Anchors::IDIOM_HEAD),
     ('身', Anchors::IDIOM_HEAD),
     ('得', Anchors::IDIOM_HEAD),
     ('体', Anchors::IDIOM_HEAD),
-    ('間', Anchors::IDIOM_HEAD),
+    ('間', Anchors::IDIOM_HEAD.union(Anchors::HOMOGRAPH)),
     ('分', Anchors::IDIOM_HEAD.union(Anchors::HOMOGRAPH)),
 ];
 

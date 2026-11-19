@@ -42,6 +42,9 @@ const LATER: &[Candidate] = &[("後", "後", "名詞,副詞可能,*,*", "アト"
 const RIM: &[Candidate] = &[("縁", "縁", NOUN, "フチ")];
 const DEEP_SEA: &[Candidate] = &[("深海", "深海", NOUN, "シンカイ")];
 const OEI_ERA: Candidate = ("応永", "応永", "名詞,固有名詞,一般,*", "オウエイ");
+const SPECIES: Candidate = ("本種", "本種", NOUN, "ホンシュ");
+const STYLE: &[Candidate] = &[("様式", "様式", NOUN, "ヨウシキ")];
+const DURATION: &[Candidate] = &[("間", "間", "名詞,副詞可能,*,*", "アイダ")];
 const DIRECTIONAL_HE_TO: &[Candidate] = &[
     ("へ", "へ", CASE_PARTICLE, "ヘ"),
     ("と", "と", "助詞,格助詞,引用,*", "ト"),
@@ -59,6 +62,55 @@ fn subject_marker(token: &Token) -> bool {
 
 fn verb(token: &Token, bases: &[&str]) -> bool {
     token.is_known && bases.contains(&token.base_form.as_ref()) && token.pos.as_ref() == VERB
+}
+
+fn species_frame(tokens: &[Token], i: usize) -> Option<Range<usize>> {
+    let [_, subject, rest @ ..] = &tokens[i..] else {
+        return None;
+    };
+    if !subject_marker(subject) {
+        return None;
+    }
+    // 「冬に」「島で」のように、生態を述べる動作の前に時・場所を置くことがある。
+    let predicate = match rest {
+        [setting, particle, tail @ ..]
+            if setting.is_known_base_form()
+                && setting.pos.starts_with("名詞,")
+                && fixed(particle, &["に", "で"], CASE_PARTICLE) =>
+        {
+            tail
+        }
+        _ => rest,
+    };
+    let [activity, suru, ..] = predicate else {
+        return None;
+    };
+    (fixed(activity, &["繁殖", "生息", "越冬", "産卵", "分布"], SAHEN) && verb(suru, &["する"]))
+        .then_some(i..i + 4 + rest.len() - predicate.len())
+}
+
+fn architecture_frame(tokens: &[Token], i: usize) -> Option<Range<usize>> {
+    let previous = i.checked_sub(1)?;
+    if !fixed(
+        &tokens[previous],
+        &["パラディオ"],
+        "名詞,固有名詞,人名,一般",
+    ) {
+        return None;
+    }
+    let [_, shiki, particle, building, ..] = &tokens[i..] else {
+        return None;
+    };
+    if !fixed(shiki, &["式"], "名詞,接尾,一般,*")
+        || shiki.reading.as_ref() != "シキ"
+        || shiki.pronunciation.as_ref() != "シキ"
+    {
+        return None;
+    }
+    let architecture = fixed(particle, &["の"], GENITIVE)
+        && fixed(building, &["建物", "建築", "建築物", "邸宅"], NOUN);
+    let construction = fixed(particle, &["で"], CASE_PARTICLE) && verb(building, &["建てる"]);
+    (architecture || construction).then_some(previous..i + 4)
 }
 
 // 引用された地名と「経路を＋移動の述語」があるときだけ、列挙の「へ／と」と区別する。
@@ -121,6 +173,9 @@ fn correction(tokens: &[Token], i: usize) -> Option<Correction> {
                 | "深海"
                 | "へ"
                 | "応永"
+                | "本種"
+                | "様"
+                | "間"
         )
     {
         return None;
@@ -266,6 +321,21 @@ fn correction(tokens: &[Token], i: usize) -> Option<Correction> {
         {
             Some((i..i + 2, &[OEI_ERA], 1))
         }
+        (("本種", "本種", SURNAME, "モトダネ", "モトダネ"), _) if token.is_uninflected() => {
+            species_frame(tokens, i).map(|frame| (frame, &[SPECIES][..], 1))
+        }
+        (("様", "様", "名詞,接尾,人名,*", "サマ", "サマ"), _) if token.is_uninflected() => {
+            architecture_frame(tokens, i).map(|frame| (frame, STYLE, 2))
+        }
+        (("間", "間", NOUN, "マ", "マ"), [comma, ..])
+            if token.is_uninflected() && fixed(comma, &["、", ","], "記号,読点,*,*") =>
+        {
+            let previous = i.checked_sub(1)?;
+            let predicate = &tokens[previous];
+            (predicate.conj_form.as_ref() == "基本形"
+                && verb(predicate, &["戦う", "話す", "待つ", "眠る", "働く", "休む"]))
+            .then_some((previous..i + 2, DURATION, 1))
+        }
         _ => None,
     }
 }
@@ -327,13 +397,18 @@ fn replacements(
     for &spec in specs {
         let candidate = candidate_token(dict, spec, start)?;
         let Some(candidate) = candidate.or_else(|| {
-            // 姓だけが登録されている辞書でも、暦の文脈が成立したときは元号の素性を使う。
-            // 読みは裾野市史の年号一覧による。表層、位置、Viterbi の単語コストは元の語の値。
+            // 同形の姓だけが登録されていても、文脈で語義が確定する場合は素性を補う。
+            // 応永の読みは裾野市史の年号一覧による。
             // https://www.city.susono.shizuoka.jp/static/shishi/shishi0801-owari.pdf
-            (spec == OEI_ERA).then(|| Token {
+            let pronunciation = match spec {
+                OEI_ERA => "オーエイ",
+                SPECIES => "ホンシュ",
+                _ => return None,
+            };
+            Some(Token {
                 pos: Arc::from(spec.2),
                 reading: Arc::from(spec.3),
-                pronunciation: Arc::from("オーエイ"),
+                pronunciation: Arc::from(pronunciation),
                 ..token.clone()
             })
         }) else {
